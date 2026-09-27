@@ -1,0 +1,57 @@
+name: release
+
+# Bei Push auf einen Claude-Arbeits-Branch: automatisch nach main uebernehmen
+# und danach im selben Lauf den Deploy ausfuehren.
+on:
+  push:
+    branches:
+      - 'claude/**'
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  to-main:
+    name: Nach main uebernehmen
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Repo holen
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Git-Identitaet setzen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Uebernehmen (fast-forward, sonst Merge-Commit)
+        run: |
+          set -euo pipefail
+          SHA="${{ github.sha }}"
+          BRANCH="${{ github.ref_name }}"
+          git fetch origin main
+          git checkout -B main origin/main
+          if git merge --ff-only "$SHA"; then
+            echo "Fast-forward von $BRANCH nach main."
+          else
+            echo "Kein Fast-forward moeglich -> Merge-Commit."
+            if ! git merge --no-ff --no-edit -m "Merge $BRANCH nach main" "$SHA"; then
+              echo "::error::Merge-Konflikt zwischen $BRANCH und main. Abbruch - bitte manuell aufloesen."
+              git merge --abort || true
+              exit 1
+            fi
+          fi
+          git push origin main
+
+  deploy:
+    name: Deploy
+    needs: to-main
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: write
+      pages: write
+      id-token: write

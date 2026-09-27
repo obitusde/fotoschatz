@@ -1,0 +1,88 @@
+name: deploy
+
+# Veroeffentlicht docs/ (Stand von main) auf GitHub Pages und setzt den Tag v<VERSION>.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Pruefen und Artefakt bauen
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Repo holen (main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Version lesen
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d ' \t\r\n' < VERSION)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::VERSION-Datei ist leer."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Version in docs/ pruefen
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! grep -q "$VERSION" docs/index.html; then
+            echo "::error::Version $VERSION steht nicht in docs/index.html - Versionsnummer nachziehen."
+            exit 1
+          fi
+          echo "docs/index.html passt zu Version $VERSION."
+
+      - name: Pages vorbereiten
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Artefakt aus docs/ hochladen
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Tag v<VERSION> setzen
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG existiert bereits - nichts zu tun."
+          else
+            git tag -a "$TAG" -m "Fotoschatz $TAG"
+            git push origin "$TAG"
+            echo "Tag $TAG gesetzt."
+          fi
+
+  publish:
+    name: Auf GitHub Pages veroeffentlichen
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
