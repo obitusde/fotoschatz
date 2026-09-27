@@ -1,7 +1,12 @@
 name: release
 
 # Bei Push auf einen Claude-Arbeits-Branch: automatisch nach main uebernehmen
-# und danach im selben Lauf den Deploy ausfuehren.
+# und danach den Deploy anstossen.
+#
+# Warum workflow_dispatch: Ein Push mit GITHUB_TOKEN startet keine weiteren
+# Workflows, und die Pages-Umgebung "github-pages" laesst nur Deployments von
+# main zu. Der Deploy wird deshalb ausdruecklich auf dem Ref main angestossen
+# und hier bis zum Ergebnis beobachtet.
 on:
   push:
     branches:
@@ -11,12 +16,14 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  actions: write
+
 jobs:
-  to-main:
-    name: Nach main uebernehmen
+  release:
+    name: Nach main uebernehmen und deployen
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Repo holen
         uses: actions/checkout@v4
@@ -47,11 +54,25 @@ jobs:
           fi
           git push origin main
 
-  deploy:
-    name: Deploy
-    needs: to-main
-    uses: ./.github/workflows/deploy.yml
-    permissions:
-      contents: write
-      pages: write
-      id-token: write
+      - name: Deploy anstossen und beobachten
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VORHER="$(gh run list --workflow deploy.yml --limit 1 --json databaseId --jq '.[0].databaseId // 0')"
+          gh workflow run deploy.yml --ref main
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            sleep 5
+            KANDIDAT="$(gh run list --workflow deploy.yml --limit 1 --json databaseId --jq '.[0].databaseId // 0')"
+            if [ "$KANDIDAT" != "$VORHER" ] && [ "$KANDIDAT" != "0" ]; then
+              RUN_ID="$KANDIDAT"
+              break
+            fi
+          done
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::Der Deploy-Lauf ist nicht gestartet."
+            exit 1
+          fi
+          echo "Deploy-Lauf: https://github.com/${{ github.repository }}/actions/runs/$RUN_ID"
+          gh run watch "$RUN_ID" --exit-status --interval 10
