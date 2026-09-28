@@ -164,7 +164,9 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
   background: linear-gradient(rgba(0,0,0,.6), transparent);
 }
 .v-top .icon-btn:hover { background: rgba(255,255,255,.15); }
-.v-counter { font-size: .85rem; opacity: .85; padding-right: 8px; }
+.v-actions { display: flex; align-items: center; gap: 4px; }
+.v-counter { font-size: .85rem; opacity: .85; padding-right: 4px; }
+.v-info-btn[aria-pressed="true"] { background: rgba(255,255,255,.2); }
 .v-info {
   position: absolute;
   left: 0; right: 0; bottom: 0;
@@ -194,4 +196,5 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 .v-top, .v-info, .v-nav { transition: opacity .2s ease; }
 #viewer.ui-hidden .v-top,
 #viewer.ui-hidden .v-info,
-#viewer.ui-hidden .v-nav { opacity: 0; pointer-events: none; }
+#viewer.ui-hidden .v-nav,
+#viewer:not(.info-on) .v-info { opacity: 0; pointer-events: none; }

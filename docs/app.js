@@ -1,9 +1,10 @@
 "use strict";
 
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.3.1";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
+const INFO_KEY = "fotoschatz.info";
 const HEADER_H = 44;
 const GAP = 2;
 
@@ -38,6 +39,14 @@ function takeSecret() {
     if (stored && SECRET_RE.test(stored)) return stored;
   } catch (e) { /* privat */ }
   return null;
+}
+
+function readPref(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+
+function writePref(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* privat */ }
 }
 
 function forgetSecret() {
@@ -311,9 +320,17 @@ const Viewer = {
     this.img = $(".v-photo", this.root);
     this.info = $(".v-info", this.root);
     this.counter = $(".v-counter", this.root);
+    this.infoBtn = $(".v-info-btn", this.root);
+    this.fsBtn = $(".v-fs-btn", this.root);
+    this.autoFullscreen = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+    this.setInfo(readPref(INFO_KEY) === "1");
+    if (!document.documentElement.requestFullscreen) this.fsBtn.hidden = true;
+
     $(".v-close", this.root).addEventListener("click", () => history.back());
     $(".v-prev", this.root).addEventListener("click", () => this.go(-1));
     $(".v-next", this.root).addEventListener("click", () => this.go(1));
+    this.infoBtn.addEventListener("click", () => this.setInfo(!this.infoOn, true));
+    this.fsBtn.addEventListener("click", () => this.toggleFullscreen());
     const stage = $(".v-stage", this.root);
     stage.addEventListener("pointerdown", (e) => this.down(e));
     stage.addEventListener("pointermove", (e) => this.move(e));
@@ -324,8 +341,36 @@ const Viewer = {
       if (e.key === "ArrowLeft") this.go(-1);
       else if (e.key === "ArrowRight") this.go(1);
       else if (e.key === "Escape") history.back();
-      else if (e.key === "i") this.root.classList.toggle("ui-hidden");
+      else if (e.key === "i") this.setInfo(!this.infoOn, true);
+      else if (e.key === "f") this.toggleFullscreen();
     });
+    document.addEventListener("fullscreenchange", () => {
+      // Handy: Zurueck-Taste beendet zuerst nur das Vollbild - dann auch das Bild schliessen.
+      if (document.fullscreenElement || !this.open || !this.autoFullscreen) return;
+      setTimeout(() => { if (this.open) history.back(); }, 300);
+    });
+  },
+
+  setInfo(on, remember = false) {
+    this.infoOn = on;
+    this.root.classList.toggle("info-on", on);
+    this.infoBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    if (remember) writePref(INFO_KEY, on ? "1" : "0");
+  },
+
+  enterFullscreen() {
+    const doc = document.documentElement;
+    if (!doc.requestFullscreen || document.fullscreenElement) return;
+    doc.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  },
+
+  exitFullscreen() {
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  },
+
+  toggleFullscreen() {
+    if (document.fullscreenElement) this.exitFullscreen();
+    else this.enterFullscreen();
   },
 
   show(list, i) {
@@ -333,7 +378,9 @@ const Viewer = {
     if (!this.open) {
       this.open = true;
       this.root.hidden = false;
+      this.root.classList.remove("ui-hidden");
       document.body.classList.add("noscroll");
+      if (this.autoFullscreen) this.enterFullscreen();
     }
     this.display(i);
   },
@@ -344,6 +391,7 @@ const Viewer = {
     this.root.hidden = true;
     this.img.removeAttribute("src");
     document.body.classList.remove("noscroll");
+    this.exitFullscreen();
     if (mounted && mounted.grid) mounted.grid.scrollToPhoto(this.i);
   },
 
@@ -411,7 +459,10 @@ const Viewer = {
     const { dx, dy } = this.drag;
     this.reset();
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
-      this.root.classList.toggle("ui-hidden");
+      const x = e.clientX / window.innerWidth;
+      if (x < 0.3) this.go(-1);
+      else if (x > 0.7) this.go(1);
+      else this.root.classList.toggle("ui-hidden");
     } else if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 60) {
       this.go(dx < 0 ? 1 : -1);
     } else if (dy > 120 && Math.abs(dy) > Math.abs(dx)) {

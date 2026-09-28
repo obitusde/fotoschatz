@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <meta name="referrer" content="no-referrer">
-  <meta name="app-version" content="0.3.0">
+  <meta name="app-version" content="0.3.1">
   <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
   <title>Fotoschatz</title>
-  <link rel="stylesheet" href="styles.css?v=0.3.0">
-  <script src="app.js?v=0.3.0" defer></script>
+  <link rel="stylesheet" href="styles.css?v=0.3.1">
+  <script src="app.js?v=0.3.1" defer></script>
 </head>
 <body>
   <header id="top">
@@ -46,7 +46,15 @@
       <button type="button" class="icon-btn v-close" aria-label="Schließen">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
-      <span class="v-counter"></span>
+      <div class="v-actions">
+        <span class="v-counter"></span>
+        <button type="button" class="icon-btn v-info-btn" aria-label="Infos ein/aus">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg>
+        </button>
+        <button type="button" class="icon-btn v-fs-btn" aria-label="Vollbild ein/aus">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+      </div>
     </div>
     <button type="button" class="v-nav v-prev" aria-label="Vorheriges Bild">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 4.5 8 12l7.5 7.5"/></svg>

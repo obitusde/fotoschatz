@@ -352,7 +352,9 @@ Ohne Datei gelten diese Standardwerte:
    - Ergebnis als Raster.
 5. **Vollbild-Betrachter:**
    - Wischen links/rechts, Nachbarbilder vorladen.
-   - Info-Leiste: Datum, Ordner, Personen, Ort, Beschreibung (ausgeblendet, wenn gleich dem Ordnernamen), Bewertung. Antippen blendet Leisten aus/ein.
+   - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter, Mitte = Bedienelemente aus/ein. Wischen links/rechts blättert.
+   - Infos (Datum, Ordner, Personen, Ort, Beschreibung – ausgeblendet, wenn gleich dem Ordnernamen –, Bewertung) über den Knopf (i) bzw. Taste I; **anfangs ausgeblendet**, Einstellung wird gemerkt (`fotoschatz.info`).
+   - Echtes Vollbild (Browser-Leisten weg): am Handy automatisch beim Öffnen, am PC per Knopf oder Taste F. ⚠ Am Handy prüfen: Zurück-Taste im Vollbild schließt das Bild genau einmal.
    - Zurück-Taste, ✕, Wischen nach unten und Esc schließen den Betrachter (History-API); am PC Pfeiltasten und Pfeil-Schaltflächen.
    - Erst das Vorschaubild, dann das große Bild; Nachbarbilder werden vorgeladen.
    - Zoomen mit zwei Fingern: nice-to-have.
