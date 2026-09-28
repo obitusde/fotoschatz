@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v1.6 · 28.09.2026 (Suche mit Auswahl-Modus, Orte als Baum und deutsch, installierbare App)
+**Dokumentversion:** v1.7 · 28.09.2026 (kein automatisches Vollbild mehr, v0.6.1)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -339,8 +339,7 @@ Ohne Datei gelten diese Standardwerte:
 - `manifest.webmanifest`: `name`/`short_name` „Fotoschatz“, `id`/`start_url`/`scope` `./`, `display: "standalone"`, Icons 192 und 512 (+ maskable), Symbol: weißer Bilderrahmen mit Berg und Sonne auf Blau (`docs/icons/`).
 - Service Worker `docs/sw.js` registriert → Chrome bietet „App installieren“ an. Zusätzlich zeigt die Ordneransicht oben „Fotoschatz als App auf dem Startbildschirm? [Installieren] [✕]“ (✕ wird gemerkt: `fotoschatz.install-hidden`).
 - In der Cloud geprüft: Chrome meldet keine Installierbarkeits-Fehler (außer „Inkognito“ im Testbrowser).
-- ⚠ Am Handy prüfen: Installieren, Start über das Symbol ohne Link (Geheimnis aus `localStorage`), ob die Chrome-Meldung „Zum Beenden des Vollbildmodus …“ in der installierten App beim Öffnen eines Bildes noch erscheint. Falls ja: `display: "fullscreen"` im Manifest (dann ist die ganze App ohne Statusleiste).
-- Die Chrome-Meldung im Browser-Tab lässt sich von einer Webseite nicht abschalten.
+- ✅ Am Handy installiert (28.09.2026). Die Chrome-Meldung „zum Beenden des Vollbildmodus …“ kam auch in der installierten App → seit v0.6.1 kein automatisches Vollbild mehr (siehe Betrachter). Alternative, falls nötig: `display: "fullscreen"` im Manifest (ganze App ohne Statusleiste).
 
 ### MVP-Ansichten
 - **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
@@ -371,7 +370,7 @@ Ohne Datei gelten diese Standardwerte:
    - **Zoom** (v0.5.0): zwei Finger auf-/zuziehen (bis 4-fach); Doppeltippen in der Mitte bzw. Doppelklick = 2,5-fach an dieser Stelle, nochmal = zurück; am PC Mausrad. Vergrößert: ein Finger/Maus verschiebt den Ausschnitt (nicht über den Bildrand hinaus), Tippen = Bedienelemente, Blättern per Wischen ist aus. Blättern (Taste, Knopf) oder Drehen setzt den Zoom zurück.
    - **Präsentations-Klicker / Tastatur:** weiter = Bild ab, Pfeil rechts, Leertaste; zurück = Bild auf, Pfeil links.
    - Infos (Datum, Ordner, Personen, Ort, Beschreibung – ausgeblendet, wenn gleich dem Ordnernamen –, Bewertung) über den Knopf (i) bzw. Taste I; **anfangs ausgeblendet**, Einstellung wird gemerkt (`fotoschatz.info`).
-   - Echtes Vollbild (Browser-Leisten weg): am Handy automatisch beim Öffnen, am PC per Knopf oder Taste F. ⚠ Am Handy prüfen: Zurück-Taste im Vollbild schließt das Bild genau einmal.
+   - **Kein automatisches Vollbild** (v0.6.1): Chrome blendet bei jedem Vollbild-Wechsel „zum Beenden des Vollbildmodus …“ ein (auch in der installierten App, am Handy bestätigt) – das lässt sich nicht abschalten. Stattdessen wird beim Öffnen eines Bildes die Statusleiste schwarz (`theme-color` → `#000000`, beim Schließen zurück); in der installierten App sieht das fast wie Vollbild aus. Echtes Vollbild nur per Knopf ⛶ bzw. Taste F (dann erscheint die Chrome-Meldung). ⚠ Am Handy prüfen, ob die Statusleiste in der installierten App schwarz wird.
    - Zurück-Taste, ✕, Wischen nach unten und Esc schließen den Betrachter (History-API); am PC Pfeiltasten und Pfeil-Schaltflächen.
    - Erst das Vorschaubild, dann das große Bild; Nachbarbilder werden vorgeladen.
 

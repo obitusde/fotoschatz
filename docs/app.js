@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.0";
+const APP_VERSION = "0.6.1";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -414,7 +414,8 @@ const Viewer = {
     this.counter = $(".v-counter", this.root);
     this.infoBtn = $(".v-info-btn", this.root);
     this.fsBtn = $(".v-fs-btn", this.root);
-    this.autoFullscreen = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+    this.themeMetas = [...document.querySelectorAll('meta[name="theme-color"]')];
+    this.themeColors = this.themeMetas.map((m) => m.content);
     this.setInfo(readPref(INFO_KEY) === "1");
     if (!document.documentElement.requestFullscreen) this.fsBtn.hidden = true;
 
@@ -439,11 +440,6 @@ const Viewer = {
       else return;
       e.preventDefault();
     });
-    document.addEventListener("fullscreenchange", () => {
-      // Handy: Zurueck-Taste beendet zuerst nur das Vollbild - dann auch das Bild schliessen.
-      if (document.fullscreenElement || !this.open || !this.autoFullscreen) return;
-      setTimeout(() => { if (this.open) history.back(); }, 300);
-    });
   },
 
   setInfo(on, remember = false) {
@@ -451,6 +447,10 @@ const Viewer = {
     this.root.classList.toggle("info-on", on);
     this.infoBtn.setAttribute("aria-pressed", on ? "true" : "false");
     if (remember) writePref(INFO_KEY, on ? "1" : "0");
+  },
+
+  setThemeColor(dark) {
+    this.themeMetas.forEach((m, i) => { m.content = dark ? "#000000" : this.themeColors[i]; });
   },
 
   enterFullscreen() {
@@ -475,7 +475,9 @@ const Viewer = {
       this.root.hidden = false;
       this.root.classList.remove("ui-hidden");
       document.body.classList.add("noscroll");
-      if (this.autoFullscreen) this.enterFullscreen();
+      // Kein automatisches Vollbild (Chrome blendet sonst jedes Mal einen Hinweis ein).
+      // Stattdessen die Statusleiste schwarz faerben -> in der installierten App fast wie Vollbild.
+      this.setThemeColor(true);
     }
     this.display(i);
   },
@@ -488,6 +490,7 @@ const Viewer = {
     clearTimeout(this.tapTimer);
     this.reset();
     document.body.classList.remove("noscroll");
+    this.setThemeColor(false);
     this.exitFullscreen();
     if (mounted && mounted.grid) mounted.grid.scrollToPhoto(this.i);
   },
