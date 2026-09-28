@@ -47,6 +47,14 @@ EXTRA_TAGS = [
     "Composite:GPSLongitude",
     "XMP-xmp:Rating",
     "XMP-dc:Title",
+    "XMP-mwg-rs:RegionAreaX",
+    "XMP-mwg-rs:RegionAreaY",
+    "XMP-mwg-rs:RegionAreaW",
+    "XMP-mwg-rs:RegionAreaH",
+    "XMP-mwg-rs:RegionType",
+    "XMP-mwg-rs:RegionAppliedToDimensionsW",
+    "XMP-mwg-rs:RegionAppliedToDimensionsH",
+    "XMP-crs:HasCrop",
 ]
 EXIF_TAGS = sorted({t for tags in FIELDS.values() for t in tags} | set(EXTRA_TAGS))
 
@@ -204,6 +212,63 @@ def extract_metadata(entry):
     if isinstance(rating, (int, float)) and rating > 0:
         meta["r"] = int(rating)
     return meta
+
+
+def _numbers(value):
+    if value is None or value == "":
+        return []
+    values = value if isinstance(value, list) else [value]
+    result = []
+    for v in values:
+        try:
+            result.append(float(v))
+        except (TypeError, ValueError):
+            result.append(None)
+    return result
+
+
+def face_regions(entry):
+    """Gesichtsbereiche (MWG) als Liste {name, x, y, w, h}; x/y = Mitte, alles relativ 0..1."""
+    xs = _numbers(entry.get("XMP-mwg-rs:RegionAreaX"))
+    ys = _numbers(entry.get("XMP-mwg-rs:RegionAreaY"))
+    ws = _numbers(entry.get("XMP-mwg-rs:RegionAreaW"))
+    hs = _numbers(entry.get("XMP-mwg-rs:RegionAreaH"))
+    names = as_list(entry.get("XMP-mwg-rs:RegionName"))
+    types = as_list(entry.get("XMP-mwg-rs:RegionType"))
+    regions = []
+    for i, (x, y, w, h) in enumerate(zip(xs, ys, ws, hs)):
+        if None in (x, y, w, h):
+            continue
+        if i < len(types) and types[i] and types[i].lower() != "face":
+            continue
+        regions.append({"name": names[i] if i < len(names) else "", "x": x, "y": y, "w": w, "h": h})
+    return regions
+
+
+def focus_point(regions):
+    """Mittelpunkt des Rahmens um alle Gesichter (relativ 0..1) oder None."""
+    if not regions:
+        return None
+    left = min(r["x"] - r["w"] / 2 for r in regions)
+    right = max(r["x"] + r["w"] / 2 for r in regions)
+    top = min(r["y"] - r["h"] / 2 for r in regions)
+    bottom = max(r["y"] + r["h"] / 2 for r in regions)
+    clamp = lambda v: max(0.0, min(1.0, v))
+    return clamp((left + right) / 2), clamp((top + bottom) / 2)
+
+
+def square_crop(width, height, focus):
+    """Quadratischer Ausschnitt (links, oben, Kante) um den Fokuspunkt; ohne Fokus: Mitte / oberes Fuenftel."""
+    edge = min(width, height)
+    fx, fy = focus if focus else (0.5, None)
+    if width > height:
+        left = min(max(fx * width - edge / 2, 0), width - edge)
+        return left, 0, edge
+    if fy is None:
+        top = (height - edge) * 0.2
+    else:
+        top = min(max(fy * height - edge / 2, 0), height - edge)
+    return 0, top, edge
 
 
 def metadata_problems(meta):

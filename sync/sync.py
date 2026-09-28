@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.2"
 
 import argparse
 import csv

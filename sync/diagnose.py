@@ -5,6 +5,8 @@ Prueft alle exportierten JPGs mit denselben Regeln wie das Sync-Tool,
 laedt aber nichts hoch. Ergebnis (neben diesem Skript):
   diagnose_report.txt       lesbarer Bericht
   diagnose_korrekturen.csv  Tabelle (Excel) der Bilder mit Problemen
+  gesichter_test\           Kopien mit eingezeichneten Gesichtsbereichen und
+                            dem quadratischen Vorschau-Ausschnitt (Pruefung Stufe 2)
 
 Aufruf:
     python diagnose.py [Export-Ordner]
@@ -12,7 +14,7 @@ Ohne Angabe wird der Ordner oberhalb des Skript-Ordners verwendet
 (z. B. Skript in D:\\Fotoschatz\\_sync -> prueft D:\\Fotoschatz).
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.2"
 
 import csv
 import sys
@@ -25,6 +27,8 @@ import regeln
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPORT_FILE = SCRIPT_DIR / "diagnose_report.txt"
 CSV_FILE = SCRIPT_DIR / "diagnose_korrekturen.csv"
+FACE_DIR = SCRIPT_DIR / "gesichter_test"
+FACE_SAMPLES = 40
 
 FIELD_OVERVIEW = [
     ("Stichwoerter", "XMP-dc:Subject"),
@@ -49,6 +53,59 @@ FIELD_OVERVIEW = [
 
 def taken_str(a):
     return f"{a['taken']:%Y-%m-%d %H:%M:%S}" if a["taken"] else ""
+
+
+def write_face_images(files, exif):
+    """Zeichnet Gesichtsbereiche (rot) und den geplanten Vorschau-Ausschnitt (gelb) in Kopien ein."""
+    from PIL import Image, ImageDraw, ImageOps
+    FACE_DIR.mkdir(exist_ok=True)
+    for old in FACE_DIR.glob("*.jpg"):
+        old.unlink()
+    candidates = []
+    for path in files:
+        entry = exif.get(path.name)
+        if entry and regeln.face_regions(entry):
+            cropped = str(entry.get("XMP-crs:HasCrop")).lower() in ("true", "1")
+            candidates.append((0 if cropped else 1, path, entry))
+    candidates.sort(key=lambda c: (c[0], c[1].name))
+    written = 0
+    for _, path, entry in candidates[:FACE_SAMPLES]:
+        regions = regeln.face_regions(entry)
+        with Image.open(path) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            scale = 900 / max(im.size)
+            im = im.resize((round(im.width * scale), round(im.height * scale)))
+            draw = ImageDraw.Draw(im)
+            w, h = im.size
+            line = max(2, w // 300)
+            for r in regions:
+                box = ((r["x"] - r["w"] / 2) * w, (r["y"] - r["h"] / 2) * h,
+                       (r["x"] + r["w"] / 2) * w, (r["y"] + r["h"] / 2) * h)
+                draw.rectangle(box, outline=(255, 0, 0), width=line)
+                draw.text((box[0] + 4, box[3] + 2), r["name"], fill=(255, 0, 0))
+            left, top, edge = regeln.square_crop(w, h, regeln.focus_point(regions))
+            draw.rectangle((left, top, left + edge - 1, top + edge - 1), outline=(255, 220, 0), width=line)
+            im.save(FACE_DIR / path.name, quality=80)
+        written += 1
+    return len(candidates), written
+
+
+def face_section(files, exif, add):
+    total = len(files)
+    with_regions = [p for p in files if exif.get(p.name) and regeln.face_regions(exif[p.name])]
+    cropped = [p for p in with_regions
+               if str(exif[p.name].get("XMP-crs:HasCrop")).lower() in ("true", "1")]
+    add("=== Gesichtsbereiche (Pruefung Stufe 2) ===")
+    add(f"Bilder mit Gesichtsbereichen: {len(with_regions)}/{total}  (davon in Lightroom zugeschnitten: {len(cropped)})")
+    add("Masse: Bild (Export) vs. Bezugsgroesse der Gesichtsbereiche (AppliedToDimensions)")
+    for p in with_regions[:15]:
+        e = exif[p.name]
+        applied = f"{e.get('XMP-mwg-rs:RegionAppliedToDimensionsW')}x{e.get('XMP-mwg-rs:RegionAppliedToDimensionsH')}"
+        crop = "zugeschnitten" if p in cropped else "-"
+        add(f"  {e.get('File:ImageWidth')}x{e.get('File:ImageHeight')} | {applied} | {crop} | "
+            f"{len(regeln.face_regions(e))} Gesicht(er) | {p.name}")
+    add(f"Eingezeichnete Kopien: Ordner {FACE_DIR.name} (rot = Gesicht laut Lightroom, gelb = Vorschau-Ausschnitt)")
+    add("")
 
 
 def main():
@@ -129,6 +186,8 @@ def main():
         add("  keine")
     add("")
 
+    face_section(files, exif, add)
+
     add("=== Feldbelegung ===")
     for label, key in FIELD_OVERVIEW:
         count = sum(1 for e in exif.values() if regeln.as_list(e.get(key)))
@@ -155,6 +214,8 @@ def main():
         add(f"      -> {a['online_folder'] or '(nicht hochladen)'} | {taken_str(a) or '-'}")
     add("")
 
+    face_found, face_written = write_face_images(files, exif)
+
     report = "\n".join(lines)
     REPORT_FILE.write_text(report, encoding="utf-8")
     print()
@@ -162,6 +223,7 @@ def main():
     print()
     print(f"Bericht:           {REPORT_FILE}")
     print(f"Korrektur-Tabelle: {CSV_FILE}")
+    print(f"Gesichter-Test:    {FACE_DIR}  ({face_written} von {face_found} Bildern mit Gesichtern)")
 
 
 if __name__ == "__main__":

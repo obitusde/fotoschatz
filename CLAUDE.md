@@ -2,7 +2,7 @@
 
 **Dokumentversion:** v1.4 · 28.09.2026 (Sync-Tool am PC bestätigt, PWA 2a)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
-**Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 10.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
+**Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
 ---
 
@@ -39,7 +39,7 @@
 
 ## 1. Ziel & Rahmen
 
-- Meine ca. 10.000 Lightroom-Bilder online ansehen und **durchsuchen** – auch unterwegs auf dem Handy.
+- Meine ca. 23.000 Lightroom-Bilder (Stand 28.09.2026: 23.168) online ansehen und **durchsuchen** – auch unterwegs auf dem Handy.
 - Die Familie kann die Bilder ohne Konto per Link ansehen.
 - Die in Lightroom gepflegten Personen, Orte und Beschreibungen sollen nutzbar sein.
 - Alte Bilder neu entdecken (Rückblick „Heute vor X Jahren") – **zunächst nur in der App**, keine Push-Benachrichtigungen.
@@ -52,7 +52,7 @@
 ## 2. Ausgangslage
 
 ### Lightroom Classic
-- Katalog mit ca. 10.000 Bildern, alle von Digitalkameras/Handys (keine Scans). Gepflegt: Personen (Gesichtsmarkierung), Orte, GPS, Beschreibung, teils Bewertung.
+- Katalog mit ca. 23.000 Bildern, alle von Digitalkameras/Handys (keine Scans). Gepflegt: Personen (Gesichtsmarkierung), Orte, GPS, Beschreibung, teils Bewertung.
 - **Inhaltliche Stichwörter gibt es praktisch nicht** – in den Stichwörtern stehen fast nur Personennamen und Verwaltungs-Stichwörter (z. B. `google-fotos-uploaded`). Keine Stichwort-Hierarchie. Die Sammlung ist über 20 Jahre gewachsen, einzelne Ausreißer sind möglich.
 - Originaldateien heißen bereits nach dem Aufnahmezeitpunkt (z. B. `2006-06-08_20-11-00.JPG`).
 - Oberfläche von Lightroom ist **deutsch**.
@@ -174,7 +174,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 8. ✅ Geprüft: Weder die Bucket-Wurzel noch `<pub-url>/<Präfix>/` zeigen eine Dateiliste. Eine Testdatei ist über `<pub-url>/<Präfix>/test/genfer-see.jpg` abrufbar.
 9. Aufräumen: Im Bucket liegt noch ein fehlerhaftes Testobjekt (Präfix mit Leerzeichen dahinter) – über das Dashboard löschen.
 
-**Kosten/Mengen (grob):** Bilder mit 2048 px/Q70 ≈ 0,5–1,2 MB (Naturaufnahmen am oberen Ende) → ca. 6–9 GB. Vorschaubilder ≈ 20 KB → ca. 0,2 GB. Gratis-Bereich: 10 GB Speicher, Downloads kostenlos. Bei der Erstbefüllung Gesamtgröße messen; falls zu knapp, Qualität oder Kantenlänge anpassen.
+**Kosten/Mengen (gemessen an 114 Bildern, hochgerechnet auf 23.168):** ⌀ 0,65 MB je Bild → ca. 15 GB, Vorschaubilder ⌀ 16 KB → ca. 0,4 GB, `index.json` ca. 5 MB. Gesamt ca. 15–16 GB (Spanne 12–18 GB). Gratis-Bereich 10 GB, darüber ⚠ ca. 0,015 $/GB/Monat → **ca. 1 € pro Jahr**; Zugriffe liegen im Freikontingent, Downloads kostenlos. Entscheidung: bei 2048 px bleiben.
 
 ---
 
@@ -312,7 +312,7 @@ Ohne Datei gelten diese Standardwerte:
 - `folders.cover` wird vom Sync-Tool noch geschrieben, von der App aber nicht genutzt (keine Titelbilder).
 - URLs werden in der App aus `SECRET`, `id` und `h` zusammengesetzt, nicht im Index gespeichert.
 - Leere Felder weglassen.
-- Größe beim ersten vollen Lauf messen (Erwartung: wenige MB). Falls zu groß: gzip vorkomprimieren + `Content-Encoding`-Header, oder den Index nach Jahren aufteilen.
+- Größe: ≈ 0,22 KB je Bild → bei 23.000 Bildern ca. 5 MB. **Vor Phase 3** gzip-komprimiert hochladen (`Content-Encoding: gzip`, ≈ 0,5–1 MB) ⚠ mit r2.dev prüfen; sonst den Index nach Jahren aufteilen.
 
 ---
 
@@ -363,6 +363,7 @@ Ohne Datei gelten diese Standardwerte:
 - **Virtuelles Scrollen:** Nur die sichtbaren Zeilen (plus Puffer) existieren im DOM.
 - Quadratisches Raster (Bild mittig zugeschnitten), 4 Spalten auf dem Handy, am PC ca. 170 px je Kachel, feste Zeilenhöhe → einfache, sprungfreie Virtualisierung.
 - Vorschaubilder mit `loading="lazy"` / `decoding="async"`, Platzhalterfarbe, bis das Bild geladen ist.
+- Ausschnitt der Kacheln (Stufe 1, v0.3.2): `object-position: 50% 20%` → Hochformat oben betont (Köpfe). Stufe 2 in Prüfung: Fokuspunkt aus den Lightroom-Gesichtsbereichen (`XMP-mwg-rs:RegionArea*`, Mitte des Rahmens um alle Gesichter) vom Sync-Tool in den Index; `diagnose.py` zeichnet dazu Kopien nach `_sync\gesichter_test\` (rot Gesicht, gelb Ausschnitt). ⚠ Offen: stimmen die Bereiche bei in Lightroom zugeschnittenen Bildern?
 - Index einmal laden, Suchstrukturen einmal aufbauen (Begriff → Bild-IDs).
 
 ### Service Worker – Caching
