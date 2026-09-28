@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Fotoschatz R2-Test</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #111418;
+      color: #e8eaed;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 900px; margin: 0 auto; padding: 1.5rem 1rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+    #status { font-size: 1.1rem; padding: .75rem 1rem; border-radius: 8px; background: #191d22; border: 1px solid #2c3136; }
+    #status.ok { border-color: #2e7d32; }
+    #status.err { border-color: #c62828; }
+    pre { white-space: pre-wrap; word-break: break-all; color: #9aa0a6; font-size: .85rem; }
+    img { display: block; max-width: 100%; height: auto; margin-top: 1rem; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>R2-Test: Bild per fetch aus R2 laden</h1>
+    <p id="status">Läuft …</p>
+    <pre id="details"></pre>
+    <img id="bild" alt="Testbild aus R2" hidden>
+  </main>
+  <script>
+    "use strict";
+    const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
+    const TEST_PATH = "test/genfer-see.jpg";
+
+    const statusEl = document.getElementById("status");
+    const detailsEl = document.getElementById("details");
+    const imgEl = document.getElementById("bild");
+
+    function show(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = cls || "";
+    }
+
+    const secret = decodeURIComponent(location.hash.slice(1)).trim();
+    history.replaceState(null, "", location.pathname);
+
+    if (!/^[A-Za-z0-9]{32,}$/.test(secret)) {
+      show("❌ Kein gültiges Präfix im Link (#…). Seite mit dem PowerShell-Befehl öffnen.", "err");
+    } else {
+      const started = performance.now();
+      fetch(`${R2_PUBLIC_URL}/${secret}/${TEST_PATH}`, { mode: "cors", cache: "no-store" })
+        .then((res) => {
+          detailsEl.textContent =
+            `HTTP-Status: ${res.status}\n` +
+            `Content-Type: ${res.headers.get("content-type")}\n` +
+            `Content-Length: ${res.headers.get("content-length")} Bytes\n` +
+            `Seite: ${location.origin}`;
+          if (!res.ok) throw new Error(`HTTP ${res.status} – Datei nicht gefunden oder kein Zugriff`);
+          return res.blob();
+        })
+        .then((blob) => {
+          const ms = Math.round(performance.now() - started);
+          imgEl.src = URL.createObjectURL(blob);
+          imgEl.hidden = false;
+          show(`✅ CORS-Abruf erfolgreich (${Math.round(blob.size / 1024)} KB in ${ms} ms)`, "ok");
+        })
+        .catch((err) => {
+          const hint = err instanceof TypeError
+            ? " – vermutlich blockiert die CORS-Regel am Bucket den Zugriff von dieser Seite."
+            : "";
+          show(`❌ Abruf fehlgeschlagen: ${err.message}${hint}`, "err");
+        });
+    }
+  </script>
+</body>
+</html>
