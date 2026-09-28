@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"
 
 import argparse
 import csv
@@ -46,6 +46,7 @@ DEFAULTS = {
 
 CSV_FILE = SCRIPT_DIR / "korrekturen.csv"
 KEYWORD_FILE = SCRIPT_DIR / "stichwoerter.txt"
+PLACES_FILE = SCRIPT_DIR / "orte.txt"
 LOG_FILE = SCRIPT_DIR / "letzter_lauf.txt"
 
 # Erhoehen, wenn extract_metadata neue Felder liefert -> Metadaten aller Bilder werden neu gelesen
@@ -264,6 +265,37 @@ def write_keyword_file(counter, persons, ignore):
     KEYWORD_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_places_file(records):
+    """Alle Ortsnamen als Baum Land > Bundesland > Stadt > Ort mit Anzahl (fuer die Uebersetzung in der App)."""
+    tree = {}
+    for rec in records:
+        meta = rec["meta"]
+        node = tree
+        last = None
+        for key in ("co", "st", "ci", "sl"):
+            value = meta.get(key)
+            if not value or value == last:
+                continue
+            last = value
+            entry = node.setdefault(value, {"n": 0, "sub": {}})
+            entry["n"] += 1
+            node = entry["sub"]
+    lines = [f"Fotoschatz Orte ({datetime.now():%Y-%m-%d %H:%M}) - sync.py v{__version__}",
+             "So wie Lightroom sie schreibt: Land > Bundesland > Stadt > Ort, mit Anzahl Bilder.",
+             "Ab und zu an Claude schicken - englische Namen werden dann in der App uebersetzt.",
+             ""]
+
+    def walk(node, depth):
+        for name, entry in sorted(node.items(), key=lambda x: (-x[1]["n"], x[0].casefold())):
+            lines.append(f"{entry['n']:>6}  {'  ' * depth}{name}")
+            walk(entry["sub"], depth + 1)
+
+    walk(tree, 0)
+    if len(lines) == 4:
+        lines.append("(keine Ortsangaben)")
+    PLACES_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 # ---------------------------------------------------------------- Upload
 
 def run_rclone(rclone, args, label):
@@ -442,6 +474,7 @@ def main():
     rows.sort(key=lambda r: (regeln.folder_sort_key(r[1]), r[3], r[4]))
     write_csv(rows)
     write_keyword_file(keyword_counter, all_persons, cfg["ignore_keywords"])
+    write_places_file(new_files.values())
     severe_total = sum(1 for p in jpgs if regeln.is_severe(analyses[p.name]["problems"]))
     hint_total = sum(1 for p in jpgs if analyses[p.name]["problems"]
                      and not regeln.is_severe(analyses[p.name]["problems"]))
@@ -518,6 +551,7 @@ def summary(counts, removed, severe_total, hint_total, rows, started, uploaded):
     if rows:
         log(f"Korrektur-Tabelle: {CSV_FILE} ({len(rows)} Zeilen)")
     log(f"Stichwortliste:    {KEYWORD_FILE}")
+    log(f"Ortsliste:         {PLACES_FILE}")
     write_log()
 
 

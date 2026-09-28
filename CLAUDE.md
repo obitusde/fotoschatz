@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v1.5 · 28.09.2026 (Suche, Zoom, Präsentations-Klicker; Chromecast geplant)
+**Dokumentversion:** v1.6 · 28.09.2026 (Suche mit Auswahl-Modus, Orte als Baum und deutsch, installierbare App)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -24,7 +24,7 @@
 - **Workflow `release`** (läuft, geprüft): Bei Push auf einen Branch `claude/**` (Muster der Cloud-Sitzungen: `claude/<name>`) wird dieser automatisch nach `main` übernommen (fast-forward, sonst Merge-Commit; bei Konflikt Abbruch mit Fehler). Danach stößt er `deploy` per `workflow_dispatch` auf `main` an und wartet auf dessen Ergebnis. Grund: Pushes mit `GITHUB_TOKEN` starten keine weiteren Workflows, und die Pages-Umgebung `github-pages` erlaubt Deployments nur von `main`.
 - **Workflow `deploy`:** bei Push auf `main` und per `workflow_dispatch`.
   - GitHub Pages: Ordner `docs/` veröffentlichen (Pages-Source = „GitHub Actions").
-  - Prüft, dass die Version aus `VERSION` in `docs/index.html` steht.
+  - Prüft, dass die Version aus `VERSION` in `docs/index.html` steht und `APP_VERSION` in `docs/app.js` sowie `VERSION` in `docs/sw.js` gleich sind (sonst bekommt die installierte App kein Update).
   - Dieses Projekt hat **kein** Apps Script → kein clasp-Schritt.
   - Git-Tag `v<VERSION>` setzen.
   - `concurrency`: immer nur ein Deploy gleichzeitig.
@@ -190,7 +190,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - `sync.py` – Hauptablauf · `regeln.py` – gemeinsame Regeln (Dateinamen, Ordner, Prüfungen, Metadaten) · `diagnose.py` – Prüfen ohne Upload
 - `sync.bat` – Sync per Doppelklick · `probelauf.bat` – dasselbe mit `--dry-run`
 - `config.example.json` – Vorlage für die optionale `config.local.json` (per `.gitignore` ausgeschlossen)
-- Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
+- Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `orte.txt` (alle Ortsnamen als Baum Land > Bundesland > Stadt > Ort mit Anzahl, so wie Lightroom sie schreibt – ab und zu an Claude schicken, damit englische Namen in `docs/orte.js` übersetzt werden), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
 
 ### Konfiguration (optional) `config.local.json`
 Ohne Datei gelten diese Standardwerte:
@@ -335,9 +335,12 @@ Ohne Datei gelten diese Standardwerte:
 - ⚠ Verifizieren: Die installierte PWA (Chrome Android) teilt `localStorage` mit dem Browser-Tab, in dem der Link geöffnet wurde.
 - Deep-Links (Phase 3): `#<SECRET>/f/<ordner>` öffnet direkt einen Ordner.
 
-### Installierbarkeit (Android/Chrome)
-- `manifest.webmanifest`: `name`, `short_name`, `start_url: "./"`, `scope: "./"`, `display: "standalone"`, Theme-/Hintergrundfarbe, Icons 192 und 512 (+ maskable).
-- Service Worker registriert → Chrome bietet „App installieren" an.
+### Installierbarkeit (Android/Chrome) – v0.6.0
+- `manifest.webmanifest`: `name`/`short_name` „Fotoschatz“, `id`/`start_url`/`scope` `./`, `display: "standalone"`, Icons 192 und 512 (+ maskable), Symbol: weißer Bilderrahmen mit Berg und Sonne auf Blau (`docs/icons/`).
+- Service Worker `docs/sw.js` registriert → Chrome bietet „App installieren“ an. Zusätzlich zeigt die Ordneransicht oben „Fotoschatz als App auf dem Startbildschirm? [Installieren] [✕]“ (✕ wird gemerkt: `fotoschatz.install-hidden`).
+- In der Cloud geprüft: Chrome meldet keine Installierbarkeits-Fehler (außer „Inkognito“ im Testbrowser).
+- ⚠ Am Handy prüfen: Installieren, Start über das Symbol ohne Link (Geheimnis aus `localStorage`), ob die Chrome-Meldung „Zum Beenden des Vollbildmodus …“ in der installierten App beim Öffnen eines Bildes noch erscheint. Falls ja: `display: "fullscreen"` im Manifest (dann ist die ganze App ohne Statusleiste).
+- Die Chrome-Meldung im Browser-Tab lässt sich von einer Webseite nicht abschalten.
 
 ### MVP-Ansichten
 - **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
@@ -347,15 +350,21 @@ Ohne Datei gelten diese Standardwerte:
    - Fußzeile: Anzahl Bilder · Stand des Index · App-Version.
 2. **Alle Bilder:** Zeitleiste, neueste zuerst, gruppiert nach Monat; der aktuelle Monat steht im Untertitel der Kopfzeile.
 3. **Ordnerinhalt:** Raster nach Aufnahmezeit sortiert.
-4. **Suche** (v0.5.0):
-   - Eingabefeld (klebt unter der Kopfzeile) mit Vorschlägen, gruppiert nach Personen, Orten (Ort, Stadt, Bundesland, Land – gleiche Namen zusammengefasst), Ordnern (mit Datum), Jahren (Aufnahmejahr) und Stichwörtern, jeweils mit Anzahl. Gruppe mit exaktem Treffer steht oben (z. B. „2019“ → Jahr).
-   - Vorschläge zählen nur Bilder, die zu den schon gewählten Chips passen; Begriffe ohne Treffer fallen weg.
-   - Gewählte Begriffe werden zu Chips und mit **UND** verknüpft (z. B. Person + Land + Jahr). Chip antippen = entfernen.
-   - Freitext (erste Zeile „Freitext …“ oder Enter): alle Wörter müssen vorkommen – in Beschreibung, Orten, Ordnername, Personen, Stichwörtern.
+4. **Suche** (v0.5.0, umgebaut v0.6.0):
+   - **Zwei Modi:** *Auswahl* (Begriffe wählen, keine Bilder) und *Raster*. Unter dem Suchfeld steht immer die Zahl der passenden Bilder („40 Bilder passen“) und der Knopf **Anzeigen** (bzw. Enter). Anzeigen legt einen Verlaufseintrag an: Zurück-Taste / „Ändern“ führt vom Raster zur Auswahl. Suchfeld oder Chip im Raster antippen → zurück zur Auswahl (Chip wird dabei entfernt). Aus dem Betrachter zurück → Raster.
+   - **Auswahl ohne Tippen** – alles gezählt innerhalb der schon gewählten Begriffe, Begriffe ohne Treffer fallen weg:
+     - Personen: die 12 häufigsten, „alle … zeigen“ klappt die ganze Liste auf.
+     - **Orte als Baum** Land › Bundesland › Stadt › Ort (leere und doppelte Stufen wie Wien/Wien entfallen). Antippen klappt auf, erste Zeile „Ganz <Name>“ wählt den ganzen Zweig; Blätter werden direkt gewählt. Gewählte Orte sind aufgeklappt und blau.
+     - Jahre (Aufnahmejahr), Stichwörter (falls vorhanden).
+   - **Beim Tippen:** Vorschläge gruppiert nach Personen, Orten (mit Lage, z. B. „Nürnberg – Bayern, Deutschland“), Ordnern (mit Datum), Jahren, Stichwörtern, jeweils mit Anzahl; Gruppe mit exaktem Treffer oben. Erste Zeile „Freitext … übernehmen“: alle Wörter müssen vorkommen in Beschreibung, Orten (deutsch **und** englisch), Ordnername, Personen, Stichwörtern.
+   - Gewählte Begriffe werden zu Chips und mit **UND** verknüpft (z. B. Person + Land + Jahr).
    - Groß-/Kleinschreibung, Akzente und Satzzeichen ignorieren (é→e, ä→a, ß→ss, „ile de france“ findet „Île-de-France“).
-   - Ohne Eingabe: Schnellauswahl der häufigsten Personen und Orte (je 12) und aller Jahre.
-   - Ergebnis als Raster, neueste zuerst, Anzahl im Untertitel. Chips und Text bleiben beim Zurückkommen aus dem Betrachter und beim Tab-Wechsel erhalten.
+   - Ergebnis als Raster, neueste zuerst. Chips und Text bleiben beim Tab-Wechsel erhalten.
    - Gemessen mit 23.100 künstlichen Bildern: Aufbau einmalig ≈ 0,13 s, Vorschläge je Tastendruck ≈ 2 ms (Cloud-Rechner; Handy langsamer, aber unkritisch).
+   - **Orte auf Deutsch** (in der App, nicht im Sync-Tool – Übersetzungen gehen ohne PC-Schritt live):
+     - Länder automatisch über den Browser (`Intl.DisplayNames`, englisch → deutsch, plus einige Schreibvarianten wie „USA“, „Czech Republic“); nur auf das Feld Land angewendet.
+     - Bundesländer, Städte, Orte über die Tabelle `docs/orte.js` (`PLACE_DE`), gepflegt von Claude. **Nur allgemein bekannte Namen** (Bavaria → Bayern, Munich → München …) – das Repo ist öffentlich, kleine/private Orte bleiben englisch.
+     - Nicht übersetzte Namen erscheinen so, wie Lightroom sie schreibt. Neue Orte kommen automatisch mit dem nächsten Sync in die App.
 5. **Vollbild-Betrachter:**
    - Wischen links/rechts, Nachbarbilder vorladen.
    - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter (sofort), Mitte = Bedienelemente aus/ein (mit ≈ 0,3 s Verzögerung wegen Doppeltippen). Wischen links/rechts blättert.
@@ -373,11 +382,14 @@ Ohne Datei gelten diese Standardwerte:
 - Ausschnitt der Kacheln (Stufe 1, v0.3.2): `object-position: 50% 20%` → Hochformat oben betont (Köpfe). Stufe 2 (v0.4.0): Bilder mit Gesichtern werden um den Fokuspunkt `fp` zugeschnitten (`object-position` aus `fp` und Seitenverhältnis). An echten Exporten geprüft: Gesichtsbereiche stimmen, auch bei zugeschnittenen Bildern (`diagnose.py` → `_sync\gesichter_test\`, rot Gesicht, gelb Ausschnitt).
 - Index einmal laden, Suchstrukturen einmal aufbauen (Begriff → Bild-IDs).
 
-### Service Worker – Caching
-- **App-Dateien:** vorab cachen, Cache-Name enthält `APP_VERSION`.
-- **Vorschaubilder:** cache-first (unveränderlich dank Hash im Namen) → beim zweiten Besuch sofort da, auch ohne Netz.
-- **Große Bilder:** cache-first mit Obergrenze (z. B. die letzten ~300 Bilder, älteste werden entfernt).
-- **`index.json`:** network-first, bei fehlendem Netz aus dem Cache.
+### Service Worker – Caching (v0.6.0)
+- Alle Cache-Namen beginnen mit `fotoschatz-` (auf `obitusde.github.io` liegen weitere Apps; beim Aufräumen werden nur eigene alte App-Caches gelöscht).
+- **App-Dateien:** vorab cachen, Cache-Name `fotoschatz-app-<VERSION>`; Startseite und `?v=`-Dateien aus dem Cache.
+- **Vorschaubilder** (`fotoschatz-thumb`): cache-first, bis ≈ 10.000 Stück (≈ 160 MB), älteste fliegen raus.
+- **Große Bilder** (`fotoschatz-img`): cache-first, die letzten ≈ 300.
+- Bilder werden vom Service Worker mit CORS geladen (kein „undurchsichtiger“ Cache); klappt das nicht, normal laden ohne Speichern.
+- **`index.json`** (`fotoschatz-data`): network-first, ohne Netz die zuletzt geladene Fassung → App läuft offline mit allen schon gesehenen Bildern (in der Cloud geprüft).
+- **Updates:** neue Version → Leiste „Neue Version verfügbar [Neu laden]“ (Prüfung beim Zurückkehren in die App und stündlich). In der Cloud geprüft.
 
 ---
 
@@ -416,8 +428,8 @@ Ohne Datei gelten diese Standardwerte:
 - Geheimnis-Handling, Ordner, Alle Bilder, Suche, Betrachter, Service Worker, Manifest, Installierbarkeit.
 - **2a** (v0.3.0): Link/Präfix, Index laden, Ordnerliste, Ordner-Raster, Alle Bilder, Vollbild. In der Cloud mit 414 Testbildern im Browser (Handy- und PC-Größe, hell/dunkel) geprüft. ⚠ Am echten Handy mit echtem R2 testen.
 - **2b** (v0.5.0): Suche wie oben, dazu Zoom im Betrachter und Präsentations-Klicker. In der Cloud im Browser geprüft (Handy/PC, hell/dunkel, Zwei-Finger-Zoom simuliert). ⚠ Zoom-Gefühl und Klicker am echten Handy prüfen.
-- **2c:** Manifest, Icons, Service Worker (Offline-Cache), „Neue Version verfügbar".
-- **2d – Chromecast** (Version 0.6.0, Entscheidung 28.09.2026: Cast-Knopf in der App, nicht Bildschirm spiegeln):
+- **2c** (v0.6.0): Manifest, Icons, Service Worker (Offline-Cache), „Neue Version verfügbar“, Installieren-Hinweis. Dazu: Suche mit Auswahl-Modus und Trefferzahl, Orte als Baum und auf Deutsch, `orte.txt` im Sync-Tool (sync.py v0.6.0). ⚠ Am Handy: installieren, Start über Symbol, Vollbild-Meldung.
+- **2d – Chromecast** (Version 0.7.0, Entscheidung 28.09.2026: Cast-Knopf in der App, nicht Bildschirm spiegeln):
   - Cast Web Sender SDK (von Google geladen) – laut Google unterstützt in Chrome auf Android und am PC, nur über https.
   - Zuerst mit dem fertigen **Default Media Receiver** (keine Registrierung): Betrachter bekommt einen Cast-Knopf, das aktuelle Bild (`img/…jpg` direkt aus R2) wird auf den Fernseher geschickt, Blättern am Handy (auch per Klicker) wechselt das Bild am Fernseher.
   - Laut Google zeigt dieser Empfänger Bilder höchstens in 1280 × 720. Wenn das am Fernseher zu weich ist: eigene Empfänger-App (einmalige Google-Cast-Registrierung, ca. 5 $), Empfängerseite auf GitHub Pages, volle Auflösung.

@@ -1,10 +1,11 @@
 "use strict";
 
-const APP_VERSION = "0.5.0";
+const APP_VERSION = "0.6.0";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
 const INFO_KEY = "fotoschatz.info";
+const INSTALL_KEY = "fotoschatz.install-hidden";
 const HEADER_H = 44;
 const GAP = 2;
 const MAX_ZOOM = 4;
@@ -93,7 +94,74 @@ let DATA = null;
 const thumbUrl = (p) => `${BASE}/thumb/${p.id}.${p.h}.webp`;
 const imageUrl = (p) => `${BASE}/img/${p.id}.${p.h}.jpg`;
 
+/* ---------------------------------------------------------------- Orte deutsch */
+
+// Laendernamen, die der Browser anders schreibt als Lightroom (englisch -> ISO-Code)
+const COUNTRY_ALIASES = {
+  "USA": "US", "United States of America": "US", "Czech Republic": "CZ", "Turkey": "TR", "Türkiye": "TR",
+  "Macedonia": "MK", "Holland": "NL", "The Netherlands": "NL", "UK": "GB", "Great Britain": "GB",
+  "Russian Federation": "RU", "Republic of Korea": "KR", "Ivory Coast": "CI", "Cape Verde": "CV",
+  "Burma": "MM", "Swaziland": "SZ", "Vatican City": "VA", "Kingdom of Denmark": "DK",
+};
+const PLACE_KEYS = ["co", "st", "ci", "sl"];
+
+// Laender: aus dem Browser (Intl.DisplayNames). Bundeslaender, Staedte, Orte: Tabelle PLACE_DE (orte.js).
+function makePlaceTranslator() {
+  const countries = new Map();
+  const places = new Map();
+  try {
+    const en = new Intl.DisplayNames(["en"], { type: "region", fallback: "none" });
+    const de = new Intl.DisplayNames(["de"], { type: "region", fallback: "none" });
+    const addCountry = (name, code) => {
+      const german = de.of(code);
+      if (german) countries.set(normText(name), german);
+    };
+    for (let a = 65; a <= 90; a++) {
+      for (let b = 65; b <= 90; b++) {
+        const code = String.fromCharCode(a, b);
+        let name;
+        try { name = en.of(code); } catch (e) { continue; }
+        if (!name || name === code) continue;
+        addCountry(name, code);
+        if (name.includes("&")) addCountry(name.replace(/&/g, "and"), code);
+        if (name.startsWith("St. ")) addCountry(`Saint ${name.slice(4)}`, code);
+      }
+    }
+    for (const [name, code] of Object.entries(COUNTRY_ALIASES)) addCountry(name, code);
+  } catch (e) { /* alter Browser: Laender bleiben wie in Lightroom */ }
+  if (typeof PLACE_DE === "object") {
+    for (const [name, german] of Object.entries(PLACE_DE)) places.set(normText(name), german);
+  }
+  return (key, value) => (key === "co" && countries.get(normText(value))) || places.get(normText(value)) || value;
+}
+
+// Land > Bundesland > Stadt > Ort ohne leere und doppelte Stufen (z. B. Wien/Wien)
+function placePath(p) {
+  const path = [];
+  const seen = new Set();
+  for (const key of PLACE_KEYS) {
+    const value = p[key];
+    if (!value) continue;
+    const norm = normText(value);
+    if (!norm || seen.has(norm)) continue;
+    seen.add(norm);
+    path.push(value);
+  }
+  return path;
+}
+
 function prepare(index) {
+  const translate = makePlaceTranslator();
+  for (const p of index.photos) {
+    for (const key of PLACE_KEYS) {
+      if (!p[key]) continue;
+      const german = translate(key, p[key]);
+      if (german !== p[key]) {
+        (p._en || (p._en = [])).push(p[key]);
+        p[key] = german;
+      }
+    }
+  }
   const photos = index.photos.slice().sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
   const byFolder = new Map();
   for (const p of photos) {
@@ -447,7 +515,7 @@ const Viewer = {
   renderInfo(p) {
     const folder = DATA.folderByName.get(p.f);
     const label = folder ? folderLabel(folder) : { name: p.f, date: "" };
-    const place = [...new Set([p.sl, p.ci, p.st, p.co].filter(Boolean))].join(", ");
+    const place = placePath(p).reverse().join(", ");
     const lines = [el("div", { class: "when", text: fmtFull.format(parseLocal(p.t)) })];
     lines.push(el("div", { class: "line", text: label.date ? `${label.name} · ${label.date}` : label.name }));
     if (p.p && p.p.length) lines.push(el("div", { class: "line" }, el("span", { class: "label", text: "Personen: " }), p.p.join(", ")));
@@ -646,7 +714,7 @@ function openViewer(i) {
 
 /* ---------------------------------------------------------------- Suche */
 
-// Begriffe: p = Person, o = Ort (Ort, Stadt, Bundesland, Land), f = Ordner, y = Jahr, k = Stichwort
+// Begriffe: p = Person, o = Ort (Knoten im Baum Land > Bundesland > Stadt > Ort), f = Ordner, y = Jahr, k = Stichwort
 const TERM_TYPES = ["p", "o", "f", "y", "k"];
 const TERM_GROUP = { p: "Personen", o: "Orte", f: "Ordner", y: "Jahre", k: "Stichwörter" };
 const SUGGEST_LIMIT = { p: 6, o: 6, f: 5, y: 4, k: 4 };
@@ -662,20 +730,19 @@ const words = (s) => normText(s).split(" ").filter(Boolean);
 
 let SEARCH = null;
 
-// Einmal aufbauen: Begriff -> Positionen in DATA.allDesc (neueste zuerst) und je Bild ein Suchtext.
+// Einmal aufbauen: Begriff -> Positionen in DATA.allDesc (neueste zuerst), je Bild Suchtext und Begriffe.
 function buildSearch() {
   const list = DATA.allDesc;
   const terms = new Map();
-  const add = (type, value, i, label = value, sub = "") => {
-    const norm = normText(value);
-    if (!norm) return;
-    const key = `${type}:${type === "f" ? value : norm}`;
+  const children = new Map();
+  const add = (type, key, i, props) => {
     let t = terms.get(key);
     if (!t) {
-      t = { key, type, label, sub, norm, ids: [] };
+      t = { key, type, ids: [], ...props };
       terms.set(key, t);
     }
     if (t.ids[t.ids.length - 1] !== i) t.ids.push(i);
+    return t;
   };
   const folderInfo = new Map();
   for (const f of DATA.index.folders) {
@@ -683,18 +750,40 @@ function buildSearch() {
     folderInfo.set(f.n, f.x ? { name: f.n, sub: String(f.y) } : { name: label.name, sub: label.date || String(f.y) });
   }
   const text = new Array(list.length);
+  const photoTerms = new Array(list.length);
   list.forEach((p, i) => {
-    for (const name of p.p || []) add("p", name, i);
-    for (const place of [p.sl, p.ci, p.st, p.co]) if (place) add("o", place, i);
+    const mine = [];
+    for (const name of p.p || []) {
+      const norm = normText(name);
+      if (norm) mine.push(add("p", `p:${norm}`, i, { label: name, sub: "", norm }).key);
+    }
+    let path = "";
+    const labels = [];
+    for (const place of placePath(p)) {
+      const norm = normText(place);
+      const parent = path;
+      path = path ? `${path}|${norm}` : norm;
+      const key = `o:${path}`;
+      if (!terms.has(key)) {
+        if (!children.has(parent)) children.set(parent, []);
+        children.get(parent).push(key);
+      }
+      mine.push(add("o", key, i, { label: place, sub: labels.slice().reverse().join(", "), norm, parent }).key);
+      labels.push(place);
+    }
     const fi = folderInfo.get(p.f) || { name: p.f, sub: "" };
-    add("f", p.f, i, fi.name, fi.sub);
-    add("y", p.t.slice(0, 4), i);
-    for (const k of p.kw || []) add("k", k, i);
-    const parts = [p.de, p.sl, p.ci, p.st, p.co, p.f, ...(p.p || []), ...(p.kw || [])];
+    add("f", `f:${p.f}`, i, { label: fi.name, sub: fi.sub, norm: normText(`${p.f} ${fi.name}`) });
+    const year = p.t.slice(0, 4);
+    mine.push(add("y", `y:${year}`, i, { label: year, sub: "", norm: year }).key);
+    for (const k of p.kw || []) {
+      const norm = normText(k);
+      if (norm) mine.push(add("k", `k:${norm}`, i, { label: k, sub: "", norm }).key);
+    }
+    photoTerms[i] = mine;
+    const parts = [p.de, p.sl, p.ci, p.st, p.co, p.f, ...(p.p || []), ...(p.kw || []), ...(p._en || [])];
     text[i] = ` ${normText(parts.filter(Boolean).join(" "))} `;
   });
-  for (const t of terms.values()) if (t.type === "f") t.norm = normText(`${t.key.slice(2)} ${t.label}`);
-  return { terms, text };
+  return { terms, children, text, photoTerms };
 }
 
 // Gewaehlte Begriffe (UND) plus Freitext (alle Woerter muessen vorkommen). null = keine Suche.
@@ -714,6 +803,17 @@ function searchPositions(keys, freeText) {
     pos = base.filter((i) => w.every((x) => SEARCH.text[i].includes(x)));
   }
   return pos;
+}
+
+// Anzahl je Begriff innerhalb der aktuellen Treffer
+function termCounts(pos) {
+  const counts = new Map();
+  const count = (i) => {
+    for (const key of SEARCH.photoTerms[i]) counts.set(key, (counts.get(key) || 0) + 1);
+  };
+  if (pos) pos.forEach(count);
+  else for (let i = 0; i < SEARCH.photoTerms.length; i++) count(i);
+  return counts;
 }
 
 function suggestTerms(query, keys) {
@@ -753,6 +853,7 @@ let lastSearch = { q: [], t: "" };
 
 const ICON_SEARCH = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>';
 const ICON_X = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+const ICON_CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5.5 15.5 12 9 18.5"/></svg>';
 
 function svgNode(markup) {
   const t = document.createElement("template");
@@ -760,49 +861,92 @@ function svgNode(markup) {
   return t.content.firstChild;
 }
 
+// Zwei Modi: "select" (Begriffe waehlen, Anzahl sichtbar, keine Bilder) und "results" (Raster).
+// "Anzeigen" legt einen neuen Verlaufseintrag an -> Zurueck-Taste fuehrt vom Raster zur Auswahl.
 function mountSearch(main, state, m) {
   if (!SEARCH) SEARCH = buildSearch();
-  const s = {
-    keys: (state.q || lastSearch.q).filter((k) => SEARCH.terms.has(k)),
-    text: state.t !== undefined ? state.t : lastSearch.t,
-    panel: false,
-    shown: null,
-  };
+  const s = { keys: [], text: "", mode: "select", panel: false, shown: null, open: new Set(), allPersons: false, pending: null };
 
   const chips = el("div", { class: "chips" });
   const input = el("input", {
     type: "search", placeholder: "Person, Ort, Ordner, Jahr …", enterkeyhint: "search",
     autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Suchbegriff",
   });
-  input.value = s.text;
   const clear = el("button", { type: "button", class: "icon-btn search-clear", "aria-label": "Eingabe löschen" }, svgNode(ICON_X));
+  const countText = el("span", { class: "search-count" });
+  const action = el("button", { type: "button", class: "search-action" });
   const bar = el("div", { class: "search-bar" },
-    chips, el("div", { class: "search-field" }, svgNode(ICON_SEARCH), input, clear));
+    chips,
+    el("div", { class: "search-field" }, svgNode(ICON_SEARCH), input, clear),
+    el("div", { class: "search-status" }, countText, action));
   const body = el("div", { class: "search-body" });
   const results = el("div", { class: "search-results" });
   main.append(bar, body, results);
 
-  const addKey = (key) => {
+  const hasFilter = () => s.keys.length > 0 || words(s.text).length > 0;
+
+  // Aenderungen im Raster-Modus: erst zur Auswahl zurueck (Verlauf), dann ausfuehren
+  const edit = (fn) => {
+    if (s.mode === "results") {
+      s.pending = fn;
+      history.back();
+    } else {
+      fn();
+    }
+  };
+
+  const addKey = (key) => edit(() => {
     s.keys.push(key);
     s.text = "";
     input.value = "";
     s.panel = false;
     input.blur();
     update();
-  };
+  });
+
+  const removeKey = (key) => edit(() => {
+    s.keys = s.keys.filter((k) => k !== key);
+    update();
+  });
+
+  function showResults() {
+    if (!hasFilter()) return;
+    s.panel = false;
+    input.blur();
+    navigate({ v: "search", q: s.keys.slice(), t: s.text, r: 1 });
+  }
 
   const pick = (t, count) => el("button", { type: "button", class: "pick", onclick: () => addKey(t.key) },
-    t.label, el("small", { text: String(count ?? t.ids.length) }));
+    t.label, el("small", { text: count.toLocaleString("de-DE") }));
 
   function renderChips() {
     chips.replaceChildren(...s.keys.map((key) => {
       const t = SEARCH.terms.get(key);
       return el("button", {
-        type: "button", class: "chip", title: `${TERM_GROUP[t.type]} – entfernen`,
-        onclick: () => { s.keys = s.keys.filter((k) => k !== key); update(); },
+        type: "button", class: "chip", title: `${TERM_GROUP[t.type]} – entfernen`, onclick: () => removeKey(key),
       }, el("span", { text: t.label }), svgNode(ICON_X));
     }));
     clear.hidden = !s.text;
+  }
+
+  function renderStatus(pos) {
+    const n = pos ? pos.length : DATA.allDesc.length;
+    if (s.mode === "results") {
+      countText.textContent = countLabel(n);
+      action.textContent = "Ändern";
+      action.disabled = false;
+      action.onclick = () => history.back();
+    } else if (hasFilter()) {
+      countText.textContent = n ? `${countLabel(n)} passen` : "Keine Bilder passen";
+      action.textContent = "Anzeigen";
+      action.disabled = n === 0;
+      action.onclick = showResults;
+    } else {
+      countText.textContent = `${countLabel(n)} – Begriffe wählen`;
+      action.textContent = "Anzeigen";
+      action.disabled = true;
+      action.onclick = null;
+    }
   }
 
   function renderPanel() {
@@ -810,7 +954,7 @@ function mountSearch(main, state, m) {
     const free = searchPositions(s.keys, s.text);
     nodes.push(el("button", {
       type: "button", class: "sg-row sg-free", onclick: () => { s.panel = false; input.blur(); update(); },
-    }, el("span", { class: "name", text: `Freitext „${s.text.trim()}“` }),
+    }, el("span", { class: "name", text: `Freitext „${s.text.trim()}“ übernehmen` }),
     el("span", { class: "meta", text: free && free.length ? countLabel(free.length) : "keine Treffer" })));
     for (const group of suggestTerms(s.text, s.keys)) {
       nodes.push(el("div", { class: "sg-head", text: TERM_GROUP[group.type] }));
@@ -823,20 +967,81 @@ function mountSearch(main, state, m) {
     body.replaceChildren(...nodes);
   }
 
-  function renderPicks() {
-    const top = (type) => [...SEARCH.terms.values()].filter((t) => t.type === type)
-      .sort((a, b) => b.ids.length - a.ids.length || a.label.localeCompare(b.label, "de")).slice(0, PICK_LIMIT);
-    const years = [...SEARCH.terms.values()].filter((t) => t.type === "y").sort((a, b) => (a.label < b.label ? 1 : -1));
+  // Orte als Baum: Antippen klappt auf, erste Zeile "Ganz …" waehlt den ganzen Zweig
+  function placeRows(counts) {
+    const rows = [];
+    const chosen = s.keys.filter((k) => k.startsWith("o:"));
+    const walk = (parent, depth) => {
+      const kids = (SEARCH.children.get(parent) || []).filter((k) => counts.get(k))
+        .sort((a, b) => counts.get(b) - counts.get(a) || SEARCH.terms.get(a).label.localeCompare(SEARCH.terms.get(b).label, "de"));
+      for (const key of kids) {
+        const t = SEARCH.terms.get(key);
+        const n = counts.get(key);
+        const path = key.slice(2);
+        const hasKids = (SEARCH.children.get(path) || []).some((k) => counts.get(k));
+        const isChosen = chosen.includes(key);
+        const open = hasKids && (isChosen || s.open.has(key) || chosen.some((c) => c.startsWith(`${key}|`)));
+        const row = el("button", {
+          type: "button",
+          class: "tree-row" + (open ? " open" : "") + (isChosen ? " chosen" : ""),
+          style: `padding-left:${16 + depth * 20}px`,
+          "aria-expanded": hasKids ? String(open) : null,
+          onclick: () => {
+            if (isChosen) return;
+            if (!hasKids) { addKey(key); return; }
+            if (s.open.has(key)) s.open.delete(key);
+            else s.open.add(key);
+            renderFacets();
+          },
+        }, el("span", { class: "name", text: t.label }), el("span", { class: "meta", text: n.toLocaleString("de-DE") }),
+        hasKids ? svgNode(ICON_CHEVRON) : el("span", { class: "chev-space" }));
+        rows.push(row);
+        if (open) {
+          if (!isChosen) {
+            rows.push(el("button", {
+              type: "button", class: "tree-row tree-all", style: `padding-left:${16 + (depth + 1) * 20}px`,
+              onclick: () => addKey(key),
+            }, el("span", { class: "name", text: `Ganz ${t.label}` }), el("span", { class: "meta", text: n.toLocaleString("de-DE") }),
+            el("span", { class: "chev-space" })));
+          }
+          walk(path, depth + 1);
+        }
+      }
+    };
+    walk("", 0);
+    return rows;
+  }
+
+  function renderFacets() {
+    const counts = termCounts(searchPositions(s.keys, s.text));
+    const ofType = (type) => [...counts.keys()].filter((k) => k.startsWith(`${type}:`) && !s.keys.includes(k))
+      .map((k) => SEARCH.terms.get(k));
+    const byCount = (a, b) => counts.get(b.key) - counts.get(a.key) || a.label.localeCompare(b.label, "de");
     const nodes = [];
-    for (const [title, list] of [["Personen", top("p")], ["Orte", top("o")], ["Jahre", years]]) {
-      if (!list.length) continue;
-      nodes.push(el("div", { class: "sg-head", text: title }), el("div", { class: "picks" }, ...list.map((t) => pick(t))));
+
+    const persons = ofType("p").sort(byCount);
+    if (persons.length) {
+      const shown = s.allPersons ? persons : persons.slice(0, PICK_LIMIT);
+      const box = el("div", { class: "picks" }, ...shown.map((t) => pick(t, counts.get(t.key))));
+      if (persons.length > PICK_LIMIT) {
+        box.append(el("button", {
+          type: "button", class: "pick pick-more",
+          onclick: () => { s.allPersons = !s.allPersons; renderFacets(); },
+        }, s.allPersons ? "weniger" : `alle ${persons.length} zeigen`));
+      }
+      nodes.push(el("div", { class: "sg-head", text: "Personen" }), box);
     }
-    if (!nodes.length) nodes.push(el("p", { class: "center muted", text: "Suchbegriff eingeben." }));
+    const places = placeRows(counts);
+    if (places.length) nodes.push(el("div", { class: "sg-head", text: "Orte" }), el("div", { class: "tree" }, ...places));
+    const years = ofType("y").sort((a, b) => (a.label < b.label ? 1 : -1));
+    if (years.length) nodes.push(el("div", { class: "sg-head", text: "Jahre" }), el("div", { class: "picks" }, ...years.map((t) => pick(t, counts.get(t.key)))));
+    const keywords = ofType("k").sort(byCount).slice(0, 30);
+    if (keywords.length) nodes.push(el("div", { class: "sg-head", text: "Stichwörter" }), el("div", { class: "picks" }, ...keywords.map((t) => pick(t, counts.get(t.key)))));
+    if (!nodes.length) nodes.push(el("p", { class: "center muted", text: "Nichts weiter einzugrenzen." }));
     body.replaceChildren(...nodes);
   }
 
-  function showResults() {
+  function renderResults() {
     const signature = JSON.stringify([s.keys, words(s.text)]);
     if (signature === s.shown) {
       if (m.grid) m.grid.render();
@@ -848,7 +1053,6 @@ function mountSearch(main, state, m) {
     results.replaceChildren();
     const pos = searchPositions(s.keys, s.text) || [];
     m.list = pos.map((i) => DATA.allDesc[i]);
-    $("#subtitle").textContent = pos.length ? countLabel(pos.length) : "";
     window.scrollTo(0, 0);
     if (m.list.length) m.grid = new Grid(results, m.list);
     else results.append(el("p", { class: "center muted", text: "Keine Bilder gefunden." }));
@@ -856,26 +1060,37 @@ function mountSearch(main, state, m) {
 
   function update() {
     lastSearch = { q: s.keys.slice(), t: s.text };
-    history.replaceState({ ...(history.state || {}), v: "search", q: lastSearch.q, t: s.text }, "");
+    if (s.mode === "select") history.replaceState({ v: "search", q: lastSearch.q, t: s.text }, "");
     renderChips();
-    const searching = s.keys.length > 0 || words(s.text).length > 0;
-    if (s.panel && s.text.trim()) {
-      results.hidden = true;
-      renderPanel();
-    } else if (!searching) {
-      results.hidden = true;
-      s.shown = null;
-      if (m.grid) m.grid.destroy();
-      m.grid = null;
-      m.list = [];
-      results.replaceChildren();
+    const pos = searchPositions(s.keys, s.text);
+    renderStatus(pos);
+    if (s.mode === "results") {
       $("#subtitle").textContent = "";
-      renderPicks();
-    } else {
       body.replaceChildren();
       results.hidden = false;
-      showResults();
+      renderResults();
+      return;
     }
+    $("#subtitle").textContent = "";
+    results.hidden = true;
+    if (s.panel && s.text.trim()) renderPanel();
+    else renderFacets();
+  }
+
+  function apply(st) {
+    const mode = st.r ? "results" : "select";
+    s.keys = (st.q || lastSearch.q).filter((k) => SEARCH.terms.has(k));
+    s.text = st.t !== undefined ? st.t : lastSearch.t;
+    if (input.value !== s.text) input.value = s.text;
+    if (mode !== s.mode) {
+      s.mode = mode;
+      s.panel = false;
+      if (mode === "select") window.scrollTo(0, 0);
+    }
+    update();
+    const fn = s.pending;
+    s.pending = null;
+    if (fn && s.mode === "select") fn();
   }
 
   input.addEventListener("input", () => {
@@ -884,6 +1099,10 @@ function mountSearch(main, state, m) {
     update();
   });
   input.addEventListener("focus", () => {
+    if (s.mode === "results") {
+      edit(() => {});
+      return;
+    }
     if (s.text.trim() && !s.panel) {
       s.panel = true;
       update();
@@ -892,18 +1111,18 @@ function mountSearch(main, state, m) {
   input.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
-    s.panel = false;
-    input.blur();
-    update();
+    if (hasFilter() && searchPositions(s.keys, s.text).length) showResults();
+    else { s.panel = false; input.blur(); update(); }
   });
-  clear.addEventListener("click", () => {
+  clear.addEventListener("click", () => edit(() => {
     s.text = "";
     input.value = "";
     s.panel = false;
     update();
-  });
+  }));
 
-  update();
+  m.search = { apply };
+  apply(state);
 }
 
 /* ---------------------------------------------------------------- Ansichten & Verlauf */
@@ -949,6 +1168,7 @@ function mountView(state) {
   } else {
     setHeader("Fotoschatz");
     main.append(folderListView());
+    renderInstallBanner();
   }
 
   window.scrollTo(0, scrollMemory.get(key) || 0);
@@ -957,6 +1177,7 @@ function mountView(state) {
 
 function render(state) {
   if (!mounted || mounted.key !== viewKey(state)) mountView(state);
+  else if (mounted.search) mounted.search.apply(state);
   if (!mounted) return;
   updateNav(state.v);
   if (state.viewer && mounted.list && mounted.list.length) Viewer.show(mounted.list, state.viewer.i);
@@ -978,6 +1199,82 @@ function switchTab(view) {
   navigate({ v: view }, view === "folders" || current.v !== "folders");
 }
 
+/* ---------------------------------------------------------------- App installieren & Updates */
+
+let installPrompt = null;
+
+function renderInstallBanner() {
+  const old = $(".install-bar");
+  if (old) old.remove();
+  const list = $(".folders");
+  if (!installPrompt || !list || readPref(INSTALL_KEY) === "1") return;
+  list.prepend(el("div", { class: "install-bar" },
+    el("span", { text: "Fotoschatz als App auf dem Startbildschirm?" }),
+    el("button", {
+      type: "button", class: "search-action",
+      onclick: async () => {
+        const prompt = installPrompt;
+        installPrompt = null;
+        renderInstallBanner();
+        prompt.prompt();
+        try { await prompt.userChoice; } catch (e) { /* egal */ }
+      },
+    }, "Installieren"),
+    el("button", {
+      type: "button", class: "icon-btn", "aria-label": "Nicht mehr anzeigen",
+      onclick: () => { writePref(INSTALL_KEY, "1"); renderInstallBanner(); },
+    }, svgNode(ICON_X))));
+}
+
+function showUpdateBar(worker) {
+  if ($(".update-bar")) return;
+  document.body.append(el("div", { class: "update-bar", role: "status" },
+    el("span", { text: "Neue Version verfügbar" }),
+    el("button", {
+      type: "button", class: "search-action",
+      onclick: () => {
+        updating = true;
+        worker.postMessage("SKIP_WAITING");
+      },
+    }, "Neu laden")));
+}
+
+let updating = false;
+
+function registerServiceWorker() {
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    installPrompt = e;
+    renderInstallBanner();
+  });
+  window.addEventListener("appinstalled", () => {
+    installPrompt = null;
+    renderInstallBanner();
+  });
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (updating) location.reload();
+  });
+  navigator.serviceWorker.register("sw.js").then((reg) => {
+    const offer = (worker) => {
+      if (worker && navigator.serviceWorker.controller) showUpdateBar(worker);
+    };
+    offer(reg.waiting);
+    reg.addEventListener("updatefound", () => {
+      const worker = reg.installing;
+      if (!worker) return;
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "installed") offer(worker);
+      });
+    });
+    // Die App bleibt am Handy lange offen: beim Zurueckkehren und stuendlich nach Updates schauen
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reg.update().catch(() => {});
+    });
+    setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+  }).catch(() => { /* ohne Service Worker geht die App trotzdem */ });
+}
+
 /* ---------------------------------------------------------------- Start */
 
 function showNeutral(text) {
@@ -987,6 +1284,7 @@ function showNeutral(text) {
 }
 
 async function start() {
+  registerServiceWorker();
   Viewer.init();
   $("#back").addEventListener("click", () => history.back());
   for (const btn of document.querySelectorAll("#nav button")) {

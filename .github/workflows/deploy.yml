@@ -48,7 +48,15 @@ jobs:
             echo "::error::Version $VERSION steht nicht in docs/index.html - Versionsnummer nachziehen."
             exit 1
           fi
-          echo "docs/index.html passt zu Version $VERSION."
+          if ! grep -q "APP_VERSION = \"$VERSION\"" docs/app.js; then
+            echo "::error::APP_VERSION in docs/app.js ist nicht $VERSION - Versionsnummer nachziehen."
+            exit 1
+          fi
+          if [ -f docs/sw.js ] && ! grep -q "VERSION = \"$VERSION\"" docs/sw.js; then
+            echo "::error::VERSION in docs/sw.js ist nicht $VERSION - sonst bekommt die installierte App kein Update."
+            exit 1
+          fi
+          echo "docs/index.html, app.js und sw.js passen zu Version $VERSION."
 
       - name: Pages vorbereiten
         uses: actions/configure-pages@v5

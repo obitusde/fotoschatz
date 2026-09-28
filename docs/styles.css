@@ -117,6 +117,35 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 .folder-row .name { font-size: 1rem; }
 .folder-row .meta { font-size: .8rem; color: var(--muted); margin-top: 2px; }
 .folder-row.rest .name { color: var(--muted); font-style: italic; }
+.install-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 12px 4px;
+  padding: 10px 6px 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: .9rem;
+}
+.install-bar span { flex: 1; }
+.update-bar {
+  position: fixed;
+  left: 12px; right: 12px;
+  bottom: calc(var(--nav-h) + var(--safe-bottom) + 12px);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 10px 10px 10px 16px;
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+}
 .footer-note { text-align: center; font-size: .75rem; color: var(--muted); padding: 24px 16px; }
 
 /* ---------- Raster ---------- */
@@ -185,7 +214,27 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 }
 .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip svg { width: 16px; height: 16px; flex: none; }
-.search-body { max-width: 760px; margin: 0 auto; }
+.search-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 736px;
+  margin: 8px auto 0;
+  padding: 0 4px;
+}
+.search-count { font-size: .9rem; color: var(--muted); }
+.search-action {
+  flex: none;
+  padding: 7px 18px;
+  border-radius: 18px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  font-size: .9rem;
+}
+.search-action:disabled { opacity: .35; cursor: default; }
+.search-body { max-width: 760px; margin: 0 auto; padding-bottom: 16px; }
 .search-body:empty { display: none; }
 .sg-head {
   padding: 16px 16px 6px;
@@ -217,6 +266,27 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
   font-size: .9rem;
 }
 .pick small { margin-left: 6px; color: var(--muted); font-size: .75rem; }
+.pick-more { color: var(--accent); }
+.tree { border-top: 1px solid var(--line); }
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px 8px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.tree-row:hover { background: var(--surface); }
+.tree-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row .meta { flex: none; font-size: .8rem; color: var(--muted); }
+.tree-row svg { width: 18px; height: 18px; flex: none; color: var(--muted); transition: transform .15s ease; }
+.tree-row.open svg { transform: rotate(90deg); }
+.tree-row.open > .name { font-weight: 600; }
+.tree-row.chosen > .name { color: var(--accent); }
+.tree-all .name { color: var(--accent); }
+.chev-space { width: 18px; flex: none; }
 .search-results { padding-top: 2px; }
 
 /* ---------- Vollbild ---------- */
