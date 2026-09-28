@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v1.9 · 28.09.2026 (Manifest nicht mehr gecacht, Anzeige-Modus in der Fußzeile, v0.6.3)
+**Dokumentversion:** v2.0 · 28.09.2026 (installierte App im Vollbild bestätigt; Übersichts-Tool, v0.6.4)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -77,6 +77,10 @@
 - Der Lightroom-Ordnername und der Aufnahmezeitpunkt stehen im Dateinamen (siehe Abschnitt 5).
 - Workflow: Ein Ereignisordner ist fertig bearbeitet → exportieren → Sync starten.
 - Neu bearbeitete oder korrigierte Bilder werden neu exportiert und **überschreiben** die alte Datei → der Sync ersetzt sie online.
+
+### Originale
+- Liegen auf `D:\Bilder - Raw` (ändert sich nicht), darunter `JJJJ\<Ereignisordner>\` wie oben.
+- **In diesen Ordner wird niemals geschrieben** – kein Skript legt dort Dateien an, ändert oder löscht etwas. Tools dürfen dort nur Verzeichnisse auflisten (Namen, Größen).
 
 ### Rechner
 - Windows-PC. Das Sync-Tool läuft lokal. Installiert: Python, exiftool (`winget install OliverBetz.ExifTool`), rclone (`winget`).
@@ -189,6 +193,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 ### Dateien (Repo `sync/` → am PC `D:\Fotoschatz\_sync\`)
 - `sync.py` – Hauptablauf · `regeln.py` – gemeinsame Regeln (Dateinamen, Ordner, Prüfungen, Metadaten) · `diagnose.py` – Prüfen ohne Upload
 - `sync.bat` – Sync per Doppelklick · `probelauf.bat` – dasselbe mit `--dry-run`
+- `uebersicht.py` + `uebersicht.bat` – Übersicht „was ist auf der Platte / exportiert / online?“ (siehe unten)
 - `config.example.json` – Vorlage für die optionale `config.local.json` (per `.gitignore` ausgeschlossen)
 - Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `orte.txt` (alle Ortsnamen als Baum Land > Bundesland > Stadt > Ort mit Anzahl, so wie Lightroom sie schreibt – ab und zu an Claude schicken, damit englische Namen in `docs/orte.js` übersetzt werden), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
 
@@ -260,6 +265,14 @@ Ohne Datei gelten diese Standardwerte:
     - Nur wenn sich etwas geändert hat oder ein früherer Upload fehlschlug (`upload_pending`). Bei rclone-Fehler Abbruch; der nächste Lauf wiederholt den Upload.
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
+
+### Übersichts-Tool `uebersicht.py` (v0.6.4)
+- Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).
+- Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
+- Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise Aufnahmezeit = Dateiname des Originals.
+- Ergebnis `uebersicht.html` neben dem Skript (öffnet sich automatisch, nicht im Repo, nicht hochgeladen): Summen + Balken, Jahre aufklappbar, darin Ordner mit Ampel (komplett online / exportiert, Sync fehlt / teilweise / nicht exportiert), bei offenen Ordnern die fehlenden Originaldateien; Filter „Nur offene“. Unten aufklappbar: Exporte ohne passendes Original, `_`-Ordner, Videos, doppelte Ordnernamen, Dateiarten.
+- Sicherheit: Abbruch, wenn Skript/Ausgabe im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Prüfsummen, Dateiliste).
+- Bekannte Unschärfe: Bilder in Lightroom-**Stapeln** (nur das oberste wird exportiert) und Photoshop-Bearbeitungen (`…-Bearbeitet.tif`) erscheinen als „nicht exportiert“. Genau ginge es nur über eine Kopie des Lightroom-Katalogs (später, falls nötig).
 
 ### Metadaten-Zuordnung (verbindlich, geprüft an 114 echten Exporten)
 
@@ -343,7 +356,7 @@ Ohne Datei gelten diese Standardwerte:
 - Lösung v0.6.2: Die installierte App läuft **ganz im Vollbild** (`display: "fullscreen"`, keine Statusleiste, Handy nutzt Gestensteuerung). Kopfzeile hält Abstand zur Kamera-Aussparung (`env(safe-area-inset-top)`). ⚠ Am Handy prüfen, dass dabei keine Chrome-Meldung erscheint. Geänderte Manifest-Einstellungen übernimmt Chrome bei installierten Apps nur verzögert → zum Testen App deinstallieren und neu installieren.
 - Einfärben der Statusleiste per `theme-color` (v0.6.1) hat in der installierten App nicht gewirkt (Handy, 28.09.2026) – Code bleibt, schadet nicht.
 - v0.6.2 am Handy: keine Chrome-Meldung mehr, aber Statusleiste noch sichtbar. Vermutete Ursache: Der Service Worker lieferte das Manifest aus dem alten App-Cache (noch `standalone`), Android friert die Anzeige beim Installieren ein. Seit v0.6.3 kommt das Manifest immer frisch aus dem Netz; die Fußzeile der Ordnerliste zeigt den tatsächlichen Modus („Anzeige: Vollbild / Fenster / Browser“).
-- ⚠ Falls „Anzeige: Vollbild“ und die Statusleiste trotzdem bleibt: bekannte Chrome-Lücke bei installierten Web-Apps (Kamera-Aussparung, „short-edges cutout mode“), laut Berichten Juli 2026 in Arbeit – dann auf Chrome-Update warten.
+- ✅ v0.6.3 am Handy bestätigt: nach Deinstallieren/Neuinstallieren läuft die App im Vollbild, keine Statusleiste, keine Chrome-Meldung.
 
 ### MVP-Ansichten
 - **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
