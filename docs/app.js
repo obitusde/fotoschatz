@@ -1,12 +1,14 @@
 "use strict";
 
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.5.0";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
 const INFO_KEY = "fotoschatz.info";
 const HEADER_H = 44;
 const GAP = 2;
+const MAX_ZOOM = 4;
+const DOUBLE_TAP_MS = 280;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -305,7 +307,8 @@ class Grid {
     const row = this.rows[this.rowOfPhoto[i]];
     if (!row) return;
     const y = this.originY() + row.top;
-    const topLimit = window.scrollY + $("#top").offsetHeight;
+    const bar = $(".search-bar");
+    const topLimit = window.scrollY + $("#top").offsetHeight + (bar ? bar.offsetHeight : 0);
     const bottomLimit = window.scrollY + window.innerHeight - $("#nav").offsetHeight;
     if (y < topLimit || y + row.h > bottomLimit) {
       window.scrollTo(0, Math.max(0, y - window.innerHeight / 2 + row.h / 2));
@@ -321,14 +324,23 @@ class Grid {
 
 /* ---------------------------------------------------------------- Vollbild */
 
+const NEXT_KEYS = new Set(["ArrowRight", "PageDown", " "]);   // Praesentations-Klicker: Bild ab / Bild auf
+const PREV_KEYS = new Set(["ArrowLeft", "PageUp"]);
+const clampNum = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
 const Viewer = {
   list: [],
   i: 0,
   open: false,
-  drag: null,
+  pointers: new Map(),
+  gesture: null,
+  zoom: { s: 1, x: 0, y: 0 },
+  lastTap: null,
+  tapTimer: 0,
 
   init() {
     this.root = $("#viewer");
+    this.stage = $(".v-stage", this.root);
     this.img = $(".v-photo", this.root);
     this.info = $(".v-info", this.root);
     this.counter = $(".v-counter", this.root);
@@ -343,18 +355,21 @@ const Viewer = {
     $(".v-next", this.root).addEventListener("click", () => this.go(1));
     this.infoBtn.addEventListener("click", () => this.setInfo(!this.infoOn, true));
     this.fsBtn.addEventListener("click", () => this.toggleFullscreen());
-    const stage = $(".v-stage", this.root);
-    stage.addEventListener("pointerdown", (e) => this.down(e));
-    stage.addEventListener("pointermove", (e) => this.move(e));
-    stage.addEventListener("pointerup", (e) => this.up(e));
-    stage.addEventListener("pointercancel", () => this.reset());
+    this.stage.addEventListener("pointerdown", (e) => this.down(e));
+    this.stage.addEventListener("pointermove", (e) => this.move(e));
+    this.stage.addEventListener("pointerup", (e) => this.up(e));
+    this.stage.addEventListener("pointercancel", () => this.reset());
+    this.stage.addEventListener("wheel", (e) => this.wheel(e), { passive: false });
+    window.addEventListener("resize", () => { if (this.open) this.resetZoom(); });
     document.addEventListener("keydown", (e) => {
-      if (!this.open) return;
-      if (e.key === "ArrowLeft") this.go(-1);
-      else if (e.key === "ArrowRight") this.go(1);
+      if (!this.open || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (NEXT_KEYS.has(e.key)) this.go(1);
+      else if (PREV_KEYS.has(e.key)) this.go(-1);
       else if (e.key === "Escape") history.back();
       else if (e.key === "i") this.setInfo(!this.infoOn, true);
       else if (e.key === "f") this.toggleFullscreen();
+      else return;
+      e.preventDefault();
     });
     document.addEventListener("fullscreenchange", () => {
       // Handy: Zurueck-Taste beendet zuerst nur das Vollbild - dann auch das Bild schliessen.
@@ -402,6 +417,8 @@ const Viewer = {
     this.open = false;
     this.root.hidden = true;
     this.img.removeAttribute("src");
+    clearTimeout(this.tapTimer);
+    this.reset();
     document.body.classList.remove("noscroll");
     this.exitFullscreen();
     if (mounted && mounted.grid) mounted.grid.scrollToPhoto(this.i);
@@ -411,7 +428,7 @@ const Viewer = {
     this.i = Math.max(0, Math.min(i, this.list.length - 1));
     const p = this.list[this.i];
     if (!p) return;
-    this.img.style.transform = "";
+    this.resetZoom(false);
     this.img.src = thumbUrl(p);
     const full = new Image();
     full.onload = () => {
@@ -443,54 +460,450 @@ const Viewer = {
   go(delta) {
     const next = this.i + delta;
     if (next < 0 || next >= this.list.length) {
-      this.img.style.transform = "";
+      if (this.zoom.s === 1) this.img.style.transform = "";
       return;
     }
     history.replaceState({ ...history.state, viewer: { i: next } }, "");
     this.display(next);
   },
 
-  down(e) {
-    this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, dy: 0 };
-    e.currentTarget.setPointerCapture(e.pointerId);
-    this.root.classList.add("dragging");
+  /* ---- Zoom: transform = translate(x, y) scale(s), Ursprung oben links ---- */
+
+  applyZoom(clamp = true) {
+    const z = this.zoom;
+    if (clamp) this.clampZoom();
+    this.img.style.transform = z.s === 1 && !z.x && !z.y ? "" : `translate(${z.x}px, ${z.y}px) scale(${z.s})`;
+    this.root.classList.toggle("zoomed", z.s > 1);
   },
 
-  move(e) {
-    if (!this.drag || e.pointerId !== this.drag.id) return;
-    this.drag.dx = e.clientX - this.drag.x;
-    this.drag.dy = e.clientY - this.drag.y;
-    const horizontal = Math.abs(this.drag.dx) > Math.abs(this.drag.dy);
-    this.img.style.transform = horizontal
-      ? `translateX(${this.drag.dx}px)`
-      : `translateY(${Math.max(0, this.drag.dy)}px)`;
+  // Bild darf nicht aus dem Bildschirm geschoben werden; kleiner als der Bildschirm -> mittig.
+  clampZoom() {
+    const z = this.zoom;
+    z.s = clampNum(z.s, 1, MAX_ZOOM);
+    const p = this.list[this.i];
+    const W = this.stage.clientWidth;
+    const H = this.stage.clientHeight;
+    const ratio = p && p.w && p.ht ? p.w / p.ht : W / H;
+    const fit = Math.min(W / ratio, H);
+    const cw = fit * ratio;
+    const ch = fit;
+    const axis = (pos, size, content) => {
+      const off = (size - content) / 2;
+      const scaled = content * z.s;
+      if (scaled <= size) return (size - scaled) / 2 - off * z.s;
+      return clampNum(pos, size - (off + content) * z.s, -off * z.s);
+    };
+    z.x = axis(z.x, W, cw);
+    z.y = axis(z.y, H, ch);
   },
 
-  up(e) {
-    if (!this.drag || e.pointerId !== this.drag.id) return;
-    const { dx, dy } = this.drag;
-    this.reset();
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
-      const x = e.clientX / window.innerWidth;
-      if (x < 0.3) this.go(-1);
-      else if (x > 0.7) this.go(1);
-      else this.root.classList.toggle("ui-hidden");
-    } else if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 60) {
-      this.go(dx < 0 ? 1 : -1);
-    } else if (dy > 120 && Math.abs(dy) > Math.abs(dx)) {
-      history.back();
+  zoomAt(s, cx, cy) {
+    const z = this.zoom;
+    const next = clampNum(s, 1, MAX_ZOOM);
+    z.x = cx - (cx - z.x) * next / z.s;
+    z.y = cy - (cy - z.y) * next / z.s;
+    z.s = next;
+    this.applyZoom();
+  },
+
+  resetZoom(animate = true) {
+    if (!animate) this.root.classList.add("dragging");
+    this.zoom = { s: 1, x: 0, y: 0 };
+    this.applyZoom(false);
+    if (!animate) {
+      void this.img.offsetWidth;
+      if (!this.pointers.size) this.root.classList.remove("dragging");
     }
   },
 
-  reset() {
-    this.drag = null;
-    this.root.classList.remove("dragging");
+  wheel(e) {
+    e.preventDefault();
+    const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002));
+    this.zoomAt(this.zoom.s * factor, e.clientX, e.clientY);
+    if (this.zoom.s < 1.02) this.resetZoom();
+  },
+
+  /* ---- Gesten: Wischen, Tippen, Doppeltippen, zwei Finger ---- */
+
+  down(e) {
+    this.stage.setPointerCapture(e.pointerId);
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this.root.classList.add("dragging");
+    if (this.pointers.size === 2) {
+      const [a, b] = [...this.pointers.values()];
+      if (this.zoom.s === 1) this.img.style.transform = "";
+      this.gesture = {
+        type: "pinch",
+        d0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        s0: this.zoom.s, x0: this.zoom.x, y0: this.zoom.y,
+      };
+    } else if (this.pointers.size === 1) {
+      this.startDrag(e.pointerId, e.clientX, e.clientY, false);
+    }
+  },
+
+  startDrag(id, x, y, moved) {
+    this.gesture = { type: "drag", id, x0: x, y0: y, dx: 0, dy: 0, zx: this.zoom.x, zy: this.zoom.y, moved };
+  },
+
+  move(e) {
+    const pt = this.pointers.get(e.pointerId);
+    if (!pt) return;
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const g = this.gesture;
+    if (!g) return;
+    if (g.type === "pinch") {
+      const [a, b] = [...this.pointers.values()];
+      const s = clampNum(g.s0 * Math.hypot(a.x - b.x, a.y - b.y) / g.d0, 1, MAX_ZOOM);
+      const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      this.zoom = { s, x: m.x - (g.m0.x - g.x0) * s / g.s0, y: m.y - (g.m0.y - g.y0) * s / g.s0 };
+      this.applyZoom(false);
+      return;
+    }
+    if (g.id !== e.pointerId) return;
+    g.dx = e.clientX - g.x0;
+    g.dy = e.clientY - g.y0;
+    if (Math.abs(g.dx) > 8 || Math.abs(g.dy) > 8) g.moved = true;
+    if (this.zoom.s > 1) {
+      this.zoom.x = g.zx + g.dx;
+      this.zoom.y = g.zy + g.dy;
+      this.applyZoom();
+    } else if (g.moved) {
+      const horizontal = Math.abs(g.dx) > Math.abs(g.dy);
+      this.img.style.transform = horizontal ? `translateX(${g.dx}px)` : `translateY(${Math.max(0, g.dy)}px)`;
+    }
+  },
+
+  up(e) {
+    if (!this.pointers.delete(e.pointerId)) return;
+    const g = this.gesture;
+    if (!this.pointers.size) this.root.classList.remove("dragging");
+    if (g && g.type === "pinch") {
+      if (this.pointers.size === 1) {
+        const [[id, p]] = [...this.pointers];
+        this.startDrag(id, p.x, p.y, true);
+      } else {
+        this.gesture = null;
+      }
+      if (this.zoom.s < 1.05) this.resetZoom();
+      else this.applyZoom();
+      return;
+    }
+    if (!g || g.id !== e.pointerId) return;
+    this.gesture = null;
+    if (!g.moved) {
+      this.tap(e.clientX, e.clientY);
+      return;
+    }
+    if (this.zoom.s > 1) return;
     this.img.style.transform = "";
+    const { dx, dy } = g;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 60) this.go(dx < 0 ? 1 : -1);
+    else if (dy > 120 && Math.abs(dy) > Math.abs(dx)) history.back();
+  },
+
+  // Rand antippen blaettert sofort. Mitte (und alles, solange vergroessert):
+  // einmal = Bedienelemente aus/ein, zweimal schnell = Zoom ein/aus.
+  tap(x, y) {
+    const rel = x / window.innerWidth;
+    if (this.zoom.s === 1 && (rel < 0.3 || rel > 0.7)) {
+      this.lastTap = null;
+      this.go(rel < 0.3 ? -1 : 1);
+      return;
+    }
+    const now = performance.now();
+    const last = this.lastTap;
+    if (last && now - last.t < DOUBLE_TAP_MS && Math.hypot(x - last.x, y - last.y) < 40) {
+      clearTimeout(this.tapTimer);
+      this.lastTap = null;
+      if (this.zoom.s > 1) this.resetZoom();
+      else this.zoomAt(2.5, x, y);
+      return;
+    }
+    this.lastTap = { t: now, x, y };
+    clearTimeout(this.tapTimer);
+    this.tapTimer = setTimeout(() => {
+      this.lastTap = null;
+      if (this.open) this.root.classList.toggle("ui-hidden");
+    }, DOUBLE_TAP_MS);
+  },
+
+  reset() {
+    this.pointers.clear();
+    this.gesture = null;
+    this.root.classList.remove("dragging");
+    if (this.zoom.s > 1) this.applyZoom();
+    else this.resetZoom();
   },
 };
 
 function openViewer(i) {
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   navigate({ ...history.state, viewer: { i } });
+}
+
+/* ---------------------------------------------------------------- Suche */
+
+// Begriffe: p = Person, o = Ort (Ort, Stadt, Bundesland, Land), f = Ordner, y = Jahr, k = Stichwort
+const TERM_TYPES = ["p", "o", "f", "y", "k"];
+const TERM_GROUP = { p: "Personen", o: "Orte", f: "Ordner", y: "Jahre", k: "Stichwörter" };
+const SUGGEST_LIMIT = { p: 6, o: 6, f: 5, y: 4, k: 4 };
+const PICK_LIMIT = 12;
+
+// Kleinbuchstaben, ohne Akzente (é -> e, ä -> a, ß -> ss), Satzzeichen -> Leerzeichen
+function normText(s) {
+  return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .replace(/ß/g, "ss").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+const words = (s) => normText(s).split(" ").filter(Boolean);
+
+let SEARCH = null;
+
+// Einmal aufbauen: Begriff -> Positionen in DATA.allDesc (neueste zuerst) und je Bild ein Suchtext.
+function buildSearch() {
+  const list = DATA.allDesc;
+  const terms = new Map();
+  const add = (type, value, i, label = value, sub = "") => {
+    const norm = normText(value);
+    if (!norm) return;
+    const key = `${type}:${type === "f" ? value : norm}`;
+    let t = terms.get(key);
+    if (!t) {
+      t = { key, type, label, sub, norm, ids: [] };
+      terms.set(key, t);
+    }
+    if (t.ids[t.ids.length - 1] !== i) t.ids.push(i);
+  };
+  const folderInfo = new Map();
+  for (const f of DATA.index.folders) {
+    const label = folderLabel(f);
+    folderInfo.set(f.n, f.x ? { name: f.n, sub: String(f.y) } : { name: label.name, sub: label.date || String(f.y) });
+  }
+  const text = new Array(list.length);
+  list.forEach((p, i) => {
+    for (const name of p.p || []) add("p", name, i);
+    for (const place of [p.sl, p.ci, p.st, p.co]) if (place) add("o", place, i);
+    const fi = folderInfo.get(p.f) || { name: p.f, sub: "" };
+    add("f", p.f, i, fi.name, fi.sub);
+    add("y", p.t.slice(0, 4), i);
+    for (const k of p.kw || []) add("k", k, i);
+    const parts = [p.de, p.sl, p.ci, p.st, p.co, p.f, ...(p.p || []), ...(p.kw || [])];
+    text[i] = ` ${normText(parts.filter(Boolean).join(" "))} `;
+  });
+  for (const t of terms.values()) if (t.type === "f") t.norm = normText(`${t.key.slice(2)} ${t.label}`);
+  return { terms, text };
+}
+
+// Gewaehlte Begriffe (UND) plus Freitext (alle Woerter muessen vorkommen). null = keine Suche.
+function searchPositions(keys, freeText) {
+  const chosen = keys.map((k) => SEARCH.terms.get(k)).filter(Boolean).sort((a, b) => a.ids.length - b.ids.length);
+  let pos = null;
+  if (chosen.length) {
+    pos = chosen[0].ids;
+    for (const t of chosen.slice(1)) {
+      const set = t.set || (t.set = new Set(t.ids));
+      pos = pos.filter((i) => set.has(i));
+    }
+  }
+  const w = words(freeText);
+  if (w.length) {
+    const base = pos || DATA.allDesc.map((_, i) => i);
+    pos = base.filter((i) => w.every((x) => SEARCH.text[i].includes(x)));
+  }
+  return pos;
+}
+
+function suggestTerms(query, keys) {
+  const w = words(query);
+  if (!w.length) return [];
+  const within = searchPositions(keys, "");
+  let member = null;
+  if (within) {
+    member = new Uint8Array(DATA.allDesc.length);
+    for (const i of within) member[i] = 1;
+  }
+  const hits = [];
+  for (const t of SEARCH.terms.values()) {
+    if (keys.includes(t.key) || !w.every((x) => t.norm.includes(x))) continue;
+    let count = t.ids.length;
+    if (member) {
+      count = 0;
+      for (const i of t.ids) count += member[i];
+    }
+    if (!count) continue;
+    const padded = ` ${t.norm}`;
+    const starts = t.norm === w.join(" ") ? 0 : w.every((x) => padded.includes(` ${x}`)) ? 1 : 2;
+    hits.push({ t, count, starts });
+  }
+  const out = [];
+  for (const type of TERM_TYPES) {
+    const group = hits.filter((h) => h.t.type === type)
+      .sort((a, b) => a.starts - b.starts || b.count - a.count || a.t.label.localeCompare(b.t.label, "de"))
+      .slice(0, SUGGEST_LIMIT[type]);
+    if (group.length) out.push({ type, items: group });
+  }
+  // Gruppe mit exaktem Treffer (z. B. "2019" -> Jahr) nach oben
+  return out.sort((a, b) => (a.items[0].starts === 0 ? 0 : 1) - (b.items[0].starts === 0 ? 0 : 1));
+}
+
+let lastSearch = { q: [], t: "" };
+
+const ICON_SEARCH = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>';
+const ICON_X = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+
+function svgNode(markup) {
+  const t = document.createElement("template");
+  t.innerHTML = markup;
+  return t.content.firstChild;
+}
+
+function mountSearch(main, state, m) {
+  if (!SEARCH) SEARCH = buildSearch();
+  const s = {
+    keys: (state.q || lastSearch.q).filter((k) => SEARCH.terms.has(k)),
+    text: state.t !== undefined ? state.t : lastSearch.t,
+    panel: false,
+    shown: null,
+  };
+
+  const chips = el("div", { class: "chips" });
+  const input = el("input", {
+    type: "search", placeholder: "Person, Ort, Ordner, Jahr …", enterkeyhint: "search",
+    autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Suchbegriff",
+  });
+  input.value = s.text;
+  const clear = el("button", { type: "button", class: "icon-btn search-clear", "aria-label": "Eingabe löschen" }, svgNode(ICON_X));
+  const bar = el("div", { class: "search-bar" },
+    chips, el("div", { class: "search-field" }, svgNode(ICON_SEARCH), input, clear));
+  const body = el("div", { class: "search-body" });
+  const results = el("div", { class: "search-results" });
+  main.append(bar, body, results);
+
+  const addKey = (key) => {
+    s.keys.push(key);
+    s.text = "";
+    input.value = "";
+    s.panel = false;
+    input.blur();
+    update();
+  };
+
+  const pick = (t, count) => el("button", { type: "button", class: "pick", onclick: () => addKey(t.key) },
+    t.label, el("small", { text: String(count ?? t.ids.length) }));
+
+  function renderChips() {
+    chips.replaceChildren(...s.keys.map((key) => {
+      const t = SEARCH.terms.get(key);
+      return el("button", {
+        type: "button", class: "chip", title: `${TERM_GROUP[t.type]} – entfernen`,
+        onclick: () => { s.keys = s.keys.filter((k) => k !== key); update(); },
+      }, el("span", { text: t.label }), svgNode(ICON_X));
+    }));
+    clear.hidden = !s.text;
+  }
+
+  function renderPanel() {
+    const nodes = [];
+    const free = searchPositions(s.keys, s.text);
+    nodes.push(el("button", {
+      type: "button", class: "sg-row sg-free", onclick: () => { s.panel = false; input.blur(); update(); },
+    }, el("span", { class: "name", text: `Freitext „${s.text.trim()}“` }),
+    el("span", { class: "meta", text: free && free.length ? countLabel(free.length) : "keine Treffer" })));
+    for (const group of suggestTerms(s.text, s.keys)) {
+      nodes.push(el("div", { class: "sg-head", text: TERM_GROUP[group.type] }));
+      for (const { t, count } of group.items) {
+        nodes.push(el("button", { type: "button", class: "sg-row", onclick: () => addKey(t.key) },
+          el("span", { class: "name", text: t.label }),
+          el("span", { class: "meta", text: t.sub ? `${t.sub} · ${countLabel(count)}` : countLabel(count) })));
+      }
+    }
+    body.replaceChildren(...nodes);
+  }
+
+  function renderPicks() {
+    const top = (type) => [...SEARCH.terms.values()].filter((t) => t.type === type)
+      .sort((a, b) => b.ids.length - a.ids.length || a.label.localeCompare(b.label, "de")).slice(0, PICK_LIMIT);
+    const years = [...SEARCH.terms.values()].filter((t) => t.type === "y").sort((a, b) => (a.label < b.label ? 1 : -1));
+    const nodes = [];
+    for (const [title, list] of [["Personen", top("p")], ["Orte", top("o")], ["Jahre", years]]) {
+      if (!list.length) continue;
+      nodes.push(el("div", { class: "sg-head", text: title }), el("div", { class: "picks" }, ...list.map((t) => pick(t))));
+    }
+    if (!nodes.length) nodes.push(el("p", { class: "center muted", text: "Suchbegriff eingeben." }));
+    body.replaceChildren(...nodes);
+  }
+
+  function showResults() {
+    const signature = JSON.stringify([s.keys, words(s.text)]);
+    if (signature === s.shown) {
+      if (m.grid) m.grid.render();
+      return;
+    }
+    s.shown = signature;
+    if (m.grid) m.grid.destroy();
+    m.grid = null;
+    results.replaceChildren();
+    const pos = searchPositions(s.keys, s.text) || [];
+    m.list = pos.map((i) => DATA.allDesc[i]);
+    $("#subtitle").textContent = pos.length ? countLabel(pos.length) : "";
+    window.scrollTo(0, 0);
+    if (m.list.length) m.grid = new Grid(results, m.list);
+    else results.append(el("p", { class: "center muted", text: "Keine Bilder gefunden." }));
+  }
+
+  function update() {
+    lastSearch = { q: s.keys.slice(), t: s.text };
+    history.replaceState({ ...(history.state || {}), v: "search", q: lastSearch.q, t: s.text }, "");
+    renderChips();
+    const searching = s.keys.length > 0 || words(s.text).length > 0;
+    if (s.panel && s.text.trim()) {
+      results.hidden = true;
+      renderPanel();
+    } else if (!searching) {
+      results.hidden = true;
+      s.shown = null;
+      if (m.grid) m.grid.destroy();
+      m.grid = null;
+      m.list = [];
+      results.replaceChildren();
+      $("#subtitle").textContent = "";
+      renderPicks();
+    } else {
+      body.replaceChildren();
+      results.hidden = false;
+      showResults();
+    }
+  }
+
+  input.addEventListener("input", () => {
+    s.text = input.value;
+    s.panel = true;
+    update();
+  });
+  input.addEventListener("focus", () => {
+    if (s.text.trim() && !s.panel) {
+      s.panel = true;
+      update();
+    }
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    s.panel = false;
+    input.blur();
+    update();
+  });
+  clear.addEventListener("click", () => {
+    s.text = "";
+    input.value = "";
+    s.panel = false;
+    update();
+  });
+
+  update();
 }
 
 /* ---------------------------------------------------------------- Ansichten & Verlauf */
@@ -508,44 +921,45 @@ function mountView(state) {
   }
   const main = $("#main");
   main.replaceChildren();
-  let grid = null;
-  let list = null;
+  const m = { key, grid: null, list: null };
+  mounted = m;
 
   if (state.v === "folder") {
     const f = DATA.folderByName.get(state.f);
     if (!f) {
+      mounted = null;
       navigate({ v: "folders" }, true);
       return;
     }
     const label = folderLabel(f);
     setHeader(label.name, label.date ? `${label.date} · ${countLabel(f.c)}` : `${f.y} · ${countLabel(f.c)}`, true);
-    list = DATA.byFolder.get(f.n) || [];
-    grid = new Grid(main, list);
+    m.list = DATA.byFolder.get(f.n) || [];
+    m.grid = new Grid(main, m.list);
   } else if (state.v === "all") {
     setHeader("Alle Bilder", countLabel(DATA.photos.length));
-    list = DATA.allDesc;
+    m.list = DATA.allDesc;
     const monthOf = (p) => fmtMonth.format(parseLocal(p.t));
-    grid = new Grid(main, list, monthOf, (month) => {
+    m.grid = new Grid(main, m.list, monthOf, (month) => {
       $("#subtitle").textContent = month || countLabel(DATA.photos.length);
     });
   } else if (state.v === "search") {
     setHeader("Suche");
-    main.append(el("p", { class: "center muted", text: "Die Suche kommt mit der nächsten Version." }));
+    mountSearch(main, state, m);
+    return;
   } else {
     setHeader("Fotoschatz");
     main.append(folderListView());
   }
 
-  mounted = { key, grid, list };
   window.scrollTo(0, scrollMemory.get(key) || 0);
-  if (grid) grid.render();
+  if (m.grid) m.grid.render();
 }
 
 function render(state) {
   if (!mounted || mounted.key !== viewKey(state)) mountView(state);
   if (!mounted) return;
   updateNav(state.v);
-  if (state.viewer && mounted.list) Viewer.show(mounted.list, state.viewer.i);
+  if (state.viewer && mounted.list && mounted.list.length) Viewer.show(mounted.list, state.viewer.i);
   else Viewer.hide();
 }
 

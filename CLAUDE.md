@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v1.4 · 28.09.2026 (Sync-Tool am PC bestätigt, PWA 2a)
+**Dokumentversion:** v1.5 · 28.09.2026 (Suche, Zoom, Präsentations-Klicker; Chromecast geplant)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -347,20 +347,24 @@ Ohne Datei gelten diese Standardwerte:
    - Fußzeile: Anzahl Bilder · Stand des Index · App-Version.
 2. **Alle Bilder:** Zeitleiste, neueste zuerst, gruppiert nach Monat; der aktuelle Monat steht im Untertitel der Kopfzeile.
 3. **Ordnerinhalt:** Raster nach Aufnahmezeit sortiert.
-4. **Suche:**
-   - Eingabefeld mit Vorschlägen aus Personen, Orten (Ort, Stadt, Bundesland, Land), Stichwörtern und Ordnernamen.
-   - Gewählte Begriffe werden zu Chips und mit **UND** verknüpft (z. B. Person + Land + Jahr).
-   - Zusätzlich Freitext über Beschreibung, Orte und Ordnername.
-   - Groß-/Kleinschreibung und Akzente ignorieren (Unicode-Normalisierung, diakritische Zeichen entfernen).
-   - Ergebnis als Raster.
+4. **Suche** (v0.5.0):
+   - Eingabefeld (klebt unter der Kopfzeile) mit Vorschlägen, gruppiert nach Personen, Orten (Ort, Stadt, Bundesland, Land – gleiche Namen zusammengefasst), Ordnern (mit Datum), Jahren (Aufnahmejahr) und Stichwörtern, jeweils mit Anzahl. Gruppe mit exaktem Treffer steht oben (z. B. „2019“ → Jahr).
+   - Vorschläge zählen nur Bilder, die zu den schon gewählten Chips passen; Begriffe ohne Treffer fallen weg.
+   - Gewählte Begriffe werden zu Chips und mit **UND** verknüpft (z. B. Person + Land + Jahr). Chip antippen = entfernen.
+   - Freitext (erste Zeile „Freitext …“ oder Enter): alle Wörter müssen vorkommen – in Beschreibung, Orten, Ordnername, Personen, Stichwörtern.
+   - Groß-/Kleinschreibung, Akzente und Satzzeichen ignorieren (é→e, ä→a, ß→ss, „ile de france“ findet „Île-de-France“).
+   - Ohne Eingabe: Schnellauswahl der häufigsten Personen und Orte (je 12) und aller Jahre.
+   - Ergebnis als Raster, neueste zuerst, Anzahl im Untertitel. Chips und Text bleiben beim Zurückkommen aus dem Betrachter und beim Tab-Wechsel erhalten.
+   - Gemessen mit 23.100 künstlichen Bildern: Aufbau einmalig ≈ 0,13 s, Vorschläge je Tastendruck ≈ 2 ms (Cloud-Rechner; Handy langsamer, aber unkritisch).
 5. **Vollbild-Betrachter:**
    - Wischen links/rechts, Nachbarbilder vorladen.
-   - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter, Mitte = Bedienelemente aus/ein. Wischen links/rechts blättert.
+   - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter (sofort), Mitte = Bedienelemente aus/ein (mit ≈ 0,3 s Verzögerung wegen Doppeltippen). Wischen links/rechts blättert.
+   - **Zoom** (v0.5.0): zwei Finger auf-/zuziehen (bis 4-fach); Doppeltippen in der Mitte bzw. Doppelklick = 2,5-fach an dieser Stelle, nochmal = zurück; am PC Mausrad. Vergrößert: ein Finger/Maus verschiebt den Ausschnitt (nicht über den Bildrand hinaus), Tippen = Bedienelemente, Blättern per Wischen ist aus. Blättern (Taste, Knopf) oder Drehen setzt den Zoom zurück.
+   - **Präsentations-Klicker / Tastatur:** weiter = Bild ab, Pfeil rechts, Leertaste; zurück = Bild auf, Pfeil links.
    - Infos (Datum, Ordner, Personen, Ort, Beschreibung – ausgeblendet, wenn gleich dem Ordnernamen –, Bewertung) über den Knopf (i) bzw. Taste I; **anfangs ausgeblendet**, Einstellung wird gemerkt (`fotoschatz.info`).
    - Echtes Vollbild (Browser-Leisten weg): am Handy automatisch beim Öffnen, am PC per Knopf oder Taste F. ⚠ Am Handy prüfen: Zurück-Taste im Vollbild schließt das Bild genau einmal.
    - Zurück-Taste, ✕, Wischen nach unten und Esc schließen den Betrachter (History-API); am PC Pfeiltasten und Pfeil-Schaltflächen.
    - Erst das Vorschaubild, dann das große Bild; Nachbarbilder werden vorgeladen.
-   - Zoomen mit zwei Fingern: nice-to-have.
 
 ### Raster & Performance (Anforderung: flüssiges Scrollen bei 10.000 Bildern)
 - **Virtuelles Scrollen:** Nur die sichtbaren Zeilen (plus Puffer) existieren im DOM.
@@ -411,8 +415,13 @@ Ohne Datei gelten diese Standardwerte:
 ### Phase 2 – PWA-MVP – in Arbeit
 - Geheimnis-Handling, Ordner, Alle Bilder, Suche, Betrachter, Service Worker, Manifest, Installierbarkeit.
 - **2a** (v0.3.0): Link/Präfix, Index laden, Ordnerliste, Ordner-Raster, Alle Bilder, Vollbild. In der Cloud mit 414 Testbildern im Browser (Handy- und PC-Größe, hell/dunkel) geprüft. ⚠ Am echten Handy mit echtem R2 testen.
-- **2b:** Suche (Vorschläge aus Personen, Orten, Ordnern, Jahren; Chips mit UND; Freitext).
+- **2b** (v0.5.0): Suche wie oben, dazu Zoom im Betrachter und Präsentations-Klicker. In der Cloud im Browser geprüft (Handy/PC, hell/dunkel, Zwei-Finger-Zoom simuliert). ⚠ Zoom-Gefühl und Klicker am echten Handy prüfen.
 - **2c:** Manifest, Icons, Service Worker (Offline-Cache), „Neue Version verfügbar".
+- **2d – Chromecast** (Version 0.6.0, Entscheidung 28.09.2026: Cast-Knopf in der App, nicht Bildschirm spiegeln):
+  - Cast Web Sender SDK (von Google geladen) – laut Google unterstützt in Chrome auf Android und am PC, nur über https.
+  - Zuerst mit dem fertigen **Default Media Receiver** (keine Registrierung): Betrachter bekommt einen Cast-Knopf, das aktuelle Bild (`img/…jpg` direkt aus R2) wird auf den Fernseher geschickt, Blättern am Handy (auch per Klicker) wechselt das Bild am Fernseher.
+  - Laut Google zeigt dieser Empfänger Bilder höchstens in 1280 × 720. Wenn das am Fernseher zu weich ist: eigene Empfänger-App (einmalige Google-Cast-Registrierung, ca. 5 $), Empfängerseite auf GitHub Pages, volle Auflösung.
+  - ⚠ Prüfen: 720p-Grenze bei neueren Geräten; ob der Cast-Knopf auch in der installierten App (nicht nur im Browser-Tab) erscheint.
 - **Fertig, wenn:** Auf dem Android-Handy installierbar; Start über das App-Symbol ohne erneuten Link funktioniert; Scrollen flüssig; Suche kombiniert Chips korrekt.
 
 ### Phase 3 – Erstbefüllung
