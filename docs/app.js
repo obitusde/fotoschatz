@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.2";
+const APP_VERSION = "0.6.3";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -221,9 +221,18 @@ function folderListView() {
   const generated = DATA.index.generated ? fmtDay.format(new Date(DATA.index.generated)) : "?";
   wrap.append(el("p", {
     class: "footer-note",
-    text: `${countLabel(DATA.photos.length)} · Stand ${generated} · Version ${APP_VERSION}`,
+    text: `${countLabel(DATA.photos.length)} · Stand ${generated} · Version ${APP_VERSION} · Anzeige: ${displayMode()}`,
   }));
   return wrap;
+}
+
+// Wie die App gerade laeuft (zur Kontrolle der installierten App)
+function displayMode() {
+  const modes = [["fullscreen", "Vollbild"], ["standalone", "Fenster"], ["minimal-ui", "Fenster mit Leiste"]];
+  for (const [mode, label] of modes) {
+    if (window.matchMedia(`(display-mode: ${mode})`).matches) return label;
+  }
+  return "Browser";
 }
 
 /* ---------------------------------------------------------------- Raster (virtuell) */

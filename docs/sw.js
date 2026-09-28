@@ -1,7 +1,7 @@
 "use strict";
 
 // Fotoschatz Service Worker. Version folgt VERSION / APP_VERSION.
-const VERSION = "0.6.2";
+const VERSION = "0.6.3";
 const APP_CACHE = `fotoschatz-app-${VERSION}`;
 const THUMB_CACHE = "fotoschatz-thumb";
 const IMG_CACHE = "fotoschatz-img";
@@ -13,7 +13,6 @@ const APP_FILES = [
   `styles.css?v=${VERSION}`,
   `orte.js?v=${VERSION}`,
   `app.js?v=${VERSION}`,
-  "manifest.webmanifest",
   "icons/icon-192.png",
   "icons/icon-512.png",
   "icons/favicon-32.png",
@@ -46,6 +45,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin === self.location.origin) {
     if (!url.pathname.startsWith(new URL(self.registration.scope).pathname)) return;
+    // Manifest nie aus dem Cache: Chrome liest daraus beim Installieren die Anzeige (Vollbild)
+    if (url.pathname.endsWith("/manifest.webmanifest")) {
+      event.respondWith(fetch(request.url, { cache: "no-cache" }));
+      return;
+    }
     event.respondWith(appFile(request));
     return;
   }

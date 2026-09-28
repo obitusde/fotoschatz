@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v1.8 · 28.09.2026 (installierte App im Vollbild, v0.6.2)
+**Dokumentversion:** v1.9 · 28.09.2026 (Manifest nicht mehr gecacht, Anzeige-Modus in der Fußzeile, v0.6.3)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -342,6 +342,8 @@ Ohne Datei gelten diese Standardwerte:
 - ✅ Am Handy installiert (28.09.2026). Die Chrome-Meldung „zum Beenden des Vollbildmodus …“ kommt bei **jedem** Vollbild per Fullscreen-API, auch in der installierten App → nicht abschaltbar.
 - Lösung v0.6.2: Die installierte App läuft **ganz im Vollbild** (`display: "fullscreen"`, keine Statusleiste, Handy nutzt Gestensteuerung). Kopfzeile hält Abstand zur Kamera-Aussparung (`env(safe-area-inset-top)`). ⚠ Am Handy prüfen, dass dabei keine Chrome-Meldung erscheint. Geänderte Manifest-Einstellungen übernimmt Chrome bei installierten Apps nur verzögert → zum Testen App deinstallieren und neu installieren.
 - Einfärben der Statusleiste per `theme-color` (v0.6.1) hat in der installierten App nicht gewirkt (Handy, 28.09.2026) – Code bleibt, schadet nicht.
+- v0.6.2 am Handy: keine Chrome-Meldung mehr, aber Statusleiste noch sichtbar. Vermutete Ursache: Der Service Worker lieferte das Manifest aus dem alten App-Cache (noch `standalone`), Android friert die Anzeige beim Installieren ein. Seit v0.6.3 kommt das Manifest immer frisch aus dem Netz; die Fußzeile der Ordnerliste zeigt den tatsächlichen Modus („Anzeige: Vollbild / Fenster / Browser“).
+- ⚠ Falls „Anzeige: Vollbild“ und die Statusleiste trotzdem bleibt: bekannte Chrome-Lücke bei installierten Web-Apps (Kamera-Aussparung, „short-edges cutout mode“), laut Berichten Juli 2026 in Arbeit – dann auf Chrome-Update warten.
 
 ### MVP-Ansichten
 - **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
@@ -385,7 +387,7 @@ Ohne Datei gelten diese Standardwerte:
 
 ### Service Worker – Caching (v0.6.0)
 - Alle Cache-Namen beginnen mit `fotoschatz-` (auf `obitusde.github.io` liegen weitere Apps; beim Aufräumen werden nur eigene alte App-Caches gelöscht).
-- **App-Dateien:** vorab cachen, Cache-Name `fotoschatz-app-<VERSION>`; Startseite und `?v=`-Dateien aus dem Cache.
+- **App-Dateien:** vorab cachen, Cache-Name `fotoschatz-app-<VERSION>`; Startseite und `?v=`-Dateien aus dem Cache. **Manifest nie aus dem Cache** (immer Netz, v0.6.3).
 - **Vorschaubilder** (`fotoschatz-thumb`): cache-first, bis ≈ 10.000 Stück (≈ 160 MB), älteste fliegen raus.
 - **Große Bilder** (`fotoschatz-img`): cache-first, die letzten ≈ 300.
 - Bilder werden vom Service Worker mit CORS geladen (kein „undurchsichtiger“ Cache); klappt das nicht, normal laden ohne Speichern.
