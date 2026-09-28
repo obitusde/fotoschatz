@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v1.3 · 28.09.2026 (Phase 0 abgeschlossen, Sync-Tool v0.2.0)
+**Dokumentversion:** v1.4 · 28.09.2026 (Sync-Tool am PC bestätigt, PWA 2a)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 10.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -309,6 +309,7 @@ Ohne Datei gelten diese Standardwerte:
 }
 ```
 - `folders.x = 1` markiert „Weitere Bilder" (in der Ordneransicht am Ende des Jahres).
+- `folders.cover` wird vom Sync-Tool noch geschrieben, von der App aber nicht genutzt (keine Titelbilder).
 - URLs werden in der App aus `SECRET`, `id` und `h` zusammengesetzt, nicht im Index gespeichert.
 - Leere Felder weglassen.
 - Größe beim ersten vollen Lauf messen (Erwartung: wenige MB). Falls zu groß: gzip vorkomprimieren + `Content-Encoding`-Header, oder den Index nach Jahren aufteilen.
@@ -321,7 +322,7 @@ Ohne Datei gelten diese Standardwerte:
 - Statisch, **kein Build-Schritt**: `index.html`, `app.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, `icons/`.
 - Vanilla JavaScript. Externe Bibliotheken (z. B. Leaflet für die Karte) nur mit **fest angegebener Version** über cdnjs, niemals „latest".
 - `<meta name="robots" content="noindex, nofollow">`, kein Tracking/Analytics.
-- Hell/Dunkel-Modus. Da es eine Foto-App ist, eher dunkles Standard-Design.
+- Hell/Dunkel folgt der Einstellung des Handys/PCs (`prefers-color-scheme`).
 
 ### Geheimnis-Handling
 - Link-Format: `https://obitusde.github.io/fotoschatz/#<SECRET>` (der Teil nach `#` wird nie an einen Server gesendet und steht nicht im Repo).
@@ -336,10 +337,12 @@ Ohne Datei gelten diese Standardwerte:
 - Service Worker registriert → Chrome bietet „App installieren" an.
 
 ### MVP-Ansichten
+- **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
 1. **Ordner** (Startansicht):
-   - Jahre absteigend, darunter die Ereignisordner mit Titelbild, Name (ohne Datumspräfix, Datum separat) und Anzahl; „JJJJ Weitere Bilder" am Ende des Jahres.
-   - Titelbild = bestbewertetes Bild des Ordners, sonst das erste.
-2. **Alle Bilder:** Zeitleiste, neueste zuerst, gruppiert nach Monat mit mitlaufender Überschrift.
+   - **Reine Textliste, keine Titelbilder** (bewusst so entschieden – nichts zu pflegen, nichts zufällig).
+   - Jahre absteigend (Überschrift mit Anzahl bleibt beim Scrollen oben), darunter die Ordner neueste zuerst: Name ohne Datumspräfix, darunter Datum · Anzahl; „Weitere Bilder" am Ende des Jahres.
+   - Fußzeile: Anzahl Bilder · Stand des Index · App-Version.
+2. **Alle Bilder:** Zeitleiste, neueste zuerst, gruppiert nach Monat; der aktuelle Monat steht im Untertitel der Kopfzeile.
 3. **Ordnerinhalt:** Raster nach Aufnahmezeit sortiert.
 4. **Suche:**
    - Eingabefeld mit Vorschlägen aus Personen, Orten (Ort, Stadt, Bundesland, Land), Stichwörtern und Ordnernamen.
@@ -349,13 +352,14 @@ Ohne Datei gelten diese Standardwerte:
    - Ergebnis als Raster.
 5. **Vollbild-Betrachter:**
    - Wischen links/rechts, Nachbarbilder vorladen.
-   - Info-Leiste: Datum, Ordner, Personen, Ort, Beschreibung.
-   - Zurück-Taste schließt den Betrachter (History-API).
+   - Info-Leiste: Datum, Ordner, Personen, Ort, Beschreibung (ausgeblendet, wenn gleich dem Ordnernamen), Bewertung. Antippen blendet Leisten aus/ein.
+   - Zurück-Taste, ✕, Wischen nach unten und Esc schließen den Betrachter (History-API); am PC Pfeiltasten und Pfeil-Schaltflächen.
+   - Erst das Vorschaubild, dann das große Bild; Nachbarbilder werden vorgeladen.
    - Zoomen mit zwei Fingern: nice-to-have.
 
 ### Raster & Performance (Anforderung: flüssiges Scrollen bei 10.000 Bildern)
 - **Virtuelles Scrollen:** Nur die sichtbaren Zeilen (plus Puffer) existieren im DOM.
-- Quadratisches Raster (Bild mittig zugeschnitten), 3–4 Spalten auf dem Handy, feste Zeilenhöhe → einfache, sprungfreie Virtualisierung.
+- Quadratisches Raster (Bild mittig zugeschnitten), 4 Spalten auf dem Handy, am PC ca. 170 px je Kachel, feste Zeilenhöhe → einfache, sprungfreie Virtualisierung.
 - Vorschaubilder mit `loading="lazy"` / `decoding="async"`, Platzhalterfarbe, bis das Bild geladen ist.
 - Index einmal laden, Suchstrukturen einmal aufbauen (Begriff → Bild-IDs).
 
@@ -391,14 +395,18 @@ Ohne Datei gelten diese Standardwerte:
 - ✅ 0.4 Verbindliche Feldzuordnung in Abschnitt 7 eingetragen.
 - ✅ 0.5 R2: Bucket, Token, rclone, CORS, öffentliche URL, Testdatei, kein Auflisten, Abruf per `fetch` von `obitusde.github.io` (200 KB in 414 ms).
 
-### Phase 1 – Sync-Tool – in Arbeit
+### Phase 1 – Sync-Tool – ✅ am PC bestätigt 28.09.2026
 - Umsetzung nach Abschnitt 7 inkl. `--dry-run`, Prüfungen, Korrektur-Tabelle, Sicherheitsprüfungen, Zusammenfassung.
-- v0.2.0 geschrieben und in der Cloud mit Testbildern und lokalem Ersatz-Bucket durchgespielt (alle vier Testfälle + Lösch-Schutz ok). ⚠ Offen: Lauf am PC gegen echtes R2 (Hardlinks auf NTFS, rclone-Header bei R2, Umlaute in Dateinamen unter Windows).
+- v0.2.0 in der Cloud durchgespielt (alle vier Testfälle + Lösch-Schutz ok) und am PC gegen echtes R2 gelaufen: 114 Bilder (74 MB) in 24 s, zweiter Lauf „keine Änderungen". Ersetzen/Löschen am echten System nebenbei noch einmal prüfen.
+- Messwerte: `index.json` ≈ 0,22 KB je Bild (10.000 Bilder ≈ 2,2 MB), Vorschaubild ≈ 16 KB.
 - Test mit den Testbildern: neu → hochgeladen; ein Bild neu exportiert → ersetzt; eine Datei gelöscht → online entfernt; nochmaliger Lauf → „0 Änderungen".
 - **Fertig, wenn:** Alle vier Testfälle korrekt laufen und `index.json` dem Schema entspricht.
 
-### Phase 2 – PWA-MVP
+### Phase 2 – PWA-MVP – in Arbeit
 - Geheimnis-Handling, Ordner, Alle Bilder, Suche, Betrachter, Service Worker, Manifest, Installierbarkeit.
+- **2a** (v0.3.0): Link/Präfix, Index laden, Ordnerliste, Ordner-Raster, Alle Bilder, Vollbild. In der Cloud mit 414 Testbildern im Browser (Handy- und PC-Größe, hell/dunkel) geprüft. ⚠ Am echten Handy mit echtem R2 testen.
+- **2b:** Suche (Vorschläge aus Personen, Orten, Ordnern, Jahren; Chips mit UND; Freitext).
+- **2c:** Manifest, Icons, Service Worker (Offline-Cache), „Neue Version verfügbar".
 - **Fertig, wenn:** Auf dem Android-Handy installierbar; Start über das App-Symbol ohne erneuten Link funktioniert; Scrollen flüssig; Suche kombiniert Chips korrekt.
 
 ### Phase 3 – Erstbefüllung
