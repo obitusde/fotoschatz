@@ -11,6 +11,8 @@
   --top-h: 56px;
   --nav-h: 60px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --sticky-top: calc(var(--top-h) + var(--safe-top));
 }
 
 @media (prefers-color-scheme: dark) {
@@ -51,11 +53,11 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
   position: sticky;
   top: 0;
   z-index: 10;
-  height: var(--top-h);
+  height: var(--sticky-top);
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 12px;
+  padding: var(--safe-top) 12px 0;
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
@@ -94,7 +96,7 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 .folders { max-width: 760px; margin: 0 auto; }
 .year {
   position: sticky;
-  top: var(--top-h);
+  top: var(--sticky-top);
   z-index: 5;
   margin: 0;
   padding: 14px 16px 6px;
@@ -165,7 +167,7 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 /* ---------- Suche ---------- */
 .search-bar {
   position: sticky;
-  top: var(--top-h);
+  top: var(--sticky-top);
   z-index: 6;
   padding: 8px 12px;
   background: var(--bg);

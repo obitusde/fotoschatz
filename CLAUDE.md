@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v1.7 · 28.09.2026 (kein automatisches Vollbild mehr, v0.6.1)
+**Dokumentversion:** v1.8 · 28.09.2026 (installierte App im Vollbild, v0.6.2)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -336,10 +336,12 @@ Ohne Datei gelten diese Standardwerte:
 - Deep-Links (Phase 3): `#<SECRET>/f/<ordner>` öffnet direkt einen Ordner.
 
 ### Installierbarkeit (Android/Chrome) – v0.6.0
-- `manifest.webmanifest`: `name`/`short_name` „Fotoschatz“, `id`/`start_url`/`scope` `./`, `display: "standalone"`, Icons 192 und 512 (+ maskable), Symbol: weißer Bilderrahmen mit Berg und Sonne auf Blau (`docs/icons/`).
+- `manifest.webmanifest`: `name`/`short_name` „Fotoschatz“, `id`/`start_url`/`scope` `./`, **`display: "fullscreen"`** (seit v0.6.2, siehe unten), Icons 192 und 512 (+ maskable), Symbol: weißer Bilderrahmen mit Berg und Sonne auf Blau (`docs/icons/`).
 - Service Worker `docs/sw.js` registriert → Chrome bietet „App installieren“ an. Zusätzlich zeigt die Ordneransicht oben „Fotoschatz als App auf dem Startbildschirm? [Installieren] [✕]“ (✕ wird gemerkt: `fotoschatz.install-hidden`).
 - In der Cloud geprüft: Chrome meldet keine Installierbarkeits-Fehler (außer „Inkognito“ im Testbrowser).
-- ✅ Am Handy installiert (28.09.2026). Die Chrome-Meldung „zum Beenden des Vollbildmodus …“ kam auch in der installierten App → seit v0.6.1 kein automatisches Vollbild mehr (siehe Betrachter). Alternative, falls nötig: `display: "fullscreen"` im Manifest (ganze App ohne Statusleiste).
+- ✅ Am Handy installiert (28.09.2026). Die Chrome-Meldung „zum Beenden des Vollbildmodus …“ kommt bei **jedem** Vollbild per Fullscreen-API, auch in der installierten App → nicht abschaltbar.
+- Lösung v0.6.2: Die installierte App läuft **ganz im Vollbild** (`display: "fullscreen"`, keine Statusleiste, Handy nutzt Gestensteuerung). Kopfzeile hält Abstand zur Kamera-Aussparung (`env(safe-area-inset-top)`). ⚠ Am Handy prüfen, dass dabei keine Chrome-Meldung erscheint. Geänderte Manifest-Einstellungen übernimmt Chrome bei installierten Apps nur verzögert → zum Testen App deinstallieren und neu installieren.
+- Einfärben der Statusleiste per `theme-color` (v0.6.1) hat in der installierten App nicht gewirkt (Handy, 28.09.2026) – Code bleibt, schadet nicht.
 
 ### MVP-Ansichten
 - **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
@@ -370,7 +372,7 @@ Ohne Datei gelten diese Standardwerte:
    - **Zoom** (v0.5.0): zwei Finger auf-/zuziehen (bis 4-fach); Doppeltippen in der Mitte bzw. Doppelklick = 2,5-fach an dieser Stelle, nochmal = zurück; am PC Mausrad. Vergrößert: ein Finger/Maus verschiebt den Ausschnitt (nicht über den Bildrand hinaus), Tippen = Bedienelemente, Blättern per Wischen ist aus. Blättern (Taste, Knopf) oder Drehen setzt den Zoom zurück.
    - **Präsentations-Klicker / Tastatur:** weiter = Bild ab, Pfeil rechts, Leertaste; zurück = Bild auf, Pfeil links.
    - Infos (Datum, Ordner, Personen, Ort, Beschreibung – ausgeblendet, wenn gleich dem Ordnernamen –, Bewertung) über den Knopf (i) bzw. Taste I; **anfangs ausgeblendet**, Einstellung wird gemerkt (`fotoschatz.info`).
-   - **Kein automatisches Vollbild** (v0.6.1): Chrome blendet bei jedem Vollbild-Wechsel „zum Beenden des Vollbildmodus …“ ein (auch in der installierten App, am Handy bestätigt) – das lässt sich nicht abschalten. Stattdessen wird beim Öffnen eines Bildes die Statusleiste schwarz (`theme-color` → `#000000`, beim Schließen zurück); in der installierten App sieht das fast wie Vollbild aus. Echtes Vollbild nur per Knopf ⛶ bzw. Taste F (dann erscheint die Chrome-Meldung). ⚠ Am Handy prüfen, ob die Statusleiste in der installierten App schwarz wird.
+   - **Kein Vollbild per Fullscreen-API am Handy** (v0.6.1/0.6.2): Chrome blendet dabei jedes Mal „zum Beenden des Vollbildmodus …“ ein. Die installierte App läuft stattdessen komplett im Vollbild (Manifest). Knopf ⛶ bzw. Taste F nur noch am PC. Zurück-Taste schließt das Bild mit einem Druck (am Handy bestätigt).
    - Zurück-Taste, ✕, Wischen nach unten und Esc schließen den Betrachter (History-API); am PC Pfeiltasten und Pfeil-Schaltflächen.
    - Erst das Vorschaubild, dann das große Bild; Nachbarbilder werden vorgeladen.
 

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.1";
+const APP_VERSION = "0.6.2";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -417,7 +417,10 @@ const Viewer = {
     this.themeMetas = [...document.querySelectorAll('meta[name="theme-color"]')];
     this.themeColors = this.themeMetas.map((m) => m.content);
     this.setInfo(readPref(INFO_KEY) === "1");
-    if (!document.documentElement.requestFullscreen) this.fsBtn.hidden = true;
+    // Handy: installierte App laeuft ohnehin im Vollbild (Manifest), Vollbild per Knopf
+    // wuerde nur Chromes Hinweis einblenden -> Knopf nur am PC.
+    const touch = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+    if (touch || !document.documentElement.requestFullscreen) this.fsBtn.hidden = true;
 
     $(".v-close", this.root).addEventListener("click", () => history.back());
     $(".v-prev", this.root).addEventListener("click", () => this.go(-1));
