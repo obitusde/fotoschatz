@@ -209,6 +209,7 @@ Ohne Datei gelten diese Standardwerte:
 ```
 - `export_dir` = Ordner oberhalb von `_sync`, `work_dir` = `_sync\work`.
 - **Präfix steht nur in `fotoschatz-secrets.ps1`** (`$env:FOTOSCHATZ_R2_PREFIX = "..."`) – das Sync-Tool liest es dort, getrimmt und geprüft.
+- `META_VERSION` in `sync.py`: wird erhöht, wenn neue Metadatenfelder dazukommen → der nächste Lauf liest die Metadaten aller Bilder neu (`mv` je Datei in `state.json`) und lädt nur die neue `index.json` hoch.
 - `work_dir` enthält: `staging/` (img als Hardlinks auf die Exporte – kein doppelter Speicherplatz, thumb, index.json) und `state.json` (Zustand je Datei, `upload_pending`, bekannte Stichwörter).
 
 ### Dateinamen (verbindlich)
@@ -303,12 +304,14 @@ Ohne Datei gelten diese Standardwerte:
       "de": "Paris mit Familie",
       "sl": "Tour Eiffel", "ci": "Paris", "st": "Île-de-France", "co": "France",
       "la": 48.8584, "lo": 2.2945,
-      "r": 4
+      "r": 4,
+      "fp": [0.488, 0.166]
     }
   ]
 }
 ```
 - `folders.x = 1` markiert „Weitere Bilder" (in der Ordneransicht am Ende des Jahres).
+- `fp` = Fokuspunkt (x, y relativ 0..1): Mitte des Rahmens um alle Lightroom-Gesichtsbereiche (`XMP-mwg-rs:RegionArea*`, Typ Face); fehlt ohne Gesichter.
 - `folders.cover` wird vom Sync-Tool noch geschrieben, von der App aber nicht genutzt (keine Titelbilder).
 - URLs werden in der App aus `SECRET`, `id` und `h` zusammengesetzt, nicht im Index gespeichert.
 - Leere Felder weglassen.
@@ -363,7 +366,7 @@ Ohne Datei gelten diese Standardwerte:
 - **Virtuelles Scrollen:** Nur die sichtbaren Zeilen (plus Puffer) existieren im DOM.
 - Quadratisches Raster (Bild mittig zugeschnitten), 4 Spalten auf dem Handy, am PC ca. 170 px je Kachel, feste Zeilenhöhe → einfache, sprungfreie Virtualisierung.
 - Vorschaubilder mit `loading="lazy"` / `decoding="async"`, Platzhalterfarbe, bis das Bild geladen ist.
-- Ausschnitt der Kacheln (Stufe 1, v0.3.2): `object-position: 50% 20%` → Hochformat oben betont (Köpfe). Stufe 2 in Prüfung: Fokuspunkt aus den Lightroom-Gesichtsbereichen (`XMP-mwg-rs:RegionArea*`, Mitte des Rahmens um alle Gesichter) vom Sync-Tool in den Index; `diagnose.py` zeichnet dazu Kopien nach `_sync\gesichter_test\` (rot Gesicht, gelb Ausschnitt). ⚠ Offen: stimmen die Bereiche bei in Lightroom zugeschnittenen Bildern?
+- Ausschnitt der Kacheln (Stufe 1, v0.3.2): `object-position: 50% 20%` → Hochformat oben betont (Köpfe). Stufe 2 (v0.4.0): Bilder mit Gesichtern werden um den Fokuspunkt `fp` zugeschnitten (`object-position` aus `fp` und Seitenverhältnis). An echten Exporten geprüft: Gesichtsbereiche stimmen, auch bei zugeschnittenen Bildern (`diagnose.py` → `_sync\gesichter_test\`, rot Gesicht, gelb Ausschnitt).
 - Index einmal laden, Suchstrukturen einmal aufbauen (Begriff → Bild-IDs).
 
 ### Service Worker – Caching

@@ -14,7 +14,7 @@ Ohne Angabe wird der Ordner oberhalb des Skript-Ordners verwendet
 (z. B. Skript in D:\\Fotoschatz\\_sync -> prueft D:\\Fotoschatz).
 """
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 
 import csv
 import sys

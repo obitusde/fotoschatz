@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 
 import argparse
 import csv
@@ -47,6 +47,9 @@ DEFAULTS = {
 CSV_FILE = SCRIPT_DIR / "korrekturen.csv"
 KEYWORD_FILE = SCRIPT_DIR / "stichwoerter.txt"
 LOG_FILE = SCRIPT_DIR / "letzter_lauf.txt"
+
+# Erhoehen, wenn extract_metadata neue Felder liefert -> Metadaten aller Bilder werden neu gelesen
+META_VERSION = 2
 
 PREFIX_RE = re.compile(r"^[A-Za-z0-9]{32,}$")
 CACHE_IMMUTABLE = "Cache-Control: public, max-age=31536000, immutable"
@@ -203,7 +206,7 @@ def build_index(files, analyses, ignore_keywords):
             photo["p"] = persons
         if keywords:
             photo["kw"] = keywords
-        for key in ("de", "sl", "ci", "st", "co", "la", "lo", "r"):
+        for key in ("de", "sl", "ci", "st", "co", "la", "lo", "r", "fp"):
             if key in meta:
                 photo[key] = meta[key]
         photos.append(photo)
@@ -331,18 +334,22 @@ def main():
     # 2. Aenderungen erkennen
     new_files = {}
     to_process = []
+    to_refresh = []
     counts = Counter()
     for path in ok_paths:
         stat = path.stat()
         prev = old_files.get(path.name)
-        if prev and prev["size"] == stat.st_size and prev["mtime_ns"] == stat.st_mtime_ns:
+        unchanged = prev and prev["size"] == stat.st_size and prev["mtime_ns"] == stat.st_mtime_ns
+        if not unchanged:
+            sha = sha1_file(path)
+            if prev and prev["sha1"] == sha:
+                prev = dict(prev, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
+                unchanged = True
+        if unchanged:
             new_files[path.name] = prev
             counts["unveraendert"] += 1
-            continue
-        sha = sha1_file(path)
-        if prev and prev["sha1"] == sha:
-            new_files[path.name] = dict(prev, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
-            counts["unveraendert"] += 1
+            if prev.get("mv") != META_VERSION:
+                to_refresh.append(path)
             continue
         to_process.append((path, sha, stat, "ersetzt" if prev else "neu"))
     removed = sorted(name for name in old_files if name not in {p.name for p in ok_paths})
@@ -356,12 +363,20 @@ def main():
              "Ist der Export-Ordner vollstaendig? Falls gewollt: max_delete in config.local.json erhoehen.")
 
     # 3. Metadaten der neuen/geaenderten (und der SCHWER-Bilder fuer die Tabelle)
-    exif_paths = [t[0] for t in to_process] + severe_paths
+    exif_paths = [t[0] for t in to_process] + to_refresh + severe_paths
     exif = {}
+    if to_refresh:
+        log(f"Metadaten-Format erneuert: {len(to_refresh)} vorhandene Bilder werden neu gelesen (kein Bild-Upload)")
     if exif_paths:
         log(f"Metadaten lesen: {len(exif_paths)} Bilder ...")
         exif = regeln.read_exif(exiftool, exif_paths,
                                 progress=lambda done, total: log(f"  {done}/{total}"))
+    refreshed = 0
+    for path in to_refresh:
+        entry = exif.get(path.name)
+        if entry:
+            new_files[path.name] = dict(new_files[path.name], meta=regeln.extract_metadata(entry), mv=META_VERSION)
+            refreshed += 1
 
     # 4. Verarbeiten
     if not dry:
@@ -377,7 +392,7 @@ def main():
             fail(f"ID-Kollision zwischen {path.name} und {known_ids[pid]} - bitte melden.")
         known_ids[pid] = path.name
         rec = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "sha1": sha,
-               "id": pid, "hash": sha[:8], "meta": meta}
+               "id": pid, "hash": sha[:8], "meta": meta, "mv": META_VERSION}
         if not entry:
             analyses[path.name]["problems"].append((regeln.HINWEIS, "Metadaten nicht lesbar"))
         if not dry:
@@ -466,7 +481,7 @@ def main():
     index_kb = (staging / "index.json").stat().st_size / 1024
     log(f"index.json: {index['count']} Bilder, {len(index['folders'])} Ordner, {index_kb:.0f} KB")
 
-    changed = counts["neu"] or counts["ersetzt"] or removed
+    changed = counts["neu"] or counts["ersetzt"] or removed or refreshed
     state = {
         "tool_version": __version__,
         "files": new_files,

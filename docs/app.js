@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.3.2";
+const APP_VERSION = "0.4.0";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -158,6 +158,18 @@ function folderListView() {
 
 /* ---------------------------------------------------------------- Raster (virtuell) */
 
+// Quadratischer Ausschnitt um den Fokuspunkt (Gesichter aus Lightroom); ohne Punkt gilt die CSS-Regel.
+function focusStyle(p) {
+  if (!p.fp || !p.w || !p.ht || p.w === p.ht) return null;
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  if (p.w > p.ht) {
+    const visible = p.ht / p.w;
+    return `object-position:${(clamp((p.fp[0] - visible / 2) / (1 - visible)) * 100).toFixed(1)}% 50%`;
+  }
+  const visible = p.w / p.ht;
+  return `object-position:50% ${(clamp((p.fp[1] - visible / 2) / (1 - visible)) * 100).toFixed(1)}%`;
+}
+
 class Grid {
   constructor(container, list, sectionOf = null, onSection = null) {
     this.container = container;
@@ -284,7 +296,7 @@ class Grid {
         class: "tile",
         "aria-label": fmtFull.format(parseLocal(p.t)),
         onclick: () => openViewer(i),
-      }, el("img", { src: thumbUrl(p), alt: "", loading: "lazy", decoding: "async" })));
+      }, el("img", { src: thumbUrl(p), alt: "", loading: "lazy", decoding: "async", style: focusStyle(p) })));
     }
     return node;
   }

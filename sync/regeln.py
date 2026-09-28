@@ -211,6 +211,10 @@ def extract_metadata(entry):
     rating = entry.get("XMP-xmp:Rating")
     if isinstance(rating, (int, float)) and rating > 0:
         meta["r"] = int(rating)
+
+    focus = focus_point(face_regions(entry))
+    if focus:
+        meta["fp"] = [round(focus[0], 3), round(focus[1], 3)]
     return meta
 
 
