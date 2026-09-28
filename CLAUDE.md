@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v1.2 · 28.09.2026 (Ergebnisse Phase 0 eingetragen)
+**Dokumentversion:** v1.3 · 28.09.2026 (Phase 0 abgeschlossen, Sync-Tool v0.2.0)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 10.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -156,7 +156,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 1. Cloudflare-Konto, R2 aktiviert.
 2. Bucket `fotoschatz`, Storage Class Standard, **Jurisdiction EU** (nicht änderbar).
 3. **Öffentlicher Zugriff** über `r2.dev`-Adresse: `https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev`. ⚠ Laut Cloudflare für Entwicklung gedacht und in der Rate begrenzt → offene Entscheidung, ob später eigene Domain.
-4. **CORS** am Bucket: `GET`, `HEAD` für Origin `https://obitusde.github.io`. ⚠ Abruf aus dem Browser mit `docs/test-r2.html` prüfen.
+4. **CORS** am Bucket: `GET`, `HEAD` für Origin `https://obitusde.github.io`. ✅ Geprüft mit `docs/test-r2.html` (Aufruf mit `#<Präfix>`).
 5. **Account-API-Token**: nur Bucket `fotoschatz`, Rechte „Object Read & Write". Zugangsdaten liegen nur lokal in der rclone-Konfiguration, **nie im Repo**.
 6. rclone-Remote `r2` (`%APPDATA%\rclone\rclone.conf`):
    ```
@@ -186,20 +186,30 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - `rclone.exe` im PATH, Remote `r2` konfiguriert
 - Start per Doppelklick: `sync.bat` (ruft das Python-Skript auf, lässt das Fenster am Ende offen)
 
-### Konfiguration `sync/config.local.json` (per `.gitignore` ausgeschlossen, liegt am PC in `D:\Fotoschatz\_sync\`)
+### Dateien (Repo `sync/` → am PC `D:\Fotoschatz\_sync\`)
+- `sync.py` – Hauptablauf · `regeln.py` – gemeinsame Regeln (Dateinamen, Ordner, Prüfungen, Metadaten) · `diagnose.py` – Prüfen ohne Upload
+- `sync.bat` – Sync per Doppelklick · `probelauf.bat` – dasselbe mit `--dry-run`
+- `config.example.json` – Vorlage für die optionale `config.local.json` (per `.gitignore` ausgeschlossen)
+- Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
+
+### Konfiguration (optional) `config.local.json`
+Ohne Datei gelten diese Standardwerte:
 ```json
 {
   "export_dir": "D:\\Fotoschatz",
   "work_dir": "D:\\Fotoschatz\\_sync\\work",
+  "secrets_file": "C:\\Users\\chris\\fotoschatz-secrets.ps1",
   "rclone_remote": "r2:fotoschatz",
-  "secret_prefix": "<SECRET>",
   "thumb_long_edge": 400,
   "thumb_quality": 70,
   "max_delete": 100,
+  "transfers": 8,
   "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok"]
 }
 ```
-- `work_dir` enthält: `staging/` (img, thumb, index.json) und `state.json` (Zustand je Datei).
+- `export_dir` = Ordner oberhalb von `_sync`, `work_dir` = `_sync\work`.
+- **Präfix steht nur in `fotoschatz-secrets.ps1`** (`$env:FOTOSCHATZ_R2_PREFIX = "..."`) – das Sync-Tool liest es dort, getrimmt und geprüft.
+- `work_dir` enthält: `staging/` (img als Hardlinks auf die Exporte – kein doppelter Speicherplatz, thumb, index.json) und `state.json` (Zustand je Datei, `upload_pending`, bekannte Stichwörter).
 
 ### Dateinamen (verbindlich)
 - Muster, **von hinten gelesen**: `^(?P<ordner>.+)_(?P<datum>\d{4}-\d{2}-\d{2})_(?P<zeit>\d{2}-\d{2}-\d{2})(?:-(?P<nr>\d+))?\.jpe?g$` (Groß-/Kleinschreibung egal). Der Ordnername darf beliebig aussehen, auch Unterstriche enthalten.
@@ -214,7 +224,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 ### Prüfung vor dem Upload (verbindlich)
 - **SCHWER** → Bild wird **nicht** hochgeladen: Dateiname passt nicht zum Muster; Aufnahmezeit ist kein gültiges Datum; Ordner beginnt mit `_`; Ordnername beginnt nicht mit einer Jahreszahl.
 - **Hinweis** → Bild wird trotzdem hochgeladen: Aufnahmezeit unplausibel (vor 1995 oder in der Zukunft – Kamerauhr?); Aufnahmejahr passt nicht zum Ordner (erlaubt: Ordnerjahr und Folgejahr bzw. der Jahresbereich); keine GPS-Daten; Ordnerdatum ungültig; Stichwort erstmals gesehen.
-- Ausgabe: `korrekturen.csv` (Excel, `;`, UTF-8 mit BOM) mit Spalten Schwere · Lightroom-Ordner · Originaldatei · Aufnahmezeit · Exportdatei · Problem, sortiert nach Ordner und Zeit → Bild in Lightroom über Ordner + Originaldatei finden, korrigieren, neu exportieren (überschreibt).
+- Ausgabe: `korrekturen.csv` (bzw. `diagnose_korrekturen.csv`; Excel, `;`, UTF-8 mit BOM) mit Spalten Schwere · Lightroom-Ordner · Originaldatei · Aufnahmezeit · Exportdatei · Problem, sortiert nach Ordner und Zeit → Bild in Lightroom über Ordner + Originaldatei finden, korrigieren, neu exportieren (überschreibt).
 - Der ganze Lauf wird nur bei Fehlern abgebrochen, die alles durcheinanderbringen würden (siehe Sicherheitsprüfungen).
 - `sync/diagnose.py` enthält dieselben Regeln und dient zum Prüfen ohne Upload.
 
@@ -226,6 +236,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
    - Inhalt geändert → neu verarbeiten (**ersetzt** online)
    - unverändert → nichts tun
    - lokal verschwunden → aus Staging entfernen (wird online gelöscht)
+   - Stichwort taucht erstmals auf → Hinweis in der Korrektur-Tabelle (nicht beim allerersten Lauf)
 4. **IDs & Dateinamen online:**
    - `id` = die ersten 12 Hex-Zeichen von SHA-1(Export-Dateiname). URL-sicher, auch bei Leerzeichen und Umlauten.
    - `hash` = die ersten 8 Hex-Zeichen von SHA-1(Inhalt).
@@ -238,12 +249,15 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 9. **Sicherheitsprüfungen vor dem Upload:**
    - Export-Ordner leer oder nicht gefunden → **Abbruch**.
    - Mehr als `max_delete` Löschungen → **Abbruch** mit Hinweis (Schutz vor versehentlichem Leeren des Buckets).
-   - Präfix fehlt, enthält Leerzeichen oder andere Zeichen als `[A-Za-z0-9]`, oder ist kürzer als 32 Zeichen → **Abbruch**.
+   - Präfix fehlt, enthält andere Zeichen als `[A-Za-z0-9]` (Leerzeichen am Rand werden entfernt), oder ist kürzer als 32 Zeichen → **Abbruch**.
+   - Defektes Bild (Vorschaubild lässt sich nicht erzeugen) → SCHWER, nur dieses Bild wird ausgelassen.
    - Option `--dry-run`: zeigt nur an, was passieren würde.
-10. **Upload per rclone** nach `<remote>/<secret_prefix>/`:
-    - `img/` und `thumb/`: Header `Cache-Control: public, max-age=31536000, immutable`
-    - `index.json`: Header `Cache-Control: no-cache`
-    - Mehrere parallele Übertragungen für die Erstbefüllung.
+10. **Upload per rclone** nach `<remote>/<Präfix>/` in dieser Reihenfolge (die App sieht nie fehlende Bilder):
+    1. `rclone copy` neue `img/` und `thumb/` (Header `Cache-Control: public, max-age=31536000, immutable`, `--size-only`, 8 parallel)
+    2. `rclone copyto` `index.json` (Header `Cache-Control: no-cache`)
+    3. `rclone sync` `img/` und `thumb/` → löscht Veraltetes (`--max-delete` als zweite Sicherung)
+    - Nur wenn sich etwas geändert hat oder ein früherer Upload fehlschlug (`upload_pending`). Bei rclone-Fehler Abbruch; der nächste Lauf wiederholt den Upload.
+    - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
 
 ### Metadaten-Zuordnung (verbindlich, geprüft an 114 echten Exporten)
@@ -362,7 +376,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - **Link ist in falsche Hände geraten:**
   1. Neues Präfix erzeugen.
   2. Inhalte serverseitig verschieben (`rclone move` innerhalb des Buckets) oder neu hochladen.
-  3. `config.local.json` und `fotoschatz-secrets.ps1` anpassen.
+  3. `fotoschatz-secrets.ps1` anpassen.
   4. Neuen Link an die Familie schicken. Der alte Link zeigt danach nichts mehr.
 - R2 ist **kein Backup**. Die Originale und der Lightroom-Katalog brauchen weiterhin eine eigene Datensicherung.
 
@@ -370,16 +384,16 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 
 ## 10. Phasenplan
 
-### Phase 0 – Diagnose (kein Produktivcode) – fast fertig
+### Phase 0 – Diagnose (kein Produktivcode) – ✅ abgeschlossen 28.09.2026
 - ✅ 0.1 Export-Preset angelegt (Abschnitt 5).
 - ✅ 0.2 Testbilder exportiert (114 Bilder: Ereignisordner, Jahresordner, Personen, GPS, Bewertung).
 - ✅ 0.3 Diagnose-Skript `sync/diagnose.py` (Bericht + Korrektur-Tabelle).
 - ✅ 0.4 Verbindliche Feldzuordnung in Abschnitt 7 eingetragen.
-- 0.5 R2: ✅ Bucket, Token, rclone, CORS, öffentliche URL, Testdatei, kein Auflisten. Offen: Abruf per `fetch` von `obitusde.github.io` mit `docs/test-r2.html`.
-- **Fertig, wenn:** die Testdatei über `test-r2.html` im Browser geladen wird.
+- ✅ 0.5 R2: Bucket, Token, rclone, CORS, öffentliche URL, Testdatei, kein Auflisten, Abruf per `fetch` von `obitusde.github.io` (200 KB in 414 ms).
 
-### Phase 1 – Sync-Tool
+### Phase 1 – Sync-Tool – in Arbeit
 - Umsetzung nach Abschnitt 7 inkl. `--dry-run`, Prüfungen, Korrektur-Tabelle, Sicherheitsprüfungen, Zusammenfassung.
+- v0.2.0 geschrieben und in der Cloud mit Testbildern und lokalem Ersatz-Bucket durchgespielt (alle vier Testfälle + Lösch-Schutz ok). ⚠ Offen: Lauf am PC gegen echtes R2 (Hardlinks auf NTFS, rclone-Header bei R2, Umlaute in Dateinamen unter Windows).
 - Test mit den Testbildern: neu → hochgeladen; ein Bild neu exportiert → ersetzt; eine Datei gelöscht → online entfernt; nochmaliger Lauf → „0 Änderungen".
 - **Fertig, wenn:** Alle vier Testfälle korrekt laufen und `index.json` dem Schema entspricht.
 
@@ -436,6 +450,6 @@ Geklärt (28.09.2026): Personen stehen in eigenem Feld (Gesichtsmarkierung) und 
 
 - **Laufend:** nach dem Export `sync.bat` starten, bei Einträgen in der Korrektur-Tabelle in Lightroom nachbessern und neu exportieren – sonst nichts.
 - **Kein Server** zu aktualisieren. R2 und GitHub Pages werden von den Anbietern betrieben.
-- **Neuer PC:** Python, Pillow, exiftool, rclone installieren; `config.local.json`, `fotoschatz-secrets.ps1` und die rclone-Konfiguration übernehmen (vorher sicher aufbewahren!).
+- **Neuer PC:** Python, Pillow, exiftool, rclone installieren; `fotoschatz-secrets.ps1`, die rclone-Konfiguration, ggf. `config.local.json` und `_sync\work\state.json` übernehmen (vorher sicher aufbewahren!). Ohne `state.json` rechnet der erste Lauf alles neu, lädt aber nichts doppelt hoch (gleiche Namen).
 - **Mögliche Störungen (selten):** Cloudflare ändert Tarife oder `r2.dev`-Limits; eine externe Bibliothek ändert sich (Gegenmittel: feste Versionen).
 - **App-Updates:** neue `APP_VERSION` → neuer Service-Worker-Cache. Die App zeigt „Neue Version verfügbar – neu laden".

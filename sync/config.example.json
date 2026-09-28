@@ -1,0 +1,11 @@
+{
+  "export_dir": "D:\\Fotoschatz",
+  "work_dir": "D:\\Fotoschatz\\_sync\\work",
+  "secrets_file": "C:\\Users\\chris\\fotoschatz-secrets.ps1",
+  "rclone_remote": "r2:fotoschatz",
+  "thumb_long_edge": 400,
+  "thumb_quality": 70,
+  "max_delete": 100,
+  "transfers": 8,
+  "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok"]
+}

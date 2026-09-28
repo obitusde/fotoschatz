@@ -11,3 +11,11 @@ __pycache__/
 # Betriebssystem
 Thumbs.db
 .DS_Store
+
+# Ausgaben des Sync-Tools (entstehen nur am PC)
+sync/work/
+sync/korrekturen.csv
+sync/diagnose_korrekturen.csv
+sync/diagnose_report.txt
+sync/stichwoerter.txt
+sync/letzter_lauf.txt
