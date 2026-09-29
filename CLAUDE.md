@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.4 · 29.09.2026 (Übersicht: RAW+JPG, virtuelle Kopien, gleiche Aufnahmezeit, Zählfehler behoben, v0.6.8)
+**Dokumentversion:** v2.5 · 29.09.2026 (Übersicht: Aufgabenliste für Lightroom je Ordner, v0.6.9; Stapel-Export geklärt)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -154,7 +154,8 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 **Hinweise:**
 - Zwei Bilder in derselben Sekunde (Serienbild, oder Original + `-Edit`-Fassung): Lightroom hängt `-2`, `-3` … an (`…_08-40-40-2.jpg`). ⚠ Wird später nur eines davon neu exportiert, kann es das andere überschreiben. Einzelfälle, im Blick behalten.
 - ⚠ Scans ohne Aufnahmedatum in Lightroom bekommen ein Ersatzdatum (welches, ungeprüft) → Übersicht zeigt „Jahr passt nicht“/„Datum unplausibel“.
-- Virtuelle Kopien: es wird immer nur das oberste Bild eines Stapels exportiert.
+- **Stapel:** Nur das oberste Bild eines Stapels soll in die Galerie. Vor dem Export `Photo › Stacking › Collapse All Stacks`, dann Strg+A – im Filmstreifen (F6) steht z. B. „146 of 163 photos / 146 selected“ = nur die obersten sind markiert (am PC bestätigt 29.09.2026).
+- Virtuelle Kopien, die **nicht** mit ihrem Original gestapelt sind, erscheinen als eigene Kachel und werden mit exportiert → Übersicht meldet sie als Aufgabe „2 Fassungen“ (stapeln, gewünschte Fassung nach oben).
 - Stichwörter mit der Option „nicht beim Export einbeziehen" landen nicht im JPG.
 
 ---
@@ -273,22 +274,24 @@ Ohne Datei gelten diese Standardwerte:
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
 
-### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6–v0.6.8)
+### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6–v0.6.9)
 - Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).
 - Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ein Original gilt auch als exportiert, wenn seine Bearbeitung (`…-Edit` usw.) exportiert ist. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
 - Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise der Name aus dem Export (Aufnahmezeit + Zusätze).
 - Ergebnis `uebersicht.html` neben dem Skript, öffnet sich im **Standard-Browser** (Windows-Zuordnung für Internet-Links, weil `.html` am PC mit dem Editor verknüpft ist – am PC bestätigt). `uebersicht.bat` schließt sich danach selbst (bleibt nur bei Fehlern offen). Nicht im Repo, nicht hochgeladen.
 - **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / zu prüfen / überflüssige Exporte) + Balken, dann:
-  1. **Zu prüfen in Lightroom** (je Abschnitt „Was tun“):
-     - Hinweise zu einzelnen Bildern (Jahr passt nicht zum Ordner, Datum unplausibel), gruppiert nach Art, mit Ordner + Originaldatei.
-     - Ordnerstruktur: oberster Ordner beginnt nicht mit einer Jahreszahl (Jahr oder Sammelordner wie `1912-1985 …` ist ok); Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt. Unterordner sind erlaubt (v0.6.7). Hinweis: nur in Lightroom umbenennen/verschieben, nie im Explorer.
-     - Gleicher Ordnername mehrfach.
-     - **RAW und JPG vom selben Foto im Ordner** (v0.6.8): je Ordner mit Liste; Was tun: in Lightroom prüfen, ob doppelt angezeigt („Treat JPEG files next to raw files as separate photos“ aus, oder JPG-Doppel in Lightroom entfernen – Entscheidung des Nutzers, Tools löschen nie Originale).
-     - **Ohne GPS – nur Info** (v0.6.7): zugeklappt am Ende, zählt nicht als „zu prüfen“ (Ort oft unbekannt, nicht wichtig).
+  1. **Zu erledigen in Lightroom** (v0.6.9, Aufgabenliste): oben „So gehst du vor“ (Ordner im Folders-Panel öffnen, Bild über *Library Filter › Text › Filename › contains* finden, ändern, neu exportieren mit zugeklappten Stapeln, sync.bat, aufraeumen.bat). Darunter **je Lightroom-Ordner** (Pfad unter `D:\Bilder - Raw`) aufklappbar eine Tabelle: **Datei in Lightroom** (Originaldateiname bzw. „(ganzer Ordner)“) · **Aufnahmezeit** · **Problem** · **Was tun in Lightroom** (englische Menüwege). Aufgabenarten:
+     - Ordner: oberster Ordner ohne Jahreszahl; Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt → `Folders-Panel: Rechtsklick › Rename…` bzw. verschieben. Unterordner sind erlaubt.
+     - Ordnername doppelt → einen umbenennen.
+     - Jahr passt nicht / Datum unplausibel / Ordnerdatum ungültig → `Metadata › Edit Capture Time…` bzw. Ordner umbenennen.
+     - **2 Fassungen**: Original + virtuelle Kopie beide sichtbar (nicht gestapelt), beide würden exportiert → `Photo › Stacking › Group into Stack` (Strg+G), gewünschte Fassung `Move to Top of Stack` (Umschalt+S), oder Kopie löschen. Erkannt an: mehrere Exporte vom selben Original im selben Durchgang (≤ 10 min).
+     - **RAW + JPG** vom selben Foto im Ordner → falls zwei Kacheln: JPG entfernen oder `Edit › Preferences › General › Treat JPEG files next to raw files as separate photos` aus.
+     - **gleiche Zeit**: mehrere verschiedene Fotos mit exakt gleicher Aufnahmezeit (Scans mit Ersatzdatum) → `Edit Capture Time…` je Foto; bei Serienbildern nichts tun.
+     - **Ohne GPS – nur Info** (zugeklappt, zählt nicht als Aufgabe).
   2. **Aufräumen in D:\Fotoschatz:** Exporte ohne passendes Original; doppelt exportiert (**älterer Export aus einem früheren Durchgang**, > 10 min älter als der neueste; neuester bleibt); **RAW und JPG beide exportiert** (Export aus der JPG-Datei ist überflüssig, der aus der RAW-Datei bleibt; v0.6.8); nicht verwendbare Exporte (SCHWER).
-     - Mehrere Exporte vom selben Original aus **demselben Durchgang** (≤ 10 min) gelten als gewollte **virtuelle Kopien** und bleiben (v0.6.8 – vorher als „doppelt“ gemeldet; am PC wurden so 3 Kopien verschoben, ggf. aus `_sync\geloescht\2026-09-29_09-27-36` zurückholen).
+     - Mehrere Exporte vom selben Original aus **demselben Durchgang** (≤ 10 min) räumt das Tool nicht weg (es weiß nicht, welche Fassung oben im Stapel liegt) – sie stehen als Aufgabe „2 Fassungen“ in der Lightroom-Liste. Am PC waren das 3 Fälle bei Göbel (nicht gestapelte virtuelle Kopien).
   3. **Ordner wie in Lightroom** (v0.6.7): oberste Ebene mit den echten Ordnernamen unter `D:\Bilder - Raw` (neueste zuerst, Namen ohne Jahreszahl zuletzt), darin die Unterordner mit Pfad ab dort (z. B. `1936-1985 Familie Göbel\Briefe`), „lose Bilder → JJJJ Weitere Bilder“ bzw. „Bilder direkt in diesem Ordner“ am Ende. Ampel je Ordner, Hinweise nach Art (`⚠ 3 Jahr passt nicht · 1 Datum unplausibel`) und grau `📍 19 ohne GPS`; aufgeklappt Hinweise und fehlende Originaldateien. Filter „Nur offene“ (fehlendes GPS allein gilt als erledigt).
-  4. **Weitere Angaben:** virtuelle Kopien (bleiben), **gleiche Aufnahmezeit bei mehreren verschiedenen Originalen** im selben Ordner (normal bei Serien, bei Scans Hinweis auf Ersatzdatum → Capture Time korrigieren), Originale ohne Datumsnamen, leere Ordner, `_`-Ordner, Videos, Dateiarten.
+  4. **Weitere Angaben:** leere Ordner, `_`-Ordner, Videos, Dateiarten.
 - Zählfehler behoben (v0.6.8): „Ordner: ● n“ je Gruppe zählte Bilder statt Ordner.
 - Lightroom zählt je Ordner mehr als die Übersicht (z. B. 163 statt 147 bei Göbel/Schäfer): virtuelle Kopien und evtl. RAW+JPG als zwei Bilder. Maßgeblich: die Übersicht meldet keine fehlenden Originale.
 - Sicherheit: Abbruch, wenn Skript im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Namen, Größen, Zeiten, Prüfsummen).
