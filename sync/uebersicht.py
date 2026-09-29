@@ -11,11 +11,12 @@ Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.6.4"
+__version__ = "0.6.5"
 
 import html
 import json
 import os
+import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
@@ -373,6 +374,42 @@ def build_page(cfg, folders, duplicates, skipped, videos, ext_count, status, orp
     return "\n".join(out), totals
 
 
+def default_browser_command():
+    """Befehl des Standard-Browsers (Programm fuer Internet-Links), nicht das Programm fuer .html-Dateien."""
+    import winreg
+    for scheme in ("https", "http"):
+        try:
+            key = rf"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\{scheme}\UserChoice"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+                prog_id = winreg.QueryValueEx(k, "ProgId")[0]
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, rf"{prog_id}\shell\open\command") as k:
+                return winreg.QueryValueEx(k, "")[0]
+        except OSError:
+            continue
+    return None
+
+
+def open_in_browser(path):
+    """Oeffnet die Seite im Standard-Browser. True, wenn das geklappt hat."""
+    if os.name != "nt":
+        return False
+    url = path.as_uri()  # Leerzeichen/Umlaute werden kodiert -> keine Anfuehrungszeichen noetig
+    try:
+        cmd = default_browser_command()
+        if cmd:
+            subprocess.Popen(cmd.replace("%1", url) if "%1" in cmd else f"{cmd} {url}")
+            return True
+    except OSError:
+        pass
+    for exe in ("msedge", "chrome"):  # Notloesung
+        try:
+            subprocess.Popen(f'cmd /c start "" {exe} "{url}"', shell=False)
+            return True
+        except OSError:
+            continue
+    return False
+
+
 def main():
     started = time.time()
     cfg = load_config()
@@ -411,11 +448,8 @@ def main():
     if orphans:
         print(f"Exporte ohne passendes Original: {len(orphans)} (siehe Seite)")
     print(f"\nUebersicht: {OUT_FILE}")
-    if hasattr(os, "startfile"):
-        try:
-            os.startfile(OUT_FILE)
-        except OSError:
-            pass
+    if not open_in_browser(OUT_FILE):
+        print("Bitte die Datei in den Browser ziehen (z. B. Chrome), um sie anzusehen.")
 
 
 if __name__ == "__main__":

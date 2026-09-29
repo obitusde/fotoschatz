@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.0 · 28.09.2026 (installierte App im Vollbild bestätigt; Übersichts-Tool, v0.6.4)
+**Dokumentversion:** v2.1 · 29.09.2026 (Übersicht öffnet im Standard-Browser, v0.6.5)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -270,7 +270,7 @@ Ohne Datei gelten diese Standardwerte:
 - Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).
 - Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
 - Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise Aufnahmezeit = Dateiname des Originals.
-- Ergebnis `uebersicht.html` neben dem Skript (öffnet sich automatisch, nicht im Repo, nicht hochgeladen): Summen + Balken, Jahre aufklappbar, darin Ordner mit Ampel (komplett online / exportiert, Sync fehlt / teilweise / nicht exportiert), bei offenen Ordnern die fehlenden Originaldateien; Filter „Nur offene“. Unten aufklappbar: Exporte ohne passendes Original, `_`-Ordner, Videos, doppelte Ordnernamen, Dateiarten.
+- Ergebnis `uebersicht.html` neben dem Skript (öffnet sich automatisch im **Standard-Browser** – ermittelt über die Windows-Zuordnung für Internet-Links, weil `.html`-Dateien am PC mit dem Editor verknüpft sind; v0.6.5 ⚠ am PC prüfen; nicht im Repo, nicht hochgeladen): Summen + Balken, Jahre aufklappbar, darin Ordner mit Ampel (komplett online / exportiert, Sync fehlt / teilweise / nicht exportiert), bei offenen Ordnern die fehlenden Originaldateien; Filter „Nur offene“. Unten aufklappbar: Exporte ohne passendes Original, `_`-Ordner, Videos, doppelte Ordnernamen, Dateiarten.
 - Sicherheit: Abbruch, wenn Skript/Ausgabe im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Prüfsummen, Dateiliste).
 - Bekannte Unschärfe: Bilder in Lightroom-**Stapeln** (nur das oberste wird exportiert) und Photoshop-Bearbeitungen (`…-Bearbeitet.tif`) erscheinen als „nicht exportiert“. Genau ginge es nur über eine Kopie des Lightroom-Katalogs (später, falls nötig).
 
