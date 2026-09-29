@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.2 · 29.09.2026 (Zusätze wie -Edit erlaubt, Prüfungen in der Übersicht, Aufräumen, v0.6.6)
+**Dokumentversion:** v2.3 · 29.09.2026 (Export-Vorlage mit Aufnahmedatum; Übersicht nach echten Ordnern, GPS nur Info, v0.6.7)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -52,10 +52,10 @@
 ## 2. Ausgangslage
 
 ### Lightroom Classic
-- Katalog mit ca. 23.000 Bildern, alle von Digitalkameras/Handys (keine Scans). Gepflegt: Personen (Gesichtsmarkierung), Orte, GPS, Beschreibung, teils Bewertung.
+- Katalog mit ca. 23.000 Bildern, überwiegend von Digitalkameras/Handys, dazu alte Familienfotos (Scans, ab 1912). Gepflegt: Personen (Gesichtsmarkierung), Orte, GPS, Beschreibung, teils Bewertung.
 - **Inhaltliche Stichwörter gibt es praktisch nicht** – in den Stichwörtern stehen fast nur Personennamen und Verwaltungs-Stichwörter (z. B. `google-fotos-uploaded`). Keine Stichwort-Hierarchie. Die Sammlung ist über 20 Jahre gewachsen, einzelne Ausreißer sind möglich.
-- Originaldateien heißen bereits nach dem Aufnahmezeitpunkt (z. B. `2006-06-08_20-11-00.JPG`).
-- Oberfläche von Lightroom ist **deutsch**.
+- Originaldateien heißen meist nach dem Aufnahmezeitpunkt (z. B. `2006-06-08_20-11-00.JPG`), aber nicht immer (z. B. DNGs nicht umbenannt).
+- Oberfläche von Lightroom ist **englisch** (Anleitungen mit englischen Menü-/Bausteinnamen).
 
 ### Ordnerstruktur der Originale (Festplatte)
 ```
@@ -68,9 +68,9 @@
 2007/
   ...
 ```
-- Ebene 1: Jahr. Ebene 2: Ereignisordner, meist `YYYY-MM-DD Name`, aber nicht immer (z. B. `2006-2007 Danone`). Der Ordnername beginnt immer mit einer Jahreszahl.
+- Ebene 1: Jahr – oder ein **Sammelordner** mit Jahreszahl, z. B. `1912-1985 Göbel und Schäfer\1936-1985 Familie Göbel\` (auch tiefer verschachtelt). Ebene 2: Ereignisordner, meist `YYYY-MM-DD Name`, aber nicht immer (z. B. `2006-2007 Danone`). Der Ordnername beginnt immer mit einer Jahreszahl.
 - **Lose Bilder direkt im Jahresordner** (keinem Ereignis zugeordnet) erscheinen online im Ordner **„JJJJ Weitere Bilder"** – für jedes Jahr.
-- **Keine weiteren Unterordner** in den Ereignisordnern.
+- Online zählt immer nur der **eigene** Ordnername (nicht der Pfad) → Ordnernamen müssen eindeutig sein (Übersicht prüft das).
 
 ### Export
 - Alle JPGs landen in **einem flachen Export-Ordner**: `D:\Fotoschatz`.
@@ -137,21 +137,23 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 
 ---
 
-## 5. Lightroom-Export-Preset (eingerichtet und geprüft, 28.09.2026)
+## 5. Lightroom-Export-Preset (eingerichtet 28.09.2026, Dateiname umgestellt 29.09.2026)
 
 | Bereich | Einstellung |
 |---|---|
 | Exportieren auf | Festplatte |
 | Speicherort | `D:\Fotoschatz` (ohne Unterordner) |
 | Vorhandene Dateien | **ohne Warnung überschreiben** (nötig fürs Ersetzen) |
-| Dateibenennung | benutzerdefinierte Vorlage: `{Ordnername}_{Aufnahmezeitpunkt}` → z. B. `2024-10-24 Wanderung ab Les Cases_2024-10-24_10-11-21.jpg`; bei losen Bildern im Jahresordner `2006_2006-06-08_20-11-00.jpg` |
-| Dateiformat | JPEG, Qualität 70, Farbraum sRGB |
+| Dateibenennung | File Naming › Custom: `{Folder Name»}_{Date (YYYY)»}-{Date (MM)»}-{Date (DD)»}_{Hour»}-{Minute»}-{Second»}` (Aufnahmedatum, Stunde 24-h – am PC bestätigt), Extensions: Lowercase → z. B. `2024-10-24 Wanderung ab Les Cases_2024-10-24_10-11-21.jpg`; bei losen Bildern im Jahresordner `2006_2006-06-08_20-11-00.jpg`. Bis 29.09.2026 war es `{Folder Name»}_{Filename»}` – umgestellt, weil nicht alle Originale (z. B. DNGs) nach Datum benannt sind. |
+| Dateiformat | JPEG, Qualität 70, Farbraum sRGB, HDR Output aus, Content Credentials nicht einbeziehen |
+| Nachschärfen | Screen, High (Geschmackssache; „Standard“ wäre üblicher) |
 | Bildgröße | lange Kante 2048 px, nicht vergrößern |
 | Metadaten | alle, Personen- und Standortinfo **nicht** entfernen |
 | Wasserzeichen | nein |
 
 **Hinweise:**
-- Zwei Bilder in derselben Sekunde (Serienbild): Lightroom hängt `-2`, `-3` … an (`…_08-40-40-2.jpg`). ⚠ Wird später nur eines davon neu exportiert, kann es das andere überschreiben. Einzelfälle, im Blick behalten.
+- Zwei Bilder in derselben Sekunde (Serienbild, oder Original + `-Edit`-Fassung): Lightroom hängt `-2`, `-3` … an (`…_08-40-40-2.jpg`). ⚠ Wird später nur eines davon neu exportiert, kann es das andere überschreiben. Einzelfälle, im Blick behalten.
+- ⚠ Scans ohne Aufnahmedatum in Lightroom bekommen ein Ersatzdatum (welches, ungeprüft) → Übersicht zeigt „Jahr passt nicht“/„Datum unplausibel“.
 - Virtuelle Kopien: es wird immer nur das oberste Bild eines Stapels exportiert.
 - Stichwörter mit der Option „nicht beim Export einbeziehen" landen nicht im JPG.
 
@@ -223,7 +225,7 @@ Ohne Datei gelten diese Standardwerte:
 ### Dateinamen (verbindlich)
 - Muster, **von hinten gelesen**: `<Ordner>_JJJJ-MM-TT_hh-mm-ss[-Zusätze].jpg` (Groß-/Kleinschreibung egal). Der Ordnername darf beliebig aussehen, auch Unterstriche enthalten.
 - **Erlaubte Zusätze** (v0.6.6, beliebig kombiniert): Nummer `-2`, `-Edit`/`-Bearbeitet` (Bearbeiten in Photoshop), `-HDR`, `-Pano`, `-Enhanced-NR`/`-Verbessert-RR` (Rauschen entfernen), `-SR`, `-AI`. Anlass: echte Exporte `…_1915-02-12_20-10-34-Edit.jpg` wurden als SCHWER abgelehnt.
-- ⚠ Dass `-Edit` im Exportnamen auftaucht, spricht dafür, dass die Export-Vorlage den **Dateinamen** des Originals nutzt (nicht den Aufnahmezeitpunkt) – bei dir gleichwertig, weil die Originale nach dem Aufnahmezeitpunkt benannt sind. Originale ohne Datumsnamen (z. B. `IMG_1234`) würden dann nicht zum Muster passen → Übersicht listet sie.
+- Die Zusätze stammen aus der früheren Vorlage `{Folder Name»}_{Filename»}`; mit der Datums-Vorlage (seit 29.09.2026) kommt nur noch `-2` usw. vor. Das Sync-Tool versteht beide.
 - **Aufnahmezeit** = Datum + Zeit aus dem Dateinamen (nicht aus EXIF – `DateTimeOriginal` ist in den Exporten leer).
 - **Online-Ordner:**
   - Ordnername = nur Jahreszahl (`2006`) → „2006 Weitere Bilder", steht im Jahr hinter den Ereignisordnern.
@@ -271,18 +273,19 @@ Ohne Datei gelten diese Standardwerte:
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
 
-### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6)
+### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6/v0.6.7)
 - Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).
 - Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ein Original gilt auch als exportiert, wenn seine Bearbeitung (`…-Edit` usw.) exportiert ist. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
 - Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise der Name aus dem Export (Aufnahmezeit + Zusätze).
 - Ergebnis `uebersicht.html` neben dem Skript, öffnet sich im **Standard-Browser** (Windows-Zuordnung für Internet-Links, weil `.html` am PC mit dem Editor verknüpft ist – am PC bestätigt). `uebersicht.bat` schließt sich danach selbst (bleibt nur bei Fehlern offen). Nicht im Repo, nicht hochgeladen.
 - **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / zu prüfen / überflüssige Exporte) + Balken, dann:
   1. **Zu prüfen in Lightroom** (je Abschnitt „Was tun“):
-     - Hinweise zu einzelnen Bildern (wie Korrektur-Tabelle: kein GPS, Jahr passt nicht zum Ordner, Datum unplausibel), gruppiert nach Art, mit Ordner + Originaldatei.
-     - Ordnerstruktur: Ordner auf oberster Ebene ist kein Jahr; Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt; Unterordner in Ereignisordnern. Hinweis: nur in Lightroom umbenennen/verschieben, nie im Explorer.
+     - Hinweise zu einzelnen Bildern (Jahr passt nicht zum Ordner, Datum unplausibel), gruppiert nach Art, mit Ordner + Originaldatei.
+     - Ordnerstruktur: oberster Ordner beginnt nicht mit einer Jahreszahl (Jahr oder Sammelordner wie `1912-1985 …` ist ok); Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt. Unterordner sind erlaubt (v0.6.7). Hinweis: nur in Lightroom umbenennen/verschieben, nie im Explorer.
      - Gleicher Ordnername mehrfach.
+     - **Ohne GPS – nur Info** (v0.6.7): zugeklappt am Ende, zählt nicht als „zu prüfen“ (Ort oft unbekannt, nicht wichtig).
   2. **Aufräumen in D:\Fotoschatz:** Exporte ohne passendes Original, doppelt exportiert (älterer Export; neuester bleibt), nicht verwendbare Exporte (SCHWER).
-  3. **Ordner nach Jahr** (aufklappbar, „ohne Jahr“ zuletzt), Ampel je Ordner, ⚠ Anzahl Hinweise, darin Hinweise und fehlende Originaldateien; Filter „Nur offene“.
+  3. **Ordner wie in Lightroom** (v0.6.7): oberste Ebene mit den echten Ordnernamen unter `D:\Bilder - Raw` (neueste zuerst, Namen ohne Jahreszahl zuletzt), darin die Unterordner mit Pfad ab dort (z. B. `1936-1985 Familie Göbel\Briefe`), „lose Bilder → JJJJ Weitere Bilder“ bzw. „Bilder direkt in diesem Ordner“ am Ende. Ampel je Ordner, Hinweise nach Art (`⚠ 3 Jahr passt nicht · 1 Datum unplausibel`) und grau `📍 19 ohne GPS`; aufgeklappt Hinweise und fehlende Originaldateien. Filter „Nur offene“ (fehlendes GPS allein gilt als erledigt).
   4. **Weitere Angaben:** Originale ohne Datumsnamen, leere Ordner, `_`-Ordner, Videos, Dateiarten.
 - Sicherheit: Abbruch, wenn Skript im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Namen, Größen, Zeiten, Prüfsummen).
 - Bekannte Unschärfe: Bilder in Lightroom-**Stapeln** (nur das oberste wird exportiert) erscheinen als „nicht exportiert“. Genau ginge es nur über eine Kopie des Lightroom-Katalogs (später, falls nötig).

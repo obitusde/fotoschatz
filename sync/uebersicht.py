@@ -14,7 +14,7 @@ Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.6.6"
+__version__ = "0.6.7"
 
 import html
 import json
@@ -161,13 +161,11 @@ def check_folder(r, rel):
     if name != name.strip() or "  " in name:
         add("Leerzeichen am Anfang/Ende oder doppelt im Ordnernamen", "Ordner in Lightroom umbenennen")
     if depth == 1:
-        if not YEAR_DIR_RE.match(name):
-            add("Ordner auf oberster Ebene ist kein Jahresordner",
-                "in Lightroom in den passenden Jahresordner verschieben (oder mit „_“ beginnen lassen, wenn er nicht online soll)")
+        # oben: Jahresordner (2006) oder Sammelordner mit Jahreszahl (1912-1985 Göbel und Schäfer)
+        if not regeln.LEADING_YEAR_RE.match(name):
+            add("Ordner auf oberster Ebene beginnt nicht mit einer Jahreszahl – Bilder direkt darin werden nicht hochgeladen",
+                "in Lightroom umbenennen (z. B. „1990-2000 Name“) oder mit „_“ beginnen lassen, wenn er nicht online soll")
         return
-    if depth >= 3:
-        add("Unterordner in einem Ereignisordner – online zählt nur der eigene Ordnername",
-            "in Lightroom auflösen oder als eigenen Ereignisordner in den Jahresordner verschieben")
     info = regeln.interpret_folder(name)
     if info["problem"] and info["problem"][0] == regeln.SCHWER:
         add("Ordnername beginnt nicht mit einer Jahreszahl – Exporte daraus werden nicht hochgeladen",
@@ -317,7 +315,9 @@ summary .t{font-weight:600}.inner{padding:0 10px 10px 36px}
 ul.files{columns:3 220px;margin:6px 0 4px;padding-left:18px;font-size:.85rem}
 table{border-collapse:collapse;font-size:.85rem;margin:6px 0;width:100%}td,th{padding:4px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 .todo{margin:2px 0 8px;font-size:.9rem}.todo b{color:var(--warn)}
-.warn{color:var(--warn);font-size:.85rem;white-space:nowrap}
+.warn{color:var(--warn);font-size:.85rem}
+.gps{color:var(--muted);font-size:.85rem;white-space:nowrap}
+.row>span+span{margin-left:2px}
 .hide-done .done{display:none}
 .legend span{margin-right:14px;white-space:nowrap}
 .none{padding:10px 12px;color:var(--muted)}
@@ -363,6 +363,25 @@ def problem_type(text):
     return re.sub(r"\s+", " ", re.sub(r"\(.*?\)|\d+|'.*?'", "", text)).strip()
 
 
+GPS_HINT = "keine GPS-Daten"
+SHORT_TYPE = {
+    "Aufnahmejahr passt nicht zum Ordner": "Jahr passt nicht",
+    "Aufnahmezeit unplausibel - Kamerauhr falsch?": "Datum unplausibel",
+    "Datum im Ordnernamen ist ungueltig": "Ordnerdatum ungültig",
+}
+
+
+def hint_badges(warn, gps):
+    """'⚠ 3 Jahr passt nicht · 1 Datum unplausibel' und grau '📍 19 ohne GPS'."""
+    out = ""
+    if warn:
+        kinds = Counter(SHORT_TYPE.get(problem_type(text), problem_type(text)) for _, text in warn)
+        out += "<span class='warn'>⚠ " + " · ".join(f"{fmt(c)} {esc(k)}" for k, c in kinds.most_common()) + "</span>"
+    if gps:
+        out += f"<span class='gps'>📍 {fmt(gps)} ohne GPS</span>"
+    return out
+
+
 def section(w, title, count, todo, body):
     w(f"<details><summary><span class='t'>{esc(title)} ({fmt(count)})</span></summary><div class='inner'>")
     w(f"<div class='todo'><b>Was tun:</b> {todo}</div>")
@@ -372,14 +391,15 @@ def section(w, title, count, todo, body):
 
 def build_page(cfg, r, started):
     folders, status = r["folders"], r["status"]
-    hints_by_folder = defaultdict(list)
+    hints_by_folder = defaultdict(list)   # ohne GPS: das sind die echten Warnungen
+    gps_by_folder = defaultdict(list)     # fehlendes GPS: nur Info (Ort oft unbekannt)
     for e in r["exports"]:
         if not e["severe"] and e.get("key"):
             for sev, text in e["problems"]:
                 if sev == regeln.HINWEIS:
-                    hints_by_folder[e["key"][0]].append((e, text))
+                    (gps_by_folder if text == GPS_HINT else hints_by_folder)[e["key"][0]].append((e, text))
 
-    years = defaultdict(list)
+    groups = defaultdict(list)
     totals = Counter()
     for key, folder in folders.items():
         images = folder["images"]
@@ -389,16 +409,17 @@ def build_page(cfg, r, started):
         missing = sorted((img for stem, img in images.items() if (key, stem) not in status),
                          key=lambda img: img["stem"].casefold())
         state = folder_state(n, exported, online)
-        top = folder["rel"].split(os.sep)[0]
-        year = top[:4] if top[:4].isdigit() else "ohne Jahr"
-        years[year].append({"name": folder["name"], "rel": folder["rel"], "n": n, "exp": exported, "online": online,
-                            "missing": missing, "state": state, "hints": hints_by_folder.get(key, [])})
+        parts = folder["rel"].split(os.sep)
+        groups[parts[0]].append({"name": folder["name"], "rel": folder["rel"], "sub": os.sep.join(parts[1:]),
+                                 "n": n, "exp": exported, "online": online, "missing": missing, "state": state,
+                                 "hints": hints_by_folder.get(key, []), "gps": gps_by_folder.get(key, [])})
         totals["n"] += n
         totals["online"] += online
         totals["wait"] += exported - online
         totals["none"] += n - exported
 
     hint_total = sum(len(v) for v in hints_by_folder.values())
+    gps_total = sum(len(v) for v in gps_by_folder.values())
     cleanup = r["orphans"] + r["dups"] + r["unusable"]
     check_total = hint_total + len(r["structure"]) + len(r["duplicates"])
 
@@ -440,8 +461,8 @@ def build_page(cfg, r, started):
                     w(f"<tr><td>{esc(rel)}</td><td>{esc(e['orig'] or e['stem'])}</td><td>{esc(text)}</td></tr>")
                 w("</table></div></details>")
         section(w, "Hinweise zu einzelnen Bildern", hint_total,
-                "Bild in Lightroom über Ordner + Originaldatei finden, Datum/Ort korrigieren (oder bewusst so lassen), "
-                "neu exportieren, sync.bat. Fehlende GPS-Daten sind bei alten Kameras normal.", hints_body)
+                "Bild in Lightroom über Ordner + Originaldatei finden, Datum korrigieren (oder bewusst so lassen), "
+                "neu exportieren, sync.bat.", hints_body)
     if r["structure"]:
         def structure_body():
             w("<table><tr><th>Ordner</th><th>Problem</th><th>Was tun</th></tr>")
@@ -460,6 +481,17 @@ def build_page(cfg, r, started):
         section(w, "Gleicher Ordnername mehrfach", len(r["duplicates"]),
                 "einen der Ordner in Lightroom eindeutig umbenennen – Exporte tragen nur den Ordnernamen, "
                 "online würden beide zusammengelegt.", dup_body)
+
+    if gps_total:
+        def gps_body():
+            w("<table><tr><th>Ordner in Lightroom</th><th>Bilder ohne GPS</th></tr>")
+            for key, items in sorted(gps_by_folder.items(), key=lambda x: folders[x[0]]["rel"].casefold()):
+                w(f"<tr><td>{esc(folders[key]['rel'])}</td><td>{fmt(len(items))}</td></tr>")
+            w("</table>")
+        w(f"<details><summary><span class='t gps'>Ohne GPS ({fmt(gps_total)}) – nur Info</span></summary><div class='inner'>"
+          "<div class='todo'>Oft ist der Ort unbekannt – das ist in Ordnung. Wer mag, setzt in Lightroom (Karte) den Ort nach.</div>")
+        gps_body()
+        w("</div></details>")
 
     # ---- Aufraeumen
     w("<h2>Aufräumen in D:\\Fotoschatz</h2>")
@@ -487,46 +519,54 @@ def build_page(cfg, r, started):
               f"<td>{'ja' if e['online'] else 'nein'}</td><td>{esc(reason)}</td></tr>")
         w("</table></div></details>")
 
-    # ---- Ordner nach Jahr
-    w("<h2>Ordner nach Jahr</h2>")
+    # ---- Ordner wie in Lightroom
+    w("<h2>Ordner wie in Lightroom</h2>")
     w("<div class='tools'>"
       "<button id='f-all' class='on' onclick='setFilter(false)'>Alle Ordner</button>"
       "<button id='f-open' onclick='setFilter(true)'>Nur offene</button>"
-      "<button onclick='openAll(true)'>Alle Jahre aufklappen</button>"
+      "<button onclick='openAll(true)'>Alle aufklappen</button>"
       "<button onclick='openAll(false)'>Alle zuklappen</button></div>")
     w("<div class='legend small muted'>"
       + "".join(f"<span><i class='dot s-{k}'></i>{v}</span>" for k, v in LABEL.items())
-      + "<span class='warn'>⚠ Hinweise</span></div>")
-    for year in sorted(years, key=lambda y: (y[:1].isdigit(), y), reverse=True):  # "ohne Jahr" zuletzt
-        items = sorted(years[year], key=lambda f: f["rel"].casefold(), reverse=True)
-        items.sort(key=lambda f: f["rel"] == year)  # lose Bilder ans Ende des Jahres
+      + "<span class='warn'>⚠ Hinweise</span><span class='gps'>📍 ohne GPS (nur Info)</span></div>")
+    # oberste Ebene wie unter D:\Bilder - Raw, neueste zuerst; Namen ohne Jahreszahl zuletzt
+    for top in sorted(groups, key=lambda g: (g[:1].isdigit(), g.casefold()), reverse=True):
+        items = sorted(groups[top], key=lambda f: f["sub"].casefold(), reverse=True)
+        items.sort(key=lambda f: not f["sub"])  # Bilder direkt im oberen Ordner ans Ende
         y = Counter()
+        warn_all, gps_all = [], 0
         for f in items:
             y["n"] += f["n"]
             y["online"] += f["online"]
             y["wait"] += f["exp"] - f["online"]
-            y["hints"] += len(f["hints"])
+            warn_all += f["hints"]
+            gps_all += len(f["gps"])
             y[f["state"]] += 1
         done = " done" if all(f["state"] == "ok" and not f["hints"] for f in items) else ""
         states = " · ".join(f"<i class='dot s-{k}'></i>{y[k]}" for k in LABEL if y[k])
-        warn = f"<span class='warn'>⚠ {fmt(y['hints'])}</span>" if y["hints"] else ""
-        w(f"<details class='year{done}'><summary><span class='t'>{esc(year)}</span><span class='row'>{warn}"
+        warn = hint_badges(warn_all, gps_all)
+        w(f"<details class='year{done}'><summary><span class='t'>{esc(top)}</span><span class='row'>{warn}"
           f"<span class='nums'>{fmt(y['n'])} Bilder · {fmt(y['online'])} online · Ordner: {states}</span>"
           f"{bar(y['online'], y['wait'], y['n'] - y['online'] - y['wait'], y['n'])}</span></summary><div class='inner'>")
         for f in items:
-            name = f["name"] if f["rel"] != year else f"{f['name']} (lose Bilder → „{year} Weitere Bilder“)"
+            if f["sub"]:
+                name = f["sub"]
+            elif YEAR_DIR_RE.match(top):
+                name = f"lose Bilder → „{top} Weitere Bilder“"
+            else:
+                name = "Bilder direkt in diesem Ordner"
             nums = f"{fmt(f['n'])} Bilder · {fmt(f['exp'])} exportiert · {fmt(f['online'])} online"
-            warn = f"<span class='warn'>⚠ {fmt(len(f['hints']))}</span>" if f["hints"] else ""
+            warn = hint_badges(f["hints"], len(f["gps"]))
             head = f"<span><i class='dot s-{f['state']}'></i>{esc(name)}</span>{warn}<span class='nums'>{nums}</span>"
             cls = " done" if f["state"] == "ok" and not f["hints"] else ""
-            if not f["missing"] and not f["hints"]:
+            if not f["missing"] and not f["hints"] and not f["gps"]:
                 w(f"<div class='plain{cls}'>{head}</div>")
                 continue
             w(f"<details class='folder{cls}'><summary>{head}</summary><div class='inner'>")
             w(f"<div class='small muted'>Ordner in Lightroom: {esc(f['rel'])}</div>")
-            if f["hints"]:
+            if f["hints"] or f["gps"]:
                 w("<table><tr><th>Originaldatei</th><th>Hinweis</th></tr>")
-                for e, text in sorted(f["hints"], key=lambda x: x[0]["file"]):
+                for e, text in sorted(f["hints"], key=lambda x: x[0]["file"]) + sorted(f["gps"], key=lambda x: x[0]["file"]):
                     w(f"<tr><td>{esc(e['orig'] or e['stem'])}</td><td>{esc(text)}</td></tr>")
                 w("</table>")
             if f["missing"]:
