@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.5 · 29.09.2026 (Übersicht: Aufgabenliste für Lightroom je Ordner, v0.6.9; Stapel-Export geklärt)
+**Dokumentversion:** v2.6 · 29.09.2026 (Übersicht: Vorschläge für neue Ordner, Anteil ohne GPS/Personen, v0.6.10; Entscheidungen: `index.json` unkomprimiert, bei `r2.dev` bleiben)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -164,7 +164,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 
 1. Cloudflare-Konto, R2 aktiviert.
 2. Bucket `fotoschatz`, Storage Class Standard, **Jurisdiction EU** (nicht änderbar).
-3. **Öffentlicher Zugriff** über `r2.dev`-Adresse: `https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev`. ⚠ Laut Cloudflare für Entwicklung gedacht und in der Rate begrenzt → offene Entscheidung, ob später eigene Domain.
+3. **Öffentlicher Zugriff** über `r2.dev`-Adresse: `https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev`. ⚠ Laut Cloudflare für Entwicklung gedacht und in der Rate begrenzt. **Entscheidung 29.09.2026: bei `r2.dev` bleiben** (keine eigene Domain; für eine Familien-Galerie reicht es). Falls es später hakt (Drosselung, Fehler), eigene Domain nachrüsten.
 4. **CORS** am Bucket: `GET`, `HEAD` für Origin `https://obitusde.github.io`. ✅ Geprüft mit `docs/test-r2.html` (Aufruf mit `#<Präfix>`).
 5. **Account-API-Token**: nur Bucket `fotoschatz`, Rechte „Object Read & Write". Zugangsdaten liegen nur lokal in der rclone-Konfiguration, **nie im Repo**.
 6. rclone-Remote `r2` (`%APPDATA%\rclone\rclone.conf`):
@@ -274,12 +274,12 @@ Ohne Datei gelten diese Standardwerte:
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
 
-### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6–v0.6.9)
+### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6–v0.6.10)
 - Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).
 - Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ein Original gilt auch als exportiert, wenn seine Bearbeitung (`…-Edit` usw.) exportiert ist. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
 - Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise der Name aus dem Export (Aufnahmezeit + Zusätze).
 - Ergebnis `uebersicht.html` neben dem Skript, öffnet sich im **Standard-Browser** (Windows-Zuordnung für Internet-Links, weil `.html` am PC mit dem Editor verknüpft ist – am PC bestätigt). `uebersicht.bat` schließt sich danach selbst (bleibt nur bei Fehlern offen). Nicht im Repo, nicht hochgeladen.
-- **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / zu prüfen / überflüssige Exporte) + Balken, dann:
+- **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / zu prüfen / überflüssige Exporte / Vorschläge für neue Ordner / 📍 % ohne GPS und 👤 % ohne Personen mit „x von y Ordnern ganz ohne“) + Balken, dann:
   1. **Zu erledigen in Lightroom** (v0.6.9, Aufgabenliste): oben „So gehst du vor“ (Ordner im Folders-Panel öffnen, Bild über *Library Filter › Text › Filename › contains* finden, ändern, neu exportieren mit zugeklappten Stapeln, sync.bat, aufraeumen.bat). Darunter **je Lightroom-Ordner** (Pfad unter `D:\Bilder - Raw`) aufklappbar eine Tabelle: **Datei in Lightroom** (Originaldateiname bzw. „(ganzer Ordner)“) · **Aufnahmezeit** · **Problem** · **Was tun in Lightroom** (englische Menüwege). Aufgabenarten:
      - Ordner: oberster Ordner ohne Jahreszahl; Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt → `Folders-Panel: Rechtsklick › Rename…` bzw. verschieben. Unterordner sind erlaubt.
      - Ordnername doppelt → einen umbenennen.
@@ -287,10 +287,19 @@ Ohne Datei gelten diese Standardwerte:
      - **2 Fassungen**: Original + virtuelle Kopie beide sichtbar (nicht gestapelt), beide würden exportiert → `Photo › Stacking › Group into Stack` (Strg+G), gewünschte Fassung `Move to Top of Stack` (Umschalt+S), oder Kopie löschen. Erkannt an: mehrere Exporte vom selben Original im selben Durchgang (≤ 10 min).
      - **RAW + JPG** vom selben Foto im Ordner → falls zwei Kacheln: JPG entfernen oder `Edit › Preferences › General › Treat JPEG files next to raw files as separate photos` aus.
      - **gleiche Zeit**: mehrere verschiedene Fotos mit exakt gleicher Aufnahmezeit (Scans mit Ersatzdatum) → `Edit Capture Time…` je Foto; bei Serienbildern nichts tun.
-     - **Ohne GPS – nur Info** (zugeklappt, zählt nicht als Aufgabe).
+     - **Ohne GPS / ohne Personen je Ordner – nur Info** (zugeklappt, zählt nicht als Aufgabe): Tabelle Ordner · exportiert · ohne GPS · ohne Personen (Anzahl und %).
+  1a. **Vorschläge für neue Ordner** (v0.6.10) – nur Vorschläge, das Tool legt nichts an:
+     - Gesucht wird in allen Ordnern, die **kein** Ereignisordner `JJJJ-MM-TT Name` sind (Jahresordner = lose Bilder, Sammelordner wie `1963-1974 Marlies und Uli`, `2006-2007 …`), nur unter den Bildern direkt in diesem Ordner.
+     - Fotos: exportierte (Zeit aus dem Export-Dateinamen, Metadaten) plus nicht exportierte Originale, deren Dateiname mit dem Datum beginnt (nur Zeit).
+     - **Zeitliche Häufung:** mindestens **8 Fotos** (Entscheidung 29.09.2026), höchstens **2 Tage** Abstand zwischen zwei Fotos; Ketten über 31 Tage werden an der größten Lücke geteilt. Ausgenommen: Fotos, deren Jahr nicht zum Ordner passt; Gruppen, in denen die Hälfte dieselbe Aufnahmezeit hat (Ersatzdatum bei Scans); ein Sammelordner, der ganz aus diesem einen Ereignis besteht.
+     - **Gleiche Beschreibung** bei mindestens 8 Fotos (für Scans mit Ersatzdatum), außer sie steckt schon in einem zeitlichen Vorschlag oder gilt für fast den ganzen Ordner (≥ 90 %).
+     - Anzeige je Vorschlag: Ordner → Namensvorschlag `JJJJ-MM-TT <Beschreibung bzw. Ort>` (sonst „Name“), Anzahl, Zeitraum, 📍 häufigster Ort, 👤 Personen; aufgeklappt bis 6 Vorschaubilder (direkt aus `D:\Fotoschatz`), Beschreibung/Ort/Personen mit Anzahl, Liste der Fotos, **Was tun in Lightroom**: Bilder markieren (*Library Filter › Metadata › Date* bzw. *Text › Caption*), Rechtsklick auf den Ordner › *Create Folder inside …* mit *Include selected photos*, neu exportieren, sync.bat, aufraeumen.bat.
+     - Gibt es schon einen Unterordner (Ereignis ≤ 31 Tage), dessen Zeitraum passt: Vorschlag „in vorhandenen Ordner …?“ (Bilder dorthin ziehen).
+     - ⚠ Scans mit Ersatzdatum und ohne Beschreibung werden nicht erkannt (das Tool sieht keine Bildinhalte). ⚠ Menüwege `Create Folder inside` / `Include selected photos` am PC bestätigen.
   2. **Aufräumen in D:\Fotoschatz:** Exporte ohne passendes Original; doppelt exportiert (**älterer Export aus einem früheren Durchgang**, > 10 min älter als der neueste; neuester bleibt); **RAW und JPG beide exportiert** (Export aus der JPG-Datei ist überflüssig, der aus der RAW-Datei bleibt; v0.6.8); nicht verwendbare Exporte (SCHWER).
      - Mehrere Exporte vom selben Original aus **demselben Durchgang** (≤ 10 min) räumt das Tool nicht weg (es weiß nicht, welche Fassung oben im Stapel liegt) – sie stehen als Aufgabe „2 Fassungen“ in der Lightroom-Liste. Am PC waren das 3 Fälle bei Göbel (nicht gestapelte virtuelle Kopien).
-  3. **Ordner wie in Lightroom** (v0.6.7): oberste Ebene mit den echten Ordnernamen unter `D:\Bilder - Raw` (neueste zuerst, Namen ohne Jahreszahl zuletzt), darin die Unterordner mit Pfad ab dort (z. B. `1936-1985 Familie Göbel\Briefe`), „lose Bilder → JJJJ Weitere Bilder“ bzw. „Bilder direkt in diesem Ordner“ am Ende. Ampel je Ordner, Hinweise nach Art (`⚠ 3 Jahr passt nicht · 1 Datum unplausibel`) und grau `📍 19 ohne GPS`; aufgeklappt Hinweise und fehlende Originaldateien. Filter „Nur offene“ (fehlendes GPS allein gilt als erledigt).
+  3. **Ordner wie in Lightroom** (v0.6.7): oberste Ebene mit den echten Ordnernamen unter `D:\Bilder - Raw` (neueste zuerst, Namen ohne Jahreszahl zuletzt), darin die Unterordner mit Pfad ab dort (z. B. `1936-1985 Familie Göbel\Briefe`), „lose Bilder → JJJJ Weitere Bilder“ bzw. „Bilder direkt in diesem Ordner“ am Ende. Ampel je Ordner, Hinweise nach Art (`⚠ 3 Jahr passt nicht · 1 Datum unplausibel`) und grau `📍 40 % ohne GPS · 👤 70 % ohne Personen` (Anteil der exportierten Bilder, v0.6.10; ohne Export „📍 – · 👤 –“; Personen = markierte Personen plus Stichwörter mit bekanntem Personennamen, wie im Sync-Tool); aufgeklappt Hinweise und fehlende Originaldateien. Filter „Nur offene“ (fehlendes GPS allein gilt als erledigt) und „Viele ohne Personen“ (≥ 50 % der exportierten Bilder ohne Personen – dort lohnt sich das Benennen in Lightroom, Taste O).
+  - **Stand der Gesichtserkennung in Lightroom** sieht die Übersicht nicht (nur benannte Personen in den Exporten). In Lightroom: *Activity Center* (oben links) › *Face Detection*; Ordner öffnen, Taste **O** (*People*): *Named People* / *Unnamed People*.
   4. **Weitere Angaben:** leere Ordner, `_`-Ordner, Videos, Dateiarten.
 - Zählfehler behoben (v0.6.8): „Ordner: ● n“ je Gruppe zählte Bilder statt Ordner.
 - Lightroom zählt je Ordner mehr als die Übersicht (z. B. 163 statt 147 bei Göbel/Schäfer): virtuelle Kopien und evtl. RAW+JPG als zwei Bilder. Maßgeblich: die Übersicht meldet keine fehlenden Originale.
@@ -356,7 +365,7 @@ Ohne Datei gelten diese Standardwerte:
 - `folders.cover` wird vom Sync-Tool noch geschrieben, von der App aber nicht genutzt (keine Titelbilder).
 - URLs werden in der App aus `SECRET`, `id` und `h` zusammengesetzt, nicht im Index gespeichert.
 - Leere Felder weglassen.
-- Größe: ≈ 0,22 KB je Bild → bei 23.000 Bildern ca. 5 MB. **Vor Phase 3** gzip-komprimiert hochladen (`Content-Encoding: gzip`, ≈ 0,5–1 MB) ⚠ mit r2.dev prüfen; sonst den Index nach Jahren aufteilen.
+- Größe: ≈ 0,22 KB je Bild → bei 23.000 Bildern ca. 5 MB. **Entscheidung 29.09.2026: `index.json` bleibt unkomprimiert** (einfach, ≈ 5 MB; der Service Worker hält die letzte Fassung, geladen wird sie nur bei Änderungen neu). Falls der Start am Handy zu langsam wird: gzip (`Content-Encoding: gzip`) oder nach Jahren aufteilen.
 
 ---
 
@@ -517,7 +526,6 @@ Ohne Datei gelten diese Standardwerte:
 
 ## 12. Offene Punkte
 
-- `r2.dev` oder eigene Domain? (spätestens vor Phase 3 entscheiden)
 - Soll `sync.bat` zusätzlich zeitgesteuert laufen (Windows-Aufgabenplanung) oder nur per Doppelklick?
 - ⚠ Serienbilder mit `-2`: Verhalten bei Neu-Export nur eines der Bilder beobachten.
 

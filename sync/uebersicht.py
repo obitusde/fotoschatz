@@ -14,7 +14,7 @@ Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.6.9"
+__version__ = "0.6.10"
 
 import html
 import json
@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import regeln
@@ -284,6 +284,180 @@ def same_time_groups(exports):
     return {k: sorted(v.values()) for k, v in groups.items() if len(v) >= 2}
 
 
+def known_persons(exports):
+    """Alle als Person markierten Namen (klein -> Schreibweise), wie im Sync-Tool."""
+    known = {}
+    for e in exports:
+        for person in (e["meta"] or {}).get("p", []):
+            known.setdefault(person.casefold(), person)
+    return known
+
+
+def persons_of(meta, known):
+    """Personen eines Bildes: markierte Personen plus Stichwoerter, die einem bekannten Personennamen entsprechen."""
+    persons = list(meta.get("p", []))
+    keys = {p.casefold() for p in persons}
+    for kw in meta.get("kw", []):
+        if kw.casefold() in known and kw.casefold() not in keys:
+            persons.append(known[kw.casefold()])
+            keys.add(kw.casefold())
+    return persons
+
+
+def meta_stats(r):
+    """Je Lightroom-Ordner: exportierte Bilder mit Metadaten, davon ohne GPS, ohne Personen (je Original einmal)."""
+    known = known_persons(r["exports"])
+    seen = set()
+    stats = defaultdict(Counter)
+    for e in r["exports"]:
+        if e.get("key") and e["meta"] is not None and e["key"] not in seen:
+            seen.add(e["key"])
+            st = stats[e["key"][0]]
+            st["n"] += 1
+            st["gps"] += "la" not in e["meta"]
+            st["p"] += not persons_of(e["meta"], known)
+    return stats
+
+
+# ---------------------------------------------------------------- Vorschlaege fuer neue Ordner
+
+MIN_EVENT = 8                          # ab so vielen Fotos lohnt ein eigener Ordner
+EVENT_GAP = timedelta(days=2)          # Fotos mit hoechstens 2 Tagen Abstand gehoeren zusammen
+EVENT_SPAN_MAX = timedelta(days=31)    # laengere Ketten werden an der groessten Luecke geteilt
+BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|]+')
+
+
+def split_events(items):
+    """Zeitlich sortierte Fotos in Ereignisse teilen: Luecke > 2 Tage trennt, Ereignisse bis 31 Tage."""
+    groups, current = [], [items[0]]
+    for a, b in zip(items, items[1:]):
+        if b["time"] - a["time"] > EVENT_GAP:
+            groups.append(current)
+            current = [b]
+        else:
+            current.append(b)
+    groups.append(current)
+    result = []
+    while groups:
+        g = groups.pop()
+        if len(g) > 1 and g[-1]["time"] - g[0]["time"] > EVENT_SPAN_MAX:
+            cut = max(range(1, len(g)), key=lambda i: g[i]["time"] - g[i - 1]["time"])
+            groups += [g[:cut], g[cut:]]
+        else:
+            result.append(g)
+    return result
+
+
+def folder_items(r, known):
+    """Je Lightroom-Ordner alle Fotos mit Aufnahmezeit: exportierte (Zeit aus dem Export, mit Metadaten)
+    und nicht exportierte Originale, deren Dateiname mit dem Datum beginnt."""
+    items = defaultdict(dict)
+    for e in sorted(r["exports"], key=lambda x: x["mtime"]):   # neuester Export gewinnt
+        if e.get("key") and e["stamp"]:
+            key, stem = e["key"]
+            meta = e["meta"] or {}
+            items[key][stem] = {"name": e["orig"] or e["stem"], "time": datetime.strptime(e["stamp"], "%Y-%m-%d_%H-%M-%S"),
+                                "file": e["file"], "meta": meta, "persons": persons_of(meta, known)}
+    for key, folder in r["folders"].items():
+        for stem, img in folder["images"].items():
+            if stem in items[key] or (key, stem) in r["status"]:
+                continue
+            m = DATE_STEM_RE.match(img["stem"])
+            if not m:
+                continue
+            try:
+                taken = datetime.strptime(m[0], "%Y-%m-%d_%H-%M-%S")
+            except ValueError:
+                continue
+            ext = sorted(img["ext"])[0].upper() if img["ext"] else ""
+            items[key][stem] = {"name": img["stem"] + ext, "time": taken, "file": None, "meta": {}, "persons": []}
+    return {key: sorted(v.values(), key=lambda x: x["time"]) for key, v in items.items()}
+
+
+def most_common(values):
+    """Haeufigster (nicht leerer) Wert und wie oft er vorkommt."""
+    values = [v for v in values if v]
+    return Counter(values).most_common(1)[0] if values else ("", 0)
+
+
+def describe(group, total):
+    """Ort, Personen, Beschreibung einer Gruppe (fuer Anzeige und Namensvorschlag)."""
+    place, place_n = most_common(i["meta"].get("sl") or i["meta"].get("ci") or i["meta"].get("st") or i["meta"].get("co")
+                                  for i in group)
+    desc, desc_n = most_common(i["meta"].get("de") for i in group)
+    persons = Counter(p for i in group for p in i["persons"])
+    return {"place": place, "place_n": place_n, "desc": desc, "desc_n": desc_n,
+            "persons": [(p, c) for p, c in persons.most_common(5)], "total": total}
+
+
+def name_proposal(start, info, folder_name):
+    text = ""
+    if info["desc"] and info["desc_n"] * 2 >= info["total"] and len(info["desc"]) <= 40 \
+            and info["desc"].casefold() != folder_name.casefold():
+        text = info["desc"]
+    elif info["place"] and info["place_n"] * 2 >= info["total"]:
+        text = info["place"]
+    text = re.sub(r"\s+", " ", BAD_NAME_CHARS.sub(" ", text)).strip() or "Name"
+    return f"{start:%Y-%m-%d} {text}"
+
+
+def suggest_folders(r):
+    """Vorschlaege fuer neue Ereignisordner in Sammelordnern und bei losen Bildern im Jahresordner:
+    1. zeitliche Haeufung (>= 8 Fotos, hoechstens 2 Tage Abstand), 2. gleiche Beschreibung bei >= 8 Fotos.
+    Nur Vorschlaege - es wird nichts angelegt oder verschoben."""
+    known = known_persons(r["exports"])
+    all_items = folder_items(r, known)
+    folders = r["folders"]
+    ranges = {key: (items[0]["time"], items[-1]["time"]) for key, items in all_items.items() if items}
+    suggestions = []
+    for key, items in all_items.items():
+        folder = folders[key]
+        if regeln.EVENT_FOLDER_RE.match(folder["name"]) or len(items) < MIN_EVENT:
+            continue   # Ereignisordner "JJJJ-MM-TT Name" sind schon ein Ereignis
+        info = regeln.interpret_folder(folder["name"])
+        if info["problem"] and info["problem"][0] == regeln.SCHWER:
+            continue
+        loose = info["rest"]
+        fitting = [i for i in items if not info["years"] or i["time"].year in info["years"]]
+        # vorhandene Unterordner, die selbst ein Ereignis sind (hoechstens 31 Tage) - evtl. gehoeren die Fotos dorthin
+        children = [k for k, f in folders.items() if f["rel"].startswith(folder["rel"] + os.sep) and k in ranges
+                    and ranges[k][1] - ranges[k][0] <= EVENT_SPAN_MAX]
+        used = set()
+        # 1. zeitliche Haeufungen
+        for group in split_events(fitting) if fitting else []:
+            same_stamp = Counter(i["time"] for i in group).most_common(1)[0][1]
+            if len(group) < MIN_EVENT or same_stamp * 2 >= len(group):
+                continue   # zu wenige, oder meist dieselbe Zeit (Ersatzdatum bei Scans)
+            if not loose and len(group) == len(items):
+                continue   # der ganze Ordner ist dieses Ereignis
+            start, end = group[0]["time"], group[-1]["time"]
+            existing = [folders[k]["rel"] for k in children
+                        if ranges[k][0] - timedelta(days=1) <= end and ranges[k][1] + timedelta(days=1) >= start]
+            descr = describe(group, len(group))
+            suggestions.append({"rel": folder["rel"], "folder": folder["name"], "kind": "time", "items": group,
+                                "start": start, "end": end, "info": descr, "existing": existing,
+                                "name": name_proposal(start, descr, folder["name"])})
+            used.update(id(i) for i in group)
+        # 2. gleiche Beschreibung (z. B. Scans mit Ersatzdatum, aber beschriftet)
+        by_desc = defaultdict(list)
+        for i in items:
+            desc = (i["meta"].get("de") or "").strip()
+            if desc and desc.casefold() not in (folder["name"].casefold(), regeln.LEADING_YEAR_RE.sub("", folder["name"]).strip().casefold()):
+                by_desc[desc.casefold()].append(i)
+        for group in by_desc.values():
+            if len(group) < MIN_EVENT or (not loose and len(group) * 10 >= len(items) * 9):
+                continue
+            if sum(id(i) in used for i in group) * 2 >= len(group):
+                continue   # steckt schon in einem zeitlichen Vorschlag
+            group.sort(key=lambda i: i["time"])
+            descr = describe(group, len(group))
+            suggestions.append({"rel": folder["rel"], "folder": folder["name"], "kind": "desc", "items": group,
+                                "start": group[0]["time"], "end": group[-1]["time"], "info": descr, "existing": [],
+                                "name": name_proposal(group[0]["time"], descr, folder["name"])})
+    suggestions.sort(key=lambda s: (s["rel"].casefold(), s["start"]))
+    return suggestions
+
+
 def analyze(cfg, quiet=False):
     say = (lambda *a: None) if quiet else print
     originals, export_dir = check_paths(cfg)
@@ -302,6 +476,8 @@ def analyze(cfg, quiet=False):
                                      if img["ext"] & RAW_EXT and img["ext"] & JPG_LIKE_EXT)
                     for f in r["folders"].values()}
     r["raw_jpg"] = {rel: stems for rel, stems in r["raw_jpg"].items() if stems}
+    r["stats"] = meta_stats(r)
+    r["suggestions"] = suggest_folders(r)
     return r
 
 
@@ -351,13 +527,19 @@ table{border-collapse:collapse;font-size:.85rem;margin:6px 0;width:100%}td,th{pa
 .none{padding:10px 12px;color:var(--muted)}
 .nowrap{white-space:nowrap}
 details.task table td:first-child{overflow-wrap:anywhere;min-width:170px}
+.only-fewp .year:not(.fewp),.only-fewp .folder:not(.fewp),.only-fewp .plain:not(.fewp){display:none}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.thumbs img{width:120px;height:90px;object-fit:cover;border-radius:6px;background:var(--bar)}
+.proposal{font-weight:600;white-space:nowrap}
 """
 
 JS = """
-function setFilter(open){document.body.classList.toggle('hide-done',open);
-document.getElementById('f-all').classList.toggle('on',!open);document.getElementById('f-open').classList.toggle('on',open);}
+function setFilter(mode){document.body.classList.toggle('hide-done',mode==='open');
+document.body.classList.toggle('only-fewp',mode==='fewp');
+['all','open','fewp'].forEach(m=>document.getElementById('f-'+m).classList.toggle('on',m===mode));}
 function openAll(v){document.querySelectorAll('details.year').forEach(d=>d.open=v);}
 function openTasks(v){document.querySelectorAll('details.task').forEach(d=>d.open=v);}
+function openSuggestions(v){document.querySelectorAll('details.sug').forEach(d=>d.open=v);}
 """
 
 LABEL = {"ok": "komplett online", "wait": "exportiert, Sync fehlt", "part": "teilweise exportiert", "none": "nicht exportiert"}
@@ -402,15 +584,38 @@ SHORT_TYPE = {
 }
 
 
-def hint_badges(warn, gps):
-    """'⚠ 3 Jahr passt nicht · 1 Datum unplausibel' und grau '📍 19 ohne GPS'."""
+def hint_badges(warn, st):
+    """'⚠ 3 Jahr passt nicht · 1 Datum unplausibel' und grau '📍 40 % ohne GPS · 👤 70 % ohne Personen'."""
     out = ""
     if warn:
         kinds = Counter(SHORT_TYPE.get(problem_type(text), problem_type(text)) for _, text in warn)
         out += "<span class='warn'>⚠ " + " · ".join(f"{fmt(c)} {esc(k)}" for k, c in kinds.most_common()) + "</span>"
-    if gps:
-        out += f"<span class='gps'>📍 {fmt(gps)} ohne GPS</span>"
-    return out
+    return out + meta_badge(st)
+
+
+def percent(part, whole):
+    """Prozent ohne Rundung auf 0 bzw. 100, solange es nicht ganz stimmt."""
+    if not whole:
+        return "–"
+    value = round(100 * part / whole)
+    if part and not value:
+        return "<1 %"
+    if part < whole and value == 100:
+        return ">99 %"
+    return f"{value} %"
+
+
+def meta_badge(st):
+    """Anteil der exportierten Bilder ohne GPS / ohne Personen (nur Info)."""
+    if not st or not st["n"]:
+        return "<span class='gps' title='noch nichts exportiert – Angaben kommen aus den Exporten'>📍 – · 👤 –</span>"
+    title = (f"{fmt(st['n'])} exportierte Bilder: {fmt(st['gps'])} ohne GPS, {fmt(st['p'])} ohne markierte Personen")
+    return (f"<span class='gps' title='{esc(title)}'>📍 {esc(percent(st['gps'], st['n']))} ohne GPS · "
+            f"👤 {esc(percent(st['p'], st['n']))} ohne Personen</span>")
+
+
+def few_persons(st):
+    return bool(st and st["n"] and st["p"] * 2 >= st["n"])
 
 
 def section(w, title, count, todo, body):
@@ -494,6 +699,69 @@ def build_tasks(r, hints_by_folder):
     return tasks
 
 
+def day_range(start, end):
+    if start.date() == end.date():
+        return f"{start:%d.%m.%Y}"
+    return f"{start:%d.%m.}–{end:%d.%m.%Y}" if start.year == end.year else f"{start:%d.%m.%Y}–{end:%d.%m.%Y}"
+
+
+def write_suggestion(w, sug, cfg):
+    items, info = sug["items"], sug["info"]
+    when = day_range(sug["start"], sug["end"])
+    facts = [f"{fmt(len(items))} Fotos", when]
+    if info["place"]:
+        facts.append(f"📍 {info['place']}")
+    if info["persons"]:
+        facts.append("👤 " + ", ".join(p for p, _ in info["persons"][:3]))
+    target = f"in vorhandenen Ordner „{sug['existing'][0]}“?" if sug["existing"] else f"„{sug['name']}“"
+    w(f"<details class='sug'><summary><span><span class='t'>{esc(sug['rel'])}</span> → "
+      f"<span class='proposal'>{esc(target)}</span></span><span class='nums'>{esc(' · '.join(facts))}</span>"
+      "</summary><div class='inner'>")
+    thumbs = [i for i in items if i["file"]]
+    if thumbs:
+        step = max(1, len(thumbs) // 6)
+        w("<div class='thumbs'>")
+        for i in thumbs[::step][:6]:
+            src = (Path(cfg["export_dir"]) / i["file"]).as_uri()
+            w(f"<img src='{esc(src)}' loading='lazy' alt='' title='{esc(i['name'])}'>")
+        w("</div>")
+    w("<table>")
+    why = ("zeitliche Häufung" if sug["kind"] == "time" else "gleiche Beschreibung")
+    w(f"<tr><th>Gefunden durch</th><td>{why}: {fmt(len(items))} Fotos, {esc(when)}</td></tr>")
+    if info["desc"]:
+        w(f"<tr><th>Beschreibung</th><td>„{esc(info['desc'])}“ ({fmt(info['desc_n'])} von {fmt(len(items))})</td></tr>")
+    if info["place"]:
+        w(f"<tr><th>Ort</th><td>{esc(info['place'])} ({fmt(info['place_n'])} von {fmt(len(items))})</td></tr>")
+    if info["persons"]:
+        w("<tr><th>Personen</th><td>" + esc(", ".join(f"{p} ({c})" for p, c in info["persons"])) + "</td></tr>")
+    missing = sum(1 for i in items if not i["file"])
+    if missing:
+        w(f"<tr><th>Nicht exportiert</th><td>{fmt(missing)} (nur Datum aus dem Dateinamen, ohne Ort und Personen)</td></tr>")
+    if sug["kind"] == "desc":
+        w("<tr><th>⚠ Datum</th><td>Die Fotos wurden über die Beschreibung gefunden – das Datum im Namensvorschlag "
+          "ist das früheste; bei Scans mit Ersatzdatum bitte anpassen.</td></tr>")
+    w("</table>")
+    if sug["kind"] == "time":
+        pick = (f"Library Filter › <i>Metadata</i> › Spalte <i>Date</i>: {esc(when)} auswählen (mehrere Tage mit "
+                "Strg), dann Strg+A")
+    else:
+        pick = (f"Library Filter › <i>Text</i> › <i>Caption</i> › <i>contains</i> „{esc(info['desc'])}“, dann Strg+A")
+    if sug["existing"]:
+        move = (f"die markierten Bilder im Folders-Panel auf den vorhandenen Ordner „{esc(sug['existing'][0])}“ ziehen "
+                "(passt er nicht: neuen Ordner wie unten)")
+    else:
+        move = (f"im Folders-Panel Rechtsklick auf „{esc(sug['folder'])}“ › <i>Create Folder inside “{esc(sug['folder'])}”…</i>"
+                f" › Name z. B. <b style='color:inherit'>{esc(sug['name'])}</b>, Häkchen <i>Include selected photos</i>"
+                " › <i>Create</i> (verschiebt die Bilder)")
+    w(f"<div class='todo'><b>Was tun in Lightroom:</b> 1. Ordner „{esc(sug['rel'])}“ öffnen. 2. {pick}. 3. {move}. "
+      "4. Den neuen Ordner exportieren, dann sync.bat und aufraeumen.bat (räumt die alten Exporte weg).</div>")
+    w("<div class='small muted'>Fotos:</div><ul class='files'>")
+    for i in items:
+        mark = "" if i["file"] else " <span class='muted'>(nicht exportiert)</span>"
+        w(f"<li>{esc(i['name'])} <span class='muted'>{i['time']:%d.%m.%Y %H:%M}</span>{mark}</li>")
+    w("</ul></div></details>")
+
+
 def build_page(cfg, r, started):
     folders, status = r["folders"], r["status"]
     hints_by_folder = defaultdict(list)   # ohne GPS: das sind die echten Warnungen
@@ -517,13 +785,19 @@ def build_page(cfg, r, started):
         parts = folder["rel"].split(os.sep)
         groups[parts[0]].append({"name": folder["name"], "rel": folder["rel"], "sub": os.sep.join(parts[1:]),
                                  "n": n, "exp": exported, "online": online, "missing": missing, "state": state,
-                                 "hints": hints_by_folder.get(key, []), "gps": gps_by_folder.get(key, [])})
+                                 "hints": hints_by_folder.get(key, []), "gps": gps_by_folder.get(key, []),
+                                 "st": r["stats"].get(key)})
         totals["n"] += n
         totals["online"] += online
         totals["wait"] += exported - online
         totals["none"] += n - exported
 
-    gps_total = sum(len(v) for v in gps_by_folder.values())
+    stats = r["stats"]
+    st_all = sum(stats.values(), Counter())
+    exported_folders = [st for st in stats.values() if st["n"]]
+    no_gps_folders = sum(1 for st in exported_folders if st["gps"] == st["n"])
+    no_person_folders = sum(1 for st in exported_folders if st["p"] == st["n"])
+    suggestions = r["suggestions"]
     cleanup = r["orphans"] + r["dups"] + r["pair_exports"] + r["unusable"]
     tasks = build_tasks(r, hints_by_folder)
     check_total = sum(len(v) for v in tasks.values())
@@ -546,6 +820,11 @@ def build_page(cfg, r, started):
     w(f"<div class='card'><b style='color:var(--none)'>{fmt(totals['none'])}</b><span>noch nicht exportiert</span></div>")
     w(f"<div class='card'><b style='color:var(--warn)'>{fmt(check_total)}</b><span>Aufgaben in Lightroom</span></div>")
     w(f"<div class='card'><b style='color:var(--warn)'>{fmt(len(cleanup))}</b><span>überflüssige Exporte (aufraeumen.bat)</span></div>")
+    w(f"<div class='card'><b>{fmt(len(suggestions))}</b><span>Vorschläge für neue Ordner</span></div>")
+    w(f"<div class='card'><b class='muted'>📍 {esc(percent(st_all['gps'], st_all['n']))}</b><span>der exportierten Bilder ohne GPS · "
+      f"{fmt(no_gps_folders)} von {fmt(len(exported_folders))} Ordnern ganz ohne</span></div>")
+    w(f"<div class='card'><b class='muted'>👤 {esc(percent(st_all['p'], st_all['n']))}</b><span>der exportierten Bilder ohne "
+      f"Personen · {fmt(no_person_folders)} von {fmt(len(exported_folders))} Ordnern ganz ohne</span></div>")
     w("</div>")
     w(bar(totals["online"], totals["wait"], totals["none"], n))
 
@@ -572,16 +851,31 @@ def build_page(cfg, r, started):
                 w(f"<tr><td><b>{esc(file)}</b></td><td class='nowrap'>{esc(when)}</td><td>{esc(problem)}</td>"
                   f"<td>{esc(todo)}</td></tr>")
             w("</table></div></details>")
-    if gps_total:
-        def gps_body():
-            w("<table><tr><th>Ordner in Lightroom</th><th>Bilder ohne GPS</th></tr>")
-            for key, items in sorted(gps_by_folder.items(), key=lambda x: folders[x[0]]["rel"].casefold()):
-                w(f"<tr><td>{esc(folders[key]['rel'])}</td><td>{fmt(len(items))}</td></tr>")
-            w("</table>")
-        w(f"<details><summary><span class='t gps'>Ohne GPS ({fmt(gps_total)}) – nur Info</span></summary><div class='inner'>"
-          "<div class='todo'>Oft ist der Ort unbekannt – das ist in Ordnung. Wer mag, setzt in Lightroom (Karte) den Ort nach.</div>")
-        gps_body()
-        w("</div></details>")
+    if exported_folders:
+        w(f"<details><summary><span class='t gps'>Ohne GPS / ohne Personen je Ordner – nur Info</span></summary>"
+          "<div class='inner'><div class='todo'>Gezählt werden die exportierten Bilder. Oft ist der Ort unbekannt, und "
+          "Landschaftsbilder haben keine Personen – das ist in Ordnung. Wer mag, setzt in Lightroom den Ort nach (Map) "
+          "oder benennt Gesichter (Taste O, <i>People</i>).</div>"
+          "<table><tr><th>Ordner in Lightroom</th><th>exportiert</th><th>ohne GPS</th><th>ohne Personen</th></tr>")
+        for key, st in sorted(stats.items(), key=lambda x: folders[x[0]]["rel"].casefold()):
+            w(f"<tr><td>{esc(folders[key]['rel'])}</td><td>{fmt(st['n'])}</td>"
+              f"<td class='nowrap'>{fmt(st['gps'])} ({esc(percent(st['gps'], st['n']))})</td>"
+              f"<td class='nowrap'>{fmt(st['p'])} ({esc(percent(st['p'], st['n']))})</td></tr>")
+        w("</table></div></details>")
+
+    # ---- Vorschlaege fuer neue Ordner
+    w(f"<h2>Vorschläge für neue Ordner ({fmt(len(suggestions))})</h2>")
+    w(f"<div class='todo'>Nur Vorschläge – das Tool legt nichts an und verschiebt nichts. Gesucht wird in Sammelordnern "
+      f"(z. B. „1963-1974 …“) und bei losen Bildern im Jahresordner: mindestens {MIN_EVENT} Fotos, die höchstens "
+      f"{EVENT_GAP.days} Tage auseinanderliegen, oder mit gleicher Beschreibung. ⚠ Scans mit Ersatzdatum und ohne "
+      "Beschreibung erkennt es nicht.</div>")
+    if not suggestions:
+        w("<div class='none'>Keine Vorschläge.</div>")
+    else:
+        w("<div class='tools'><button onclick=\"openSuggestions(true)\">Alle aufklappen</button>"
+          "<button onclick=\"openSuggestions(false)\">Alle zuklappen</button></div>")
+    for sug in suggestions:
+        write_suggestion(w, sug, cfg)
 
     # ---- Aufraeumen
     w("<h2>Aufräumen in D:\\Fotoschatz</h2>")
@@ -614,30 +908,34 @@ def build_page(cfg, r, started):
     # ---- Ordner wie in Lightroom
     w("<h2>Ordner wie in Lightroom</h2>")
     w("<div class='tools'>"
-      "<button id='f-all' class='on' onclick='setFilter(false)'>Alle Ordner</button>"
-      "<button id='f-open' onclick='setFilter(true)'>Nur offene</button>"
+      "<button id='f-all' class='on' onclick=\"setFilter('all')\">Alle Ordner</button>"
+      "<button id='f-open' onclick=\"setFilter('open')\">Nur offene</button>"
+      "<button id='f-fewp' onclick=\"setFilter('fewp')\">Viele ohne Personen</button>"
       "<button onclick='openAll(true)'>Alle aufklappen</button>"
       "<button onclick='openAll(false)'>Alle zuklappen</button></div>")
     w("<div class='legend small muted'>"
       + "".join(f"<span><i class='dot s-{k}'></i>{v}</span>" for k, v in LABEL.items())
-      + "<span class='warn'>⚠ Hinweise</span><span class='gps'>📍 ohne GPS (nur Info)</span></div>")
+      + "<span class='warn'>⚠ Hinweise</span><span class='gps'>📍 ohne GPS · 👤 ohne Personen: Anteil der exportierten "
+      "Bilder (nur Info)</span></div>")
     # oberste Ebene wie unter D:\Bilder - Raw, neueste zuerst; Namen ohne Jahreszahl zuletzt
     for top in sorted(groups, key=lambda g: (g[:1].isdigit(), g.casefold()), reverse=True):
         items = sorted(groups[top], key=lambda f: f["sub"].casefold(), reverse=True)
         items.sort(key=lambda f: not f["sub"])  # Bilder direkt im oberen Ordner ans Ende
         y = Counter()
         states_count = Counter()   # getrennt von y, sonst vermischt sich "wait" (Bilder) mit "wait" (Ordner)
-        warn_all, gps_all = [], 0
+        warn_all, st_top = [], Counter()
         for f in items:
             y["n"] += f["n"]
             y["online"] += f["online"]
             y["wait"] += f["exp"] - f["online"]
             warn_all += f["hints"]
-            gps_all += len(f["gps"])
+            st_top += f["st"] or Counter()
             states_count[f["state"]] += 1
         done = " done" if all(f["state"] == "ok" and not f["hints"] for f in items) else ""
         states = " · ".join(f"<i class='dot s-{k}'></i>{states_count[k]}" for k in LABEL if states_count[k])
-        warn = hint_badges(warn_all, gps_all)
+        warn = hint_badges(warn_all, st_top)
+        if any(few_persons(f["st"]) for f in items):
+            done += " fewp"
         w(f"<details class='year{done}'><summary><span class='t'>{esc(top)}</span><span class='row'>{warn}"
           f"<span class='nums'>{fmt(y['n'])} Bilder · {fmt(y['online'])} online · Ordner: {states}</span>"
           f"{bar(y['online'], y['wait'], y['n'] - y['online'] - y['wait'], y['n'])}</span></summary><div class='inner'>")
@@ -649,9 +947,10 @@ def build_page(cfg, r, started):
             else:
                 name = "Bilder direkt in diesem Ordner"
             nums = f"{fmt(f['n'])} Bilder · {fmt(f['exp'])} exportiert · {fmt(f['online'])} online"
-            warn = hint_badges(f["hints"], len(f["gps"]))
+            warn = hint_badges(f["hints"], f["st"])
             head = f"<span><i class='dot s-{f['state']}'></i>{esc(name)}</span>{warn}<span class='nums'>{nums}</span>"
             cls = " done" if f["state"] == "ok" and not f["hints"] else ""
+            cls += " fewp" if few_persons(f["st"]) else ""
             if not f["missing"] and not f["hints"] and not f["gps"]:
                 w(f"<div class='plain{cls}'>{head}</div>")
                 continue
@@ -697,7 +996,7 @@ def build_page(cfg, r, started):
     w("</table><div class='small muted'>RAW und JPG mit gleichem Namen im selben Ordner zählen als ein Bild.</div>"
       "</div></details>")
     w("</main></body></html>")
-    return "\n".join(out), totals, check_total, len(cleanup)
+    return "\n".join(out), totals, check_total, len(cleanup), len(suggestions)
 
 
 # ---------------------------------------------------------------- Browser
@@ -743,7 +1042,7 @@ def main():
     cfg = load_config()
     print(f"uebersicht.py v{__version__}")
     r = analyze(cfg)
-    page, totals, check_total, cleanup_total = build_page(cfg, r, started)
+    page, totals, check_total, cleanup_total, suggestion_total = build_page(cfg, r, started)
     OUT_FILE.write_text(page, encoding="utf-8")
 
     print()
@@ -753,6 +1052,7 @@ def main():
     print(f"  noch nicht exportiert:     {totals['none']}")
     print(f"Aufgaben in Lightroom:       {check_total}")
     print(f"Aufzuraeumen (aufraeumen.bat): {cleanup_total}")
+    print(f"Vorschlaege fuer neue Ordner: {suggestion_total}")
     print(f"\nUebersicht: {OUT_FILE}")
     if not open_in_browser(OUT_FILE):
         print("Bitte die Datei in den Browser ziehen (z. B. Chrome), um sie anzusehen.")
