@@ -9,7 +9,7 @@ Aenderungen.
 Wird von katalog_diagnose.py (und spaeter von der Lightroom-Pruefung) benutzt.
 """
 
-__version__ = "0.6.11"
+__version__ = "0.6.12"
 
 import os
 import shutil
@@ -37,7 +37,8 @@ def inside(path, root):
 
 def find_catalog(setting):
     """Pfad aus der Einstellung -> die .lrcat-Datei. Erlaubt: die Datei selbst, der Ordner,
-    in dem sie liegt, oder der Name ohne Endung."""
+    in dem sie liegt, oder der Name ohne Endung. Liegen im Ordner mehrere Kataloge, gilt der
+    zuletzt geaenderte (Entscheidung 29.09.2026: die anderen sind alte Kataloge)."""
     path = Path(setting)
     if path.is_file() and path.suffix.lower() == ".lrcat":
         return path
@@ -47,14 +48,18 @@ def find_catalog(setting):
     if path.is_dir():
         found = sorted((p for p in path.iterdir() if p.is_file() and p.suffix.lower() == ".lrcat"),
                        key=lambda p: p.stat().st_mtime, reverse=True)
-        if len(found) == 1:
-            return found[0]
         if found:
-            names = ", ".join(p.name for p in found)
-            raise CatalogError(f"Mehrere Kataloge in {path}: {names}. Bitte in config.local.json "
-                               f"\"catalog\" auf die richtige .lrcat-Datei setzen.")
+            return found[0]   # mehrere (alte Kataloge nach Lightroom-Updates): der zuletzt geaenderte
         raise CatalogError(f"Im Ordner {path} liegt keine .lrcat-Datei.")
     raise CatalogError(f"Lightroom-Katalog nicht gefunden: {path}")
+
+
+def other_catalogs(catalog):
+    """Weitere .lrcat-Dateien im selben Ordner (werden nicht benutzt, nur angezeigt)."""
+    catalog = Path(catalog)
+    return sorted((p for p in catalog.parent.iterdir()
+                   if p.is_file() and p.suffix.lower() == ".lrcat" and p.name != catalog.name),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def lightroom_running():

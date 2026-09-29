@@ -10,7 +10,7 @@ Aufruf: katalog_diagnose.bat (Doppelklick) oder python katalog_diagnose.py
 Optional in config.local.json: "catalog": "C:\\\\Daten\\\\Lightroom Catalog"
 """
 
-__version__ = "0.6.11"
+__version__ = "0.6.12"
 
 import json
 import os
@@ -383,6 +383,11 @@ def main():
         OUT_FILE.write_text("\n".join(lines), encoding="utf-8")
         sys.exit(1)
     out(f"Katalog: {catalog} ({catalog.stat().st_size / 1e6:.0f} MB) → Kopie: {copy}")
+    stamp = time.strftime("%d.%m.%Y %H:%M", time.localtime(catalog.stat().st_mtime))
+    out(f"  zuletzt geändert {stamp} – benutzt, weil zuletzt geändert")
+    for other in katalog.other_catalogs(catalog):
+        when = time.strftime("%d.%m.%Y %H:%M", time.localtime(other.stat().st_mtime))
+        out(f"  nicht benutzt (älter): {other.name}, zuletzt geändert {when}")
 
     rows = []
     section("1. Version", check_version, db)
