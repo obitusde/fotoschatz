@@ -14,7 +14,7 @@ Ohne Angabe wird der Ordner oberhalb des Skript-Ordners verwendet
 (z. B. Skript in D:\\Fotoschatz\\_sync -> prueft D:\\Fotoschatz).
 """
 
-__version__ = "0.4.0"
+__version__ = "0.6.6"
 
 import csv
 import sys
@@ -168,7 +168,7 @@ def main():
     add(f"ohne Probleme:               {total - schwer - hinweis}")
     add(f"mit Hinweisen (Upload ja):   {hinweis}")
     add(f"SCHWER (Upload nein):        {schwer}")
-    add(f"mit Zusatz -2/-3 im Namen:   {sum(1 for a in records if a['dup'])}")
+    add(f"mit Zusatz (-2, -Edit ...):   {sum(1 for a in records if a['dup'])}")
     add(f"Korrektur-Tabelle:           {CSV_FILE.name} ({len(rows)} Zeilen)")
     add("")
 

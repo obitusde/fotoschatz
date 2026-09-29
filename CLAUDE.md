@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.1 · 29.09.2026 (Übersicht öffnet im Standard-Browser, v0.6.5)
+**Dokumentversion:** v2.2 · 29.09.2026 (Zusätze wie -Edit erlaubt, Prüfungen in der Übersicht, Aufräumen, v0.6.6)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -81,6 +81,8 @@
 ### Originale
 - Liegen auf `D:\Bilder - Raw` (ändert sich nicht), darunter `JJJJ\<Ereignisordner>\` wie oben.
 - **In diesen Ordner wird niemals geschrieben** – kein Skript legt dort Dateien an, ändert oder löscht etwas. Tools dürfen dort nur Verzeichnisse auflisten (Namen, Größen).
+- Enthält auch alte Familienfotos (Scans, z. B. `1912-1935 Familie Hedwig Kilp`) und Bearbeitungen aus „Bearbeiten in …“ (`…-Edit.tif`).
+- **`D:\Fotoschatz` dagegen darf gelöscht und überschrieben werden** – es ist nur der Export aus Lightroom.
 
 ### Rechner
 - Windows-PC. Das Sync-Tool läuft lokal. Installiert: Python, exiftool (`winget install OliverBetz.ExifTool`), rclone (`winget`).
@@ -193,7 +195,8 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 ### Dateien (Repo `sync/` → am PC `D:\Fotoschatz\_sync\`)
 - `sync.py` – Hauptablauf · `regeln.py` – gemeinsame Regeln (Dateinamen, Ordner, Prüfungen, Metadaten) · `diagnose.py` – Prüfen ohne Upload
 - `sync.bat` – Sync per Doppelklick · `probelauf.bat` – dasselbe mit `--dry-run`
-- `uebersicht.py` + `uebersicht.bat` – Übersicht „was ist auf der Platte / exportiert / online?“ (siehe unten)
+- `uebersicht.py` + `uebersicht.bat` – Übersicht „was ist auf der Platte / exportiert / online / zu prüfen?“ (siehe unten)
+- `aufraeumen.py` + `aufraeumen.bat` – überflüssige Exporte aus `D:\Fotoschatz` entfernen (siehe unten)
 - `config.example.json` – Vorlage für die optionale `config.local.json` (per `.gitignore` ausgeschlossen)
 - Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `orte.txt` (alle Ortsnamen als Baum Land > Bundesland > Stadt > Ort mit Anzahl, so wie Lightroom sie schreibt – ab und zu an Claude schicken, damit englische Namen in `docs/orte.js` übersetzt werden), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
 
@@ -218,7 +221,9 @@ Ohne Datei gelten diese Standardwerte:
 - `work_dir` enthält: `staging/` (img als Hardlinks auf die Exporte – kein doppelter Speicherplatz, thumb, index.json) und `state.json` (Zustand je Datei, `upload_pending`, bekannte Stichwörter).
 
 ### Dateinamen (verbindlich)
-- Muster, **von hinten gelesen**: `^(?P<ordner>.+)_(?P<datum>\d{4}-\d{2}-\d{2})_(?P<zeit>\d{2}-\d{2}-\d{2})(?:-(?P<nr>\d+))?\.jpe?g$` (Groß-/Kleinschreibung egal). Der Ordnername darf beliebig aussehen, auch Unterstriche enthalten.
+- Muster, **von hinten gelesen**: `<Ordner>_JJJJ-MM-TT_hh-mm-ss[-Zusätze].jpg` (Groß-/Kleinschreibung egal). Der Ordnername darf beliebig aussehen, auch Unterstriche enthalten.
+- **Erlaubte Zusätze** (v0.6.6, beliebig kombiniert): Nummer `-2`, `-Edit`/`-Bearbeitet` (Bearbeiten in Photoshop), `-HDR`, `-Pano`, `-Enhanced-NR`/`-Verbessert-RR` (Rauschen entfernen), `-SR`, `-AI`. Anlass: echte Exporte `…_1915-02-12_20-10-34-Edit.jpg` wurden als SCHWER abgelehnt.
+- ⚠ Dass `-Edit` im Exportnamen auftaucht, spricht dafür, dass die Export-Vorlage den **Dateinamen** des Originals nutzt (nicht den Aufnahmezeitpunkt) – bei dir gleichwertig, weil die Originale nach dem Aufnahmezeitpunkt benannt sind. Originale ohne Datumsnamen (z. B. `IMG_1234`) würden dann nicht zum Muster passen → Übersicht listet sie.
 - **Aufnahmezeit** = Datum + Zeit aus dem Dateinamen (nicht aus EXIF – `DateTimeOriginal` ist in den Exporten leer).
 - **Online-Ordner:**
   - Ordnername = nur Jahreszahl (`2006`) → „2006 Weitere Bilder", steht im Jahr hinter den Ereignisordnern.
@@ -229,7 +234,7 @@ Ohne Datei gelten diese Standardwerte:
 
 ### Prüfung vor dem Upload (verbindlich)
 - **SCHWER** → Bild wird **nicht** hochgeladen: Dateiname passt nicht zum Muster; Aufnahmezeit ist kein gültiges Datum; Ordner beginnt mit `_`; Ordnername beginnt nicht mit einer Jahreszahl.
-- **Hinweis** → Bild wird trotzdem hochgeladen: Aufnahmezeit unplausibel (vor 1995 oder in der Zukunft – Kamerauhr?); Aufnahmejahr passt nicht zum Ordner (erlaubt: Ordnerjahr und Folgejahr bzw. der Jahresbereich); keine GPS-Daten; Ordnerdatum ungültig; Stichwort erstmals gesehen.
+- **Hinweis** → Bild wird trotzdem hochgeladen: Aufnahmezeit unplausibel (in der Zukunft, oder vor 1995 und nicht passend zum Ordner – Kamerauhr?); Aufnahmejahr passt nicht zum Ordner (erlaubt: Ordnerjahr und Folgejahr bzw. der Jahresbereich; bei alten Ordnern vor 1995 wie `1912-1935 …` heißt der Hinweis so statt „Kamerauhr“); keine GPS-Daten; Ordnerdatum ungültig; Stichwort erstmals gesehen.
 - Ausgabe: `korrekturen.csv` (bzw. `diagnose_korrekturen.csv`; Excel, `;`, UTF-8 mit BOM) mit Spalten Schwere · Lightroom-Ordner · Originaldatei · Aufnahmezeit · Exportdatei · Problem, sortiert nach Ordner und Zeit → Bild in Lightroom über Ordner + Originaldatei finden, korrigieren, neu exportieren (überschreibt).
 - Der ganze Lauf wird nur bei Fehlern abgebrochen, die alles durcheinanderbringen würden (siehe Sicherheitsprüfungen).
 - `sync/diagnose.py` enthält dieselben Regeln und dient zum Prüfen ohne Upload.
@@ -266,13 +271,26 @@ Ohne Datei gelten diese Standardwerte:
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
 
-### Übersichts-Tool `uebersicht.py` (v0.6.4)
+### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6)
 - Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).
-- Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
-- Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise Aufnahmezeit = Dateiname des Originals.
-- Ergebnis `uebersicht.html` neben dem Skript (öffnet sich automatisch im **Standard-Browser** – ermittelt über die Windows-Zuordnung für Internet-Links, weil `.html`-Dateien am PC mit dem Editor verknüpft sind; v0.6.5 ⚠ am PC prüfen; nicht im Repo, nicht hochgeladen): Summen + Balken, Jahre aufklappbar, darin Ordner mit Ampel (komplett online / exportiert, Sync fehlt / teilweise / nicht exportiert), bei offenen Ordnern die fehlenden Originaldateien; Filter „Nur offene“. Unten aufklappbar: Exporte ohne passendes Original, `_`-Ordner, Videos, doppelte Ordnernamen, Dateiarten.
-- Sicherheit: Abbruch, wenn Skript/Ausgabe im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Prüfsummen, Dateiliste).
-- Bekannte Unschärfe: Bilder in Lightroom-**Stapeln** (nur das oberste wird exportiert) und Photoshop-Bearbeitungen (`…-Bearbeitet.tif`) erscheinen als „nicht exportiert“. Genau ginge es nur über eine Kopie des Lightroom-Katalogs (später, falls nötig).
+- Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ein Original gilt auch als exportiert, wenn seine Bearbeitung (`…-Edit` usw.) exportiert ist. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
+- Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise der Name aus dem Export (Aufnahmezeit + Zusätze).
+- Ergebnis `uebersicht.html` neben dem Skript, öffnet sich im **Standard-Browser** (Windows-Zuordnung für Internet-Links, weil `.html` am PC mit dem Editor verknüpft ist – am PC bestätigt). `uebersicht.bat` schließt sich danach selbst (bleibt nur bei Fehlern offen). Nicht im Repo, nicht hochgeladen.
+- **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / zu prüfen / überflüssige Exporte) + Balken, dann:
+  1. **Zu prüfen in Lightroom** (je Abschnitt „Was tun“):
+     - Hinweise zu einzelnen Bildern (wie Korrektur-Tabelle: kein GPS, Jahr passt nicht zum Ordner, Datum unplausibel), gruppiert nach Art, mit Ordner + Originaldatei.
+     - Ordnerstruktur: Ordner auf oberster Ebene ist kein Jahr; Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt; Unterordner in Ereignisordnern. Hinweis: nur in Lightroom umbenennen/verschieben, nie im Explorer.
+     - Gleicher Ordnername mehrfach.
+  2. **Aufräumen in D:\Fotoschatz:** Exporte ohne passendes Original, doppelt exportiert (älterer Export; neuester bleibt), nicht verwendbare Exporte (SCHWER).
+  3. **Ordner nach Jahr** (aufklappbar, „ohne Jahr“ zuletzt), Ampel je Ordner, ⚠ Anzahl Hinweise, darin Hinweise und fehlende Originaldateien; Filter „Nur offene“.
+  4. **Weitere Angaben:** Originale ohne Datumsnamen, leere Ordner, `_`-Ordner, Videos, Dateiarten.
+- Sicherheit: Abbruch, wenn Skript im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Namen, Größen, Zeiten, Prüfsummen).
+- Bekannte Unschärfe: Bilder in Lightroom-**Stapeln** (nur das oberste wird exportiert) erscheinen als „nicht exportiert“. Genau ginge es nur über eine Kopie des Lightroom-Katalogs (später, falls nötig).
+
+### Aufräumen `aufraeumen.py` (v0.6.6)
+- Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.
+- **Verschiebt** nach `_sync\geloescht\<Datum-Uhrzeit>\` (nicht endgültig löschen; rückgängig = zurückschieben), Protokoll in `_sync\aufraeumen_protokoll.txt`. Beim nächsten Sync verschwinden die Bilder online; warnt, wenn das mehr als `max_delete` wären.
+- Sicherheit: bewegt nur `.jpg` direkt in `D:\Fotoschatz`; Abbruch bei allem unter `D:\Bilder - Raw`, bei Unterordnern oder Nicht-JPGs (in der Cloud geprüft, Originalordner unverändert).
 
 ### Metadaten-Zuordnung (verbindlich, geprüft an 114 echten Exporten)
 

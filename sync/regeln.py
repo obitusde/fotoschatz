@@ -17,10 +17,13 @@ HINWEIS = "Hinweis"
 
 MIN_PLAUSIBLE_YEAR = 1995
 
-# <Lightroom-Ordner>_JJJJ-MM-TT_hh-mm-ss[-N].jpg  (von hinten gelesen)
+# Zusaetze, die Lightroom an Originalnamen haengt: Nummer (-2), Bearbeiten in Photoshop (-Edit,
+# -Bearbeitet), HDR/Panorama zusammenfuegen (-HDR, -Pano), Rauschen entfernen (-Enhanced-NR, -Verbessert-RR)
+SUFFIX_WORDS = r"\d+|edit|bearbeitet|hdr|pano|enhanced|verbessert|nr|rr|sr|ai"
+# <Lightroom-Ordner>_JJJJ-MM-TT_hh-mm-ss[-Zusaetze].jpg  (von hinten gelesen)
 FILENAME_RE = re.compile(
     r"^(?P<folder>.+)_(?P<date>\d{4}-\d{2}-\d{2})_(?P<time>\d{2}-\d{2}-\d{2})"
-    r"(?:-(?P<dup>\d+))?\.jpe?g$",
+    r"(?P<suffix>(?:-(?:" + SUFFIX_WORDS + r"))*)\.jpe?g$",
     re.IGNORECASE,
 )
 YEAR_FOLDER_RE = re.compile(r"^(\d{4})$")
@@ -142,17 +145,20 @@ def analyze_name(fname, now):
         "folder_date": None,
         "taken": None,
         "dup": False,
+        "stem": "",
         "problems": [],
     }
     m = FILENAME_RE.match(fname)
     if not m:
         a["problems"].append(
-            (SCHWER, "Dateiname passt nicht zum Muster <Ordner>_JJJJ-MM-TT_hh-mm-ss.jpg")
+            (SCHWER, "Dateiname passt nicht zum Muster <Ordner>_JJJJ-MM-TT_hh-mm-ss.jpg "
+                     "(erlaubte Zusaetze: -2, -Edit, -Bearbeitet, -HDR, -Pano, -Enhanced-NR)")
         )
         return a
 
     a["lr_folder"] = m.group("folder")
-    a["dup"] = m.group("dup") is not None
+    a["dup"] = bool(m.group("suffix"))
+    a["stem"] = f"{m.group('date')}_{m.group('time')}{m.group('suffix')}"  # = Name des Originals (ohne Endung)
     try:
         a["taken"] = datetime.strptime(f"{m.group('date')} {m.group('time')}", "%Y-%m-%d %H-%M-%S")
     except ValueError:
@@ -168,11 +174,14 @@ def analyze_name(fname, now):
 
     taken = a["taken"]
     if taken:
-        if taken.year < MIN_PLAUSIBLE_YEAR or taken > now:
+        fits_folder = taken.year in folder["years"]
+        historic = bool(folder["years"]) and min(folder["years"]) < MIN_PLAUSIBLE_YEAR
+        if taken > now or (taken.year < MIN_PLAUSIBLE_YEAR and not fits_folder and not historic):
+            # Alte Fotos (z. B. Ordner "1912-1935 Familie ...") sind plausibel, wenn das Jahr zum Ordner passt
             a["problems"].append(
                 (HINWEIS, f"Aufnahmezeit unplausibel ({taken:%Y-%m-%d}) - Kamerauhr falsch?")
             )
-        elif folder["years"] and taken.year not in folder["years"]:
+        elif folder["years"] and not fits_folder:
             a["problems"].append((HINWEIS, f"Aufnahmejahr {taken.year} passt nicht zum Ordner"))
     return a
 
