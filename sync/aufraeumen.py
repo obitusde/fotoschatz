@@ -12,7 +12,7 @@ Der Originalordner (D:\\Bilder - Raw) wird nur gelesen - dort wird nie etwas ver
 Aufruf: aufraeumen.bat (Doppelklick) oder python aufraeumen.py
 """
 
-__version__ = "0.6.6"
+__version__ = "0.6.8"
 
 import shutil
 from datetime import datetime
@@ -53,7 +53,8 @@ def main():
     r = U.analyze(cfg)
     groups = [
         ("Exporte ohne passendes Original (Ordner/Datei in Lightroom umbenannt oder geloescht)", r["orphans"]),
-        ("Doppelt exportiert - der aeltere Export (ACHTUNG: gewollte virtuelle Kopien? dann 'n')", r["dups"]),
+        ("Doppelt exportiert - aelterer Export aus einem frueheren Durchgang", r["dups"]),
+        ("RAW und JPG beide exportiert - der Export aus der JPG-Datei", r["pair_exports"]),
         ("Nicht verwendbare Exporte (werden nie hochgeladen)", r["unusable"]),
     ]
     if not any(items for _, items in groups):

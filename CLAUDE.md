@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.3 · 29.09.2026 (Export-Vorlage mit Aufnahmedatum; Übersicht nach echten Ordnern, GPS nur Info, v0.6.7)
+**Dokumentversion:** v2.4 · 29.09.2026 (Übersicht: RAW+JPG, virtuelle Kopien, gleiche Aufnahmezeit, Zählfehler behoben, v0.6.8)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -273,7 +273,7 @@ Ohne Datei gelten diese Standardwerte:
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
 
-### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6/v0.6.7)
+### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6–v0.6.8)
 - Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).
 - Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ein Original gilt auch als exportiert, wenn seine Bearbeitung (`…-Edit` usw.) exportiert ist. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
 - Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise der Name aus dem Export (Aufnahmezeit + Zusätze).
@@ -283,14 +283,18 @@ Ohne Datei gelten diese Standardwerte:
      - Hinweise zu einzelnen Bildern (Jahr passt nicht zum Ordner, Datum unplausibel), gruppiert nach Art, mit Ordner + Originaldatei.
      - Ordnerstruktur: oberster Ordner beginnt nicht mit einer Jahreszahl (Jahr oder Sammelordner wie `1912-1985 …` ist ok); Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt. Unterordner sind erlaubt (v0.6.7). Hinweis: nur in Lightroom umbenennen/verschieben, nie im Explorer.
      - Gleicher Ordnername mehrfach.
+     - **RAW und JPG vom selben Foto im Ordner** (v0.6.8): je Ordner mit Liste; Was tun: in Lightroom prüfen, ob doppelt angezeigt („Treat JPEG files next to raw files as separate photos“ aus, oder JPG-Doppel in Lightroom entfernen – Entscheidung des Nutzers, Tools löschen nie Originale).
      - **Ohne GPS – nur Info** (v0.6.7): zugeklappt am Ende, zählt nicht als „zu prüfen“ (Ort oft unbekannt, nicht wichtig).
-  2. **Aufräumen in D:\Fotoschatz:** Exporte ohne passendes Original, doppelt exportiert (älterer Export; neuester bleibt), nicht verwendbare Exporte (SCHWER).
+  2. **Aufräumen in D:\Fotoschatz:** Exporte ohne passendes Original; doppelt exportiert (**älterer Export aus einem früheren Durchgang**, > 10 min älter als der neueste; neuester bleibt); **RAW und JPG beide exportiert** (Export aus der JPG-Datei ist überflüssig, der aus der RAW-Datei bleibt; v0.6.8); nicht verwendbare Exporte (SCHWER).
+     - Mehrere Exporte vom selben Original aus **demselben Durchgang** (≤ 10 min) gelten als gewollte **virtuelle Kopien** und bleiben (v0.6.8 – vorher als „doppelt“ gemeldet; am PC wurden so 3 Kopien verschoben, ggf. aus `_sync\geloescht\2026-09-29_09-27-36` zurückholen).
   3. **Ordner wie in Lightroom** (v0.6.7): oberste Ebene mit den echten Ordnernamen unter `D:\Bilder - Raw` (neueste zuerst, Namen ohne Jahreszahl zuletzt), darin die Unterordner mit Pfad ab dort (z. B. `1936-1985 Familie Göbel\Briefe`), „lose Bilder → JJJJ Weitere Bilder“ bzw. „Bilder direkt in diesem Ordner“ am Ende. Ampel je Ordner, Hinweise nach Art (`⚠ 3 Jahr passt nicht · 1 Datum unplausibel`) und grau `📍 19 ohne GPS`; aufgeklappt Hinweise und fehlende Originaldateien. Filter „Nur offene“ (fehlendes GPS allein gilt als erledigt).
-  4. **Weitere Angaben:** Originale ohne Datumsnamen, leere Ordner, `_`-Ordner, Videos, Dateiarten.
+  4. **Weitere Angaben:** virtuelle Kopien (bleiben), **gleiche Aufnahmezeit bei mehreren verschiedenen Originalen** im selben Ordner (normal bei Serien, bei Scans Hinweis auf Ersatzdatum → Capture Time korrigieren), Originale ohne Datumsnamen, leere Ordner, `_`-Ordner, Videos, Dateiarten.
+- Zählfehler behoben (v0.6.8): „Ordner: ● n“ je Gruppe zählte Bilder statt Ordner.
+- Lightroom zählt je Ordner mehr als die Übersicht (z. B. 163 statt 147 bei Göbel/Schäfer): virtuelle Kopien und evtl. RAW+JPG als zwei Bilder. Maßgeblich: die Übersicht meldet keine fehlenden Originale.
 - Sicherheit: Abbruch, wenn Skript im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Namen, Größen, Zeiten, Prüfsummen).
 - Bekannte Unschärfe: Bilder in Lightroom-**Stapeln** (nur das oberste wird exportiert) erscheinen als „nicht exportiert“. Genau ginge es nur über eine Kopie des Lightroom-Katalogs (später, falls nötig).
 
-### Aufräumen `aufraeumen.py` (v0.6.6)
+### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.
 - **Verschiebt** nach `_sync\geloescht\<Datum-Uhrzeit>\` (nicht endgültig löschen; rückgängig = zurückschieben), Protokoll in `_sync\aufraeumen_protokoll.txt`. Beim nächsten Sync verschwinden die Bilder online; warnt, wenn das mehr als `max_delete` wären.
 - Sicherheit: bewegt nur `.jpg` direkt in `D:\Fotoschatz`; Abbruch bei allem unter `D:\Bilder - Raw`, bei Unterordnern oder Nicht-JPGs (in der Cloud geprüft, Originalordner unverändert).

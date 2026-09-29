@@ -14,7 +14,7 @@ Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.6.7"
+__version__ = "0.6.8"
 
 import html
 import json
@@ -46,6 +46,8 @@ VIDEO_EXT = {".mp4", ".mov", ".avi", ".mts", ".m2ts", ".m4v", ".3gp", ".mpg", ".
 SKIP_DIRS = {"$recycle.bin", "system volume information"}
 YEAR_DIR_RE = re.compile(r"^\d{4}$")
 DATE_STEM_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}")
+SAME_RUN_SECONDS = 600   # Exporte vom selben Original innerhalb von 10 Minuten = gewollte virtuelle Kopien
+JPG_LIKE_EXT = {".jpg", ".jpeg", ".heic", ".heif"}
 EDIT_SUFFIX_RE = re.compile(r"^(?:-(?:" + regeln.SUFFIX_WORDS + r"))+$", re.IGNORECASE)
 
 
@@ -246,20 +248,40 @@ def match(folders, exports):
             continue
         e["key"] = (e["folder"].casefold(), hit)
         by_key[e["key"]].append(e)
-    status, dups = {}, []
+    status, dups, pair_exports, copies = {}, [], [], []
+    ext_of = lambda e: os.path.splitext(e["orig"])[1].casefold() if e["orig"] else ""
     for key, group in by_key.items():
         group.sort(key=lambda x: x["mtime"], reverse=True)   # neuester Export gilt
+        raws = [e for e in group if ext_of(e) in RAW_EXT]
+        if raws and len(raws) < len(group):
+            # RAW und JPG desselben Fotos beide exportiert -> Foto online doppelt; die JPG-Fassung ist ueberfluessig
+            for e in group:
+                if ext_of(e) not in RAW_EXT:
+                    pair_exports.append((e, f"gleiches Foto wie {raws[0]['file']} (aus der RAW-Datei {raws[0]['orig']})"))
+            group = raws
         keep = group[0]
         status[key] = "online" if keep["online"] else "exportiert"
-        for older in group[1:]:
-            dups.append((older, f"dasselbe Original wie {keep['file']} (neuer) – z. B. virtuelle Kopie oder alter Export"))
+        for other in group[1:]:
+            if keep["mtime"] - other["mtime"] <= SAME_RUN_SECONDS:
+                copies.append((other, f"im selben Export wie {keep['file']} – wohl gewollte virtuelle Kopie"))
+            else:
+                dups.append((other, f"dasselbe Original wie {keep['file']}, aber ein älterer Export (z. B. vor dem Umbenennen)"))
     # Original gilt als erledigt, wenn seine bearbeitete Fassung (…-Edit, …-HDR usw.) exportiert ist
     for (folder_key, stem), state in list(status.items()):
         for other in folders[folder_key]["images"]:
             if other != stem and stem.startswith(other) and EDIT_SUFFIX_RE.match(stem[len(other):]) \
                     and (folder_key, other) not in status:
                 status[(folder_key, other)] = state
-    return status, orphans, dups, unusable
+    return status, orphans, dups, unusable, pair_exports, copies
+
+
+def same_time_groups(exports):
+    """Mehrere verschiedene Originale mit exakt gleicher Aufnahmezeit im selben Ordner (z. B. Scans mit Ersatzdatum)."""
+    groups = defaultdict(dict)
+    for e in exports:
+        if e.get("key") and e["stamp"]:
+            groups[(e["folder"], e["stamp"])][e["key"][1]] = e["orig"] or e["stem"]
+    return {k: sorted(v.values()) for k, v in groups.items() if len(v) >= 2}
 
 
 def analyze(cfg, quiet=False):
@@ -273,7 +295,13 @@ def analyze(cfg, quiet=False):
     say(f"Lese Exporte: {export_dir} ...")
     r["exports"] = scan_exports(export_dir, state)
     say(f"  {len(r['exports'])} exportierte Bilder")
-    r["status"], r["orphans"], r["dups"], r["unusable"] = match(r["folders"], r["exports"])
+    r["status"], r["orphans"], r["dups"], r["unusable"], r["pair_exports"], r["copies"] = match(r["folders"], r["exports"])
+    r["same_time"] = same_time_groups(r["exports"])
+    # RAW + JPG desselben Fotos liegen beide im Originalordner
+    r["raw_jpg"] = {f["rel"]: sorted(img["stem"] for img in f["images"].values()
+                                     if img["ext"] & RAW_EXT and img["ext"] & JPG_LIKE_EXT)
+                    for f in r["folders"].values()}
+    r["raw_jpg"] = {rel: stems for rel, stems in r["raw_jpg"].items() if stems}
     return r
 
 
@@ -420,8 +448,9 @@ def build_page(cfg, r, started):
 
     hint_total = sum(len(v) for v in hints_by_folder.values())
     gps_total = sum(len(v) for v in gps_by_folder.values())
-    cleanup = r["orphans"] + r["dups"] + r["unusable"]
-    check_total = hint_total + len(r["structure"]) + len(r["duplicates"])
+    cleanup = r["orphans"] + r["dups"] + r["pair_exports"] + r["unusable"]
+    raw_jpg_total = sum(len(v) for v in r["raw_jpg"].values())
+    check_total = hint_total + len(r["structure"]) + len(r["duplicates"]) + raw_jpg_total
 
     out = []
     w = out.append
@@ -482,6 +511,17 @@ def build_page(cfg, r, started):
                 "einen der Ordner in Lightroom eindeutig umbenennen – Exporte tragen nur den Ordnernamen, "
                 "online würden beide zusammengelegt.", dup_body)
 
+    if raw_jpg_total:
+        def raw_jpg_body():
+            for rel, stems in sorted(r["raw_jpg"].items(), key=lambda x: x[0].casefold()):
+                shown = ", ".join(stems[:12]) + (" …" if len(stems) > 12 else "")
+                w(f"<details><summary><span>{esc(rel)}</span><span class='nums'>{fmt(len(stems))} Fotos</span></summary>"
+                  f"<div class='inner small'>{esc(shown)}</div></details>")
+        section(w, "RAW und JPG vom selben Foto im Ordner", raw_jpg_total,
+                "In Lightroom prüfen, ob diese Fotos doppelt erscheinen. Falls ja: unter Edit › Preferences › General "
+                "„Treat JPEG files next to raw files as separate photos“ ausschalten, oder die JPG-Doppel in Lightroom "
+                "entfernen (deine Entscheidung – die Tools löschen nie Originale). Werden beide exportiert, zeigt die "
+                "Übersicht das unter „Aufräumen“.", raw_jpg_body)
     if gps_total:
         def gps_body():
             w("<table><tr><th>Ordner in Lightroom</th><th>Bilder ohne GPS</th></tr>")
@@ -504,8 +544,10 @@ def build_page(cfg, r, started):
     for title, items, note in [
         ("Exporte ohne passendes Original", r["orphans"], "Ordner oder Datei wurde in Lightroom umbenannt oder gelöscht. "
          "Nach dem Aufräumen den Ordner neu exportieren, falls die Bilder online sein sollen."),
-        ("Doppelt exportiert (älterer Export)", r["dups"], "Zwei Exporte vom selben Original – der neueste bleibt. "
-         "Achtung: Sind es gewollte virtuelle Kopien, beim Aufräumen „n“ wählen."),
+        ("Doppelt exportiert (älterer Export)", r["dups"], "Zwei Exporte vom selben Original aus verschiedenen "
+         "Export-Durchgängen – der neueste bleibt. Exporte aus demselben Durchgang (virtuelle Kopien) stehen nicht hier."),
+        ("RAW und JPG beide exportiert", r["pair_exports"], "Dasselbe Foto wurde aus der RAW- und aus der JPG-Datei "
+         "exportiert und wäre online doppelt. Der Export aus der RAW-Datei bleibt."),
         ("Nicht verwendbare Exporte", r["unusable"], "Werden nie hochgeladen (Dateiname oder Ordner passt nicht). "
          "Ursache in Lightroom beheben (siehe Grund), dann neu exportieren."),
     ]:
@@ -534,6 +576,7 @@ def build_page(cfg, r, started):
         items = sorted(groups[top], key=lambda f: f["sub"].casefold(), reverse=True)
         items.sort(key=lambda f: not f["sub"])  # Bilder direkt im oberen Ordner ans Ende
         y = Counter()
+        states_count = Counter()   # getrennt von y, sonst vermischt sich "wait" (Bilder) mit "wait" (Ordner)
         warn_all, gps_all = [], 0
         for f in items:
             y["n"] += f["n"]
@@ -541,9 +584,9 @@ def build_page(cfg, r, started):
             y["wait"] += f["exp"] - f["online"]
             warn_all += f["hints"]
             gps_all += len(f["gps"])
-            y[f["state"]] += 1
+            states_count[f["state"]] += 1
         done = " done" if all(f["state"] == "ok" and not f["hints"] for f in items) else ""
-        states = " · ".join(f"<i class='dot s-{k}'></i>{y[k]}" for k in LABEL if y[k])
+        states = " · ".join(f"<i class='dot s-{k}'></i>{states_count[k]}" for k in LABEL if states_count[k])
         warn = hint_badges(warn_all, gps_all)
         w(f"<details class='year{done}'><summary><span class='t'>{esc(top)}</span><span class='row'>{warn}"
           f"<span class='nums'>{fmt(y['n'])} Bilder · {fmt(y['online'])} online · Ordner: {states}</span>"
@@ -589,6 +632,25 @@ def build_page(cfg, r, started):
         for rel, stems in sorted(r["undated"].items()):
             shown = ", ".join(sorted(stems)[:8]) + (" …" if len(stems) > 8 else "")
             w(f"<tr><td>{esc(rel)}</td><td>{fmt(len(stems))}</td><td>{esc(shown)}</td></tr>")
+        w("</table></div></details>")
+    if r["copies"]:
+        w(f"<details><summary><span class='t'>Virtuelle Kopien – mehrfach exportiert, bleiben ({fmt(len(r['copies']))})</span>"
+          "</summary><div class='inner small muted'>Mehrere Exporte vom selben Original aus demselben Export-Durchgang – "
+          "meist gewollte virtuelle Kopien (z. B. Schwarz-Weiß). Online erscheinen alle.</div><div class='inner'><table>")
+        for e, reason in sorted(r["copies"], key=lambda x: x[0]["file"]):
+            w(f"<tr><td>{esc(e['file'])}</td><td>{esc(reason)}</td></tr>")
+        w("</table></div></details>")
+    if r["same_time"]:
+        count = sum(len(v) for v in r["same_time"].values())
+        w(f"<details><summary><span class='t'>Gleiche Aufnahmezeit bei mehreren Fotos ({fmt(count)} Fotos in "
+          f"{fmt(len(r['same_time']))} Gruppen)</span></summary><div class='inner small muted'>Normal bei Serienbildern. "
+          "Bei Scans oft ein Zeichen für ein Ersatzdatum – dann in Lightroom (Metadata › Capture Time) korrigieren, "
+          "damit die Reihenfolge online stimmt.</div><div class='inner'><table>"
+          "<tr><th>Ordner</th><th>Aufnahmezeit</th><th>Originale</th></tr>")
+        for (folder, stamp), stems in sorted(r["same_time"].items(), key=lambda x: (x[0][0].casefold(), x[0][1])):
+            names = stems
+            w(f"<tr><td>{esc(folder)}</td><td>{esc(stamp)}</td><td>{esc(', '.join(names[:8]))}"
+              f"{' …' if len(names) > 8 else ''}</td></tr>")
         w("</table></div></details>")
     if r["empty"]:
         w(f"<details><summary><span class='t'>Leere Ordner ({len(r['empty'])})</span></summary><div class='inner'><table>")
