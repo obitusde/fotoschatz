@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.6 · 29.09.2026 (Übersicht: Vorschläge für neue Ordner, Anteil ohne GPS/Personen, v0.6.10; Entscheidungen: `index.json` unkomprimiert, bei `r2.dev` bleiben)
+**Dokumentversion:** v2.7 · 29.09.2026 (Ordner-Vorschläge wieder entfernt; Katalog-Diagnose und Plan „zwei Tools“: Lightroom prüfen / Web-Upload, v0.6.11)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -200,6 +200,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - `sync.bat` – Sync per Doppelklick · `probelauf.bat` – dasselbe mit `--dry-run`
 - `uebersicht.py` + `uebersicht.bat` – Übersicht „was ist auf der Platte / exportiert / online / zu prüfen?“ (siehe unten)
 - `aufraeumen.py` + `aufraeumen.bat` – überflüssige Exporte aus `D:\Fotoschatz` entfernen (siehe unten)
+- `katalog.py` – Zugriff auf den Lightroom-Katalog, nur über eine Kopie · `katalog_diagnose.py` + `katalog_diagnose.bat` – prüft, ob der Katalog lesbar ist (siehe „Lightroom-Katalog“)
 - `config.example.json` – Vorlage für die optionale `config.local.json` (per `.gitignore` ausgeschlossen)
 - Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `orte.txt` (alle Ortsnamen als Baum Land > Bundesland > Stadt > Ort mit Anzahl, so wie Lightroom sie schreibt – ab und zu an Claude schicken, damit englische Namen in `docs/orte.js` übersetzt werden), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
 
@@ -274,12 +275,12 @@ Ohne Datei gelten diese Standardwerte:
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
 
-### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6–v0.6.10)
+### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6–v0.6.10; v0.6.11: Ordner-Vorschläge wieder entfernt – „nicht gut“, Entscheidung 29.09.2026)
 - Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).
 - Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ein Original gilt auch als exportiert, wenn seine Bearbeitung (`…-Edit` usw.) exportiert ist. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
 - Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise der Name aus dem Export (Aufnahmezeit + Zusätze).
 - Ergebnis `uebersicht.html` neben dem Skript, öffnet sich im **Standard-Browser** (Windows-Zuordnung für Internet-Links, weil `.html` am PC mit dem Editor verknüpft ist – am PC bestätigt). `uebersicht.bat` schließt sich danach selbst (bleibt nur bei Fehlern offen). Nicht im Repo, nicht hochgeladen.
-- **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / zu prüfen / überflüssige Exporte / Vorschläge für neue Ordner / 📍 % ohne GPS und 👤 % ohne Personen mit „x von y Ordnern ganz ohne“) + Balken, dann:
+- **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / zu prüfen / überflüssige Exporte / 📍 % ohne GPS und 👤 % ohne Personen mit „x von y Ordnern ganz ohne“) + Balken, dann:
   1. **Zu erledigen in Lightroom** (v0.6.9, Aufgabenliste): oben „So gehst du vor“ (Ordner im Folders-Panel öffnen, Bild über *Library Filter › Text › Filename › contains* finden, ändern, neu exportieren mit zugeklappten Stapeln, sync.bat, aufraeumen.bat). Darunter **je Lightroom-Ordner** (Pfad unter `D:\Bilder - Raw`) aufklappbar eine Tabelle: **Datei in Lightroom** (Originaldateiname bzw. „(ganzer Ordner)“) · **Aufnahmezeit** · **Problem** · **Was tun in Lightroom** (englische Menüwege). Aufgabenarten:
      - Ordner: oberster Ordner ohne Jahreszahl; Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt → `Folders-Panel: Rechtsklick › Rename…` bzw. verschieben. Unterordner sind erlaubt.
      - Ordnername doppelt → einen umbenennen.
@@ -288,14 +289,6 @@ Ohne Datei gelten diese Standardwerte:
      - **RAW + JPG** vom selben Foto im Ordner → falls zwei Kacheln: JPG entfernen oder `Edit › Preferences › General › Treat JPEG files next to raw files as separate photos` aus.
      - **gleiche Zeit**: mehrere verschiedene Fotos mit exakt gleicher Aufnahmezeit (Scans mit Ersatzdatum) → `Edit Capture Time…` je Foto; bei Serienbildern nichts tun.
      - **Ohne GPS / ohne Personen je Ordner – nur Info** (zugeklappt, zählt nicht als Aufgabe): Tabelle Ordner · exportiert · ohne GPS · ohne Personen (Anzahl und %).
-  1a. **Vorschläge für neue Ordner** (v0.6.10) – nur Vorschläge, das Tool legt nichts an:
-     - Gesucht wird in allen Ordnern, die **kein** Ereignisordner `JJJJ-MM-TT Name` sind (Jahresordner = lose Bilder, Sammelordner wie `1963-1974 Marlies und Uli`, `2006-2007 …`), nur unter den Bildern direkt in diesem Ordner.
-     - Fotos: exportierte (Zeit aus dem Export-Dateinamen, Metadaten) plus nicht exportierte Originale, deren Dateiname mit dem Datum beginnt (nur Zeit).
-     - **Zeitliche Häufung:** mindestens **8 Fotos** (Entscheidung 29.09.2026), höchstens **2 Tage** Abstand zwischen zwei Fotos; Ketten über 31 Tage werden an der größten Lücke geteilt. Ausgenommen: Fotos, deren Jahr nicht zum Ordner passt; Gruppen, in denen die Hälfte dieselbe Aufnahmezeit hat (Ersatzdatum bei Scans); ein Sammelordner, der ganz aus diesem einen Ereignis besteht.
-     - **Gleiche Beschreibung** bei mindestens 8 Fotos (für Scans mit Ersatzdatum), außer sie steckt schon in einem zeitlichen Vorschlag oder gilt für fast den ganzen Ordner (≥ 90 %).
-     - Anzeige je Vorschlag: Ordner → Namensvorschlag `JJJJ-MM-TT <Beschreibung bzw. Ort>` (sonst „Name“), Anzahl, Zeitraum, 📍 häufigster Ort, 👤 Personen; aufgeklappt bis 6 Vorschaubilder (direkt aus `D:\Fotoschatz`), Beschreibung/Ort/Personen mit Anzahl, Liste der Fotos, **Was tun in Lightroom**: Bilder markieren (*Library Filter › Metadata › Date* bzw. *Text › Caption*), Rechtsklick auf den Ordner › *Create Folder inside …* mit *Include selected photos*, neu exportieren, sync.bat, aufraeumen.bat.
-     - Gibt es schon einen Unterordner (Ereignis ≤ 31 Tage), dessen Zeitraum passt: Vorschlag „in vorhandenen Ordner …?“ (Bilder dorthin ziehen).
-     - ⚠ Scans mit Ersatzdatum und ohne Beschreibung werden nicht erkannt (das Tool sieht keine Bildinhalte). ⚠ Menüwege `Create Folder inside` / `Include selected photos` am PC bestätigen.
   2. **Aufräumen in D:\Fotoschatz:** Exporte ohne passendes Original; doppelt exportiert (**älterer Export aus einem früheren Durchgang**, > 10 min älter als der neueste; neuester bleibt); **RAW und JPG beide exportiert** (Export aus der JPG-Datei ist überflüssig, der aus der RAW-Datei bleibt; v0.6.8); nicht verwendbare Exporte (SCHWER).
      - Mehrere Exporte vom selben Original aus **demselben Durchgang** (≤ 10 min) räumt das Tool nicht weg (es weiß nicht, welche Fassung oben im Stapel liegt) – sie stehen als Aufgabe „2 Fassungen“ in der Lightroom-Liste. Am PC waren das 3 Fälle bei Göbel (nicht gestapelte virtuelle Kopien).
   3. **Ordner wie in Lightroom** (v0.6.7): oberste Ebene mit den echten Ordnernamen unter `D:\Bilder - Raw` (neueste zuerst, Namen ohne Jahreszahl zuletzt), darin die Unterordner mit Pfad ab dort (z. B. `1936-1985 Familie Göbel\Briefe`), „lose Bilder → JJJJ Weitere Bilder“ bzw. „Bilder direkt in diesem Ordner“ am Ende. Ampel je Ordner, Hinweise nach Art (`⚠ 3 Jahr passt nicht · 1 Datum unplausibel`) und grau `📍 40 % ohne GPS · 👤 70 % ohne Personen` (Anteil der exportierten Bilder, v0.6.10; ohne Export „📍 – · 👤 –“; Personen = markierte Personen plus Stichwörter mit bekanntem Personennamen, wie im Sync-Tool); aufgeklappt Hinweise und fehlende Originaldateien. Filter „Nur offene“ (fehlendes GPS allein gilt als erledigt) und „Viele ohne Personen“ (≥ 50 % der exportierten Bilder ohne Personen – dort lohnt sich das Benennen in Lightroom, Taste O).
@@ -304,7 +297,17 @@ Ohne Datei gelten diese Standardwerte:
 - Zählfehler behoben (v0.6.8): „Ordner: ● n“ je Gruppe zählte Bilder statt Ordner.
 - Lightroom zählt je Ordner mehr als die Übersicht (z. B. 163 statt 147 bei Göbel/Schäfer): virtuelle Kopien und evtl. RAW+JPG als zwei Bilder. Maßgeblich: die Übersicht meldet keine fehlenden Originale.
 - Sicherheit: Abbruch, wenn Skript im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Namen, Größen, Zeiten, Prüfsummen).
-- Bekannte Unschärfe: Bilder in Lightroom-**Stapeln** (nur das oberste wird exportiert) erscheinen als „nicht exportiert“. Genau ginge es nur über eine Kopie des Lightroom-Katalogs (später, falls nötig).
+- Bekannte Unschärfe: Bilder in Lightroom-**Stapeln** (nur das oberste wird exportiert) erscheinen als „nicht exportiert“. Genau geht es über die Katalog-Kopie (siehe „Lightroom-Katalog“).
+
+### Lightroom-Katalog (v0.6.11, Diagnose)
+- Katalog: `C:\Daten\Lightroom Catalog` (Ordner mit der `.lrcat`-Datei; Einstellung `catalog` in `config.local.json`, erlaubt Ordner, Datei oder Name ohne Endung). Die `.lrcat` ist eine SQLite-Datenbank, Aufbau von Adobe nicht dokumentiert (Quellen: `hfiguiere/lrcat-extractor` `doc/lrcat_format.md`, `camerahacks/lightroom-database`).
+- **Original-Katalog wird nur gelesen** (Freigabe 29.09.2026: „Kopie OK, Original nicht zum Schreiben anfassen“): `katalog.py` kopiert ihn nach `_sync\katalog\` und öffnet nur die Kopie (Sperre im Code: nur Pfade unter `_sync\katalog`). Das Original wird nie mit SQLite geöffnet (SQLite legt sonst Hilfsdateien daneben an). Ein vorhandenes `-wal` (nach Absturz) wird mitkopiert.
+- Abbruch, wenn Lightroom offen ist (`<Katalog>.lrcat.lock` vorhanden oder `Lightroom.exe` läuft) oder sich der Katalog beim Kopieren ändert.
+- `katalog_diagnose.py`: gibt Tabellen, Spalten und Anzahlen aus, dazu gezielte Prüfungen (Version, Wurzelordner, Bilder/virtuelle Kopien/Stapel, Katalog ↔ Platte nur über Dateinamen, Stichwörter inkl. „nicht beim Export“ und fast gleiche Namen, Gesichter benannt/Vorschlag/ohne Namen je Ordner, GPS/Stadt/Beschreibung, Sammlungen) → `katalog_diagnose.txt` an Claude schicken. In der Cloud mit einem nachgebauten Katalog getestet; ⚠ am echten Katalog prüfen, welche Tabellen/Spalten es gibt.
+
+### Geplant: zwei getrennte Tools (Entscheidung 29.09.2026, nach der Diagnose bauen)
+- **Tool 1 „Lightroom prüfen“:** liest die Katalog-Kopie (und `D:\Bilder - Raw` nur als Dateiliste) und sagt nur, was **in Lightroom** zu korrigieren ist. Es korrigiert nichts, und auch ich korrigiere nichts außerhalb von Lightroom (sonst Sync-Probleme). Geplante Prüfungen: Stichwörter ohne Bild / fast gleiche Namen / Personennamen als normales Stichwort / Verwaltungs-Stichwörter mit Export an; je Ordner Gesichter ohne Namen und Ordner ohne Gesichtserkennung; nicht importierte Dateien; fehlende Dateien; abgelehnte Bilder; Bearbeitung und Original nicht gestapelt, virtuelle Kopien nicht gestapelt; GPS ohne Ort, Orte uneinheitlich; bisherige Ordner-/Datumsprüfungen.
+- **Tool 2 „Web-Upload“:** Exporte in `D:\Fotoschatz` prüfen, hochladen (sync), Online-Stand, Aufräumen der Exporte.
 
 ### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.
