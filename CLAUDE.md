@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.8 · 29.09.2026 (Katalog: zuletzt geänderter wird benutzt, v0.6.12; davor Ordner-Vorschläge entfernt, Katalog-Diagnose, Plan „zwei Tools“, v0.6.11)
+**Dokumentversion:** v2.9 · 29.09.2026 (neues Tool „Lightroom prüfen“ aus der Katalog-Kopie, Übersicht nur noch Web-Upload, v0.6.13)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -201,6 +201,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - `uebersicht.py` + `uebersicht.bat` – Übersicht „was ist auf der Platte / exportiert / online / zu prüfen?“ (siehe unten)
 - `aufraeumen.py` + `aufraeumen.bat` – überflüssige Exporte aus `D:\Fotoschatz` entfernen (siehe unten)
 - `katalog.py` – Zugriff auf den Lightroom-Katalog, nur über eine Kopie · `katalog_diagnose.py` + `katalog_diagnose.bat` – prüft, ob der Katalog lesbar ist (siehe „Lightroom-Katalog“)
+- `lightroom_pruefen.py` + `lightroom_pruefen.bat` – **Tool 1 „Lightroom prüfen“**: was in Lightroom zu korrigieren ist (siehe unten)
 - `config.example.json` – Vorlage für die optionale `config.local.json` (per `.gitignore` ausgeschlossen)
 - Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `orte.txt` (alle Ortsnamen als Baum Land > Bundesland > Stadt > Ort mit Anzahl, so wie Lightroom sie schreibt – ab und zu an Claude schicken, damit englische Namen in `docs/orte.js` übersetzt werden), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
 
@@ -280,8 +281,8 @@ Ohne Datei gelten diese Standardwerte:
 - Bild = Ordnername + Dateiname ohne Endung; RAW und JPG mit gleichem Namen im selben Ordner zählen als **ein** Bild. Ein Original gilt auch als exportiert, wenn seine Bearbeitung (`…-Edit` usw.) exportiert ist. Ordner mit `_` (z. B. `_Import`) werden separat gezählt („bewusst nicht online“), Videos ebenso, Dateien direkt im Wurzelordner ignoriert.
 - Zuordnung Export → Original: Lightroom-Ordner aus dem Export-Dateinamen + Originaldatei (`XMP-crs:RawFileName`, aus `state.json` oder für noch nicht synchronisierte Exporte per exiftool); ersatzweise der Name aus dem Export (Aufnahmezeit + Zusätze).
 - Ergebnis `uebersicht.html` neben dem Skript, öffnet sich im **Standard-Browser** (Windows-Zuordnung für Internet-Links, weil `.html` am PC mit dem Editor verknüpft ist – am PC bestätigt). `uebersicht.bat` schließt sich danach selbst (bleibt nur bei Fehlern offen). Nicht im Repo, nicht hochgeladen.
-- **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / zu prüfen / überflüssige Exporte / 📍 % ohne GPS und 👤 % ohne Personen mit „x von y Ordnern ganz ohne“) + Balken, dann:
-  1. **Zu erledigen in Lightroom** (v0.6.9, Aufgabenliste): oben „So gehst du vor“ (Ordner im Folders-Panel öffnen, Bild über *Library Filter › Text › Filename › contains* finden, ändern, neu exportieren mit zugeklappten Stapeln, sync.bat, aufraeumen.bat). Darunter **je Lightroom-Ordner** (Pfad unter `D:\Bilder - Raw`) aufklappbar eine Tabelle: **Datei in Lightroom** (Originaldateiname bzw. „(ganzer Ordner)“) · **Aufnahmezeit** · **Problem** · **Was tun in Lightroom** (englische Menüwege). Aufgabenarten:
+- **Aufbau der Seite:** Kacheln (gesamt / online / Sync fehlt / nicht exportiert / überflüssige Exporte / 📍 % ohne GPS und 👤 % ohne Personen mit „x von y Ordnern ganz ohne“) + Balken, dann:
+  1. ~~**Zu erledigen in Lightroom**~~ – **seit v0.6.13 in `lightroom_pruefen.py`** (dort aus dem Katalog statt aus den Exporten; die Übersicht zeigt nur noch einen Hinweis darauf und die Info-Tabelle „Ohne GPS / ohne Personen je Ordner“). Frühere Fassung (v0.6.9, aus den Exporten): oben „So gehst du vor“ (Ordner im Folders-Panel öffnen, Bild über *Library Filter › Text › Filename › contains* finden, ändern, neu exportieren mit zugeklappten Stapeln, sync.bat, aufraeumen.bat). Darunter **je Lightroom-Ordner** (Pfad unter `D:\Bilder - Raw`) aufklappbar eine Tabelle: **Datei in Lightroom** (Originaldateiname bzw. „(ganzer Ordner)“) · **Aufnahmezeit** · **Problem** · **Was tun in Lightroom** (englische Menüwege). Aufgabenarten:
      - Ordner: oberster Ordner ohne Jahreszahl; Ereignisordner im falschen Jahresordner; Ordnername ohne Jahreszahl; Leerzeichen am Anfang/Ende/doppelt → `Folders-Panel: Rechtsklick › Rename…` bzw. verschieben. Unterordner sind erlaubt.
      - Ordnername doppelt → einen umbenennen.
      - Jahr passt nicht / Datum unplausibel / Ordnerdatum ungültig → `Metadata › Edit Capture Time…` bzw. Ordner umbenennen.
@@ -305,9 +306,26 @@ Ohne Datei gelten diese Standardwerte:
 - Abbruch, wenn Lightroom offen ist (`<Katalog>.lrcat.lock` vorhanden oder `Lightroom.exe` läuft) oder sich der Katalog beim Kopieren ändert.
 - `katalog_diagnose.py`: gibt Tabellen, Spalten und Anzahlen aus, dazu gezielte Prüfungen (Version, Wurzelordner, Bilder/virtuelle Kopien/Stapel, Katalog ↔ Platte nur über Dateinamen, Stichwörter inkl. „nicht beim Export“ und fast gleiche Namen, Gesichter benannt/Vorschlag/ohne Namen je Ordner, GPS/Stadt/Beschreibung, Sammlungen) → `katalog_diagnose.txt` an Claude schicken. In der Cloud mit einem nachgebauten Katalog getestet; ⚠ am echten Katalog prüfen, welche Tabellen/Spalten es gibt.
 
-### Geplant: zwei getrennte Tools (Entscheidung 29.09.2026, nach der Diagnose bauen)
-- **Tool 1 „Lightroom prüfen“:** liest die Katalog-Kopie (und `D:\Bilder - Raw` nur als Dateiliste) und sagt nur, was **in Lightroom** zu korrigieren ist. Es korrigiert nichts, und auch ich korrigiere nichts außerhalb von Lightroom (sonst Sync-Probleme). Geplante Prüfungen: Stichwörter ohne Bild / fast gleiche Namen / Personennamen als normales Stichwort / Verwaltungs-Stichwörter mit Export an; je Ordner Gesichter ohne Namen und Ordner ohne Gesichtserkennung; nicht importierte Dateien; fehlende Dateien; abgelehnte Bilder; Bearbeitung und Original nicht gestapelt, virtuelle Kopien nicht gestapelt; GPS ohne Ort, Orte uneinheitlich; bisherige Ordner-/Datumsprüfungen.
-- **Tool 2 „Web-Upload“:** Exporte in `D:\Fotoschatz` prüfen, hochladen (sync), Online-Stand, Aufräumen der Exporte.
+### Zwei getrennte Tools (Entscheidung 29.09.2026)
+- **Tool 1 „Lightroom prüfen“** (`lightroom_pruefen.py`, v0.6.13): sagt nur, was **in Lightroom** zu korrigieren ist. Es korrigiert nichts, und auch ich korrigiere nichts außerhalb von Lightroom (sonst Sync-Probleme).
+- **Tool 2 „Web-Upload“:** `sync.bat`/`probelauf.bat` (hochladen), `uebersicht.bat` (was ist exportiert/online), `aufraeumen.bat` (überflüssige Exporte).
+- ⚠ Noch offen: Die Übersicht könnte mit der Katalog-Kopie genau sagen, welche Bilder noch nicht exportiert sind (Stapel berücksichtigt). Bisher nicht gebaut, weil die Übersicht dann Lightroom geschlossen bräuchte.
+
+### Lightroom prüfen `lightroom_pruefen.py` (v0.6.13)
+- Lightroom schließen, `lightroom_pruefen.bat` doppelklicken → Katalog-Kopie (`katalog.py`) + Dateiliste von `D:\Bilder - Raw` → `lightroom_pruefen.html` im Standard-Browser (Fenster schließt sich, bleibt nur bei Fehlern offen). Dauer am echten Katalog ⚠ noch nicht gemessen (Diagnose: 8 s).
+- **Geprüft werden nur Bilder unter `D:\Bilder - Raw`**. Andere Wurzelordner im Katalog (`F:\PORTFOLIO-RAW` – gibt es nicht mehr, soll ignoriert werden; `C:\Users\chris\Pictures`, 3 Bilder) stehen nur unter „Weitere Angaben“ mit Anleitung *Folders-Panel › Rechtsklick › Remove…* (vorher Katalog-Sicherung).
+- **„Für die Galerie“** = nicht in einem `_`-Ordner und im Stapel oben (bzw. nicht gestapelt) – genau das, was mit *Collapse All Stacks* + Strg+A exportiert wird.
+- **Aufgaben je Lightroom-Ordner** (Tabelle Datei · Aufnahmezeit · Problem · Was tun, englische Menüwege):
+  - Ordner: wie bisher (`check_folder` aus der Übersicht), Ordnername doppelt.
+  - Aufnahmezeit: dieselben Regeln wie das Sync-Tool – aus Ordnername + `captureTime` wird der künftige Export-Dateiname gebildet und mit `regeln.analyze_name` geprüft (Jahr passt nicht, Datum unplausibel); keine Aufnahmezeit.
+  - **2 Fassungen**: Original und Bearbeitung (`…-Edit` usw.) bzw. virtuelle Kopie nicht gestapelt → beide in der Galerie. **2 Kacheln**: gleicher Dateiname, andere Endung (z. B. RAW und JPG getrennt). **Stapel: Original oben**: im Stapel liegt die unbearbeitete Fassung oben (gewollt → nichts tun).
+  - **gleiche Zeit** (≥ 2 Fotos, gleiche Sekunde, z. B. Scans mit Ersatzdatum); **abgelehnt** (Markierung X, sichtbar); **gelöschtes Handybild** (`.trashed-…`).
+  - **Katalog ↔ Platte** (auch in `_`-Ordnern): **Datei verschoben** (fehlt in Lightroom, liegt gleichnamig nicht importiert in einem anderen Ordner → Fragezeichen › *Locate…*), **Datei fehlt**, **nicht importiert** (→ *Synchronize Folder…*; in `_`-Ordnern nur gezählt).
+- **Stichwörter:** Tabelle aller Stichwörter (Art Person/Stichwort, Oberbegriff, Anzahl Bilder, Empfehlung: doppelt → zusammenführen, 0 Bilder → *Metadata › Purge Unused Keywords*, `ignore_keywords` → Verwaltung, bleibt). Am echten Katalog: 8 Namen doppelt (Jonas, Inge, Eugen, Hedwig, Magdalene, Walter, Uli, Lutz – Personen-Stichwort + normales Stichwort unter „Person“); für die Galerie egal, nur Ordnung.
+- **Personen und Orte je Ordner – nur Info** (Entscheidung 29.09.2026: Gesichter nur als Info, keine Aufgaben): Bilder · Namensvorschläge offen (`AgLibraryKeywordFace.userPick = 0`) · Gesichter ohne Namen · bestätigt (`userPick = 1`) · ohne Gesichtserkennung (`Adobe_libraryImageFaceProcessHistory.lastFaceDetector` leer) · ohne GPS · GPS ohne Stadt; Spalten per Klick sortierbar, sortiert nach offenen Vorschlägen. Dazu Ortsnamen in mehreren Schreibweisen (gleich bis auf Groß/klein, Akzente, Satzzeichen, z. B. Zurich/Zürich).
+- Am echten Katalog (Diagnose 29.09.2026): 25.808 Gesichter, 13.448 bestätigt, 9.462 Vorschläge offen, 2.898 ohne Namen; 1.777 Bilder nicht gescannt (vermutlich `F:`); 0 virtuelle Kopien, 272 Stapel; 5 Comer-See-Dateien im Explorer aus `2026\_Import` verschoben; 1.444 Bilder GPS ohne Stadt.
+- ⚠ Unbestätigte Namensvorschläge landen vermutlich nicht im Export (nicht geprüft).
+- In der Cloud mit einem nachgebauten Katalog getestet (alle Aufgabenarten; Katalog und Originale danach unverändert).
 
 ### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.

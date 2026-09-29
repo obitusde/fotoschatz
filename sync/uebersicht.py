@@ -7,14 +7,14 @@ Vergleicht drei Staende und schreibt eine aufklappbare Seite uebersicht.html
   Exporte     D:\\Fotoschatz       (Name der Originaldatei aus den Metadaten)
   Online      _sync\\work\\state.json (Stand des letzten erfolgreichen Syncs)
 
-Dazu Pruefungen zum Nachbessern in Lightroom (Ordnerstruktur, Hinweise je Bild) und eine
-Liste ueberfluessiger Exporte, die aufraeumen.bat entfernen kann.
+Dazu eine Liste ueberfluessiger Exporte, die aufraeumen.bat entfernen kann. Was in Lightroom zu
+korrigieren ist, zeigt seit v0.6.13 lightroom_pruefen.py (liest den Katalog).
 
 Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.6.11"
+__version__ = "0.6.13"
 
 import html
 import json
@@ -486,75 +486,6 @@ TODO_RENAME = "Folders-Panel: Rechtsklick auf den Ordner › Rename…"
 TODO_CAPTURE = "Bild markieren › Metadata › Edit Capture Time… und das richtige (ggf. geschätzte) Datum setzen"
 
 
-def nice_time(stamp):
-    """'1914-01-01_12-24-37' -> '01.01.1914 12:24:37'"""
-    m = re.match(r"(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})", stamp or "")
-    return f"{m[3]}.{m[2]}.{m[1]} {m[4]}:{m[5]}:{m[6]}" if m else ""
-
-
-def build_tasks(r, hints_by_folder):
-    """Alles, was vor dem Export in Lightroom zu aendern ist - je Lightroom-Ordner (Pfad unter D:\\Bilder - Raw).
-    Zeile: (Art, Datei in Lightroom, Aufnahmezeit, Problem, Was tun)."""
-    folders = r["folders"]
-    rel_of_name = {f["name"].casefold(): f["rel"] for f in folders.values()}
-    tasks = defaultdict(list)
-    # Ordner: Struktur und doppelte Namen
-    for rel, problem, todo in r["structure"]:
-        tasks[rel].append(("Ordner", FOLDER_FILE, "", problem, f"{todo} ({TODO_RENAME} oder per Ziehen verschieben)"))
-    for name, rels in r["duplicates"].items():
-        for rel in rels:
-            others = ", ".join(sorted(x for x in rels if x != rel))
-            tasks[rel].append(("Ordnername doppelt", FOLDER_FILE, "", f"gleicher Ordnername auch in: {others} – online "
-                               "würden beide zusammengelegt", f"einen der Ordner eindeutig umbenennen: {TODO_RENAME}"))
-    # Hinweise zu Bildern (Datum)
-    for key, items in hints_by_folder.items():
-        for e, text in items:
-            kind = SHORT_TYPE.get(problem_type(text), problem_type(text))
-            if kind == "Jahr passt nicht":
-                todo = (f"Stimmt das Datum nicht: {TODO_CAPTURE}. Stimmt es doch: Zeitraum im Ordnernamen anpassen "
-                        f"({TODO_RENAME}).")
-            elif kind == "Datum unplausibel":
-                todo = TODO_CAPTURE
-            elif kind == "Ordnerdatum ungültig":
-                todo = f"Datum im Ordnernamen korrigieren: {TODO_RENAME}"
-            else:
-                todo = "prüfen"
-            tasks[folders[key]["rel"]].append((kind, e["orig"] or e["stem"], nice_time(e["stamp"]), text, todo))
-    # zwei sichtbare Fassungen vom selben Original
-    copies = defaultdict(list)
-    for e, _ in r["copies"]:
-        copies[e["key"]].append(e)
-    for (folder_key, _), items in copies.items():
-        e = items[0]
-        tasks[folders[folder_key]["rel"]].append((
-            "2 Fassungen", e["orig"] or e["stem"], nice_time(e["stamp"]),
-            f"{len(items) + 1} sichtbare Fassungen vom selben Original (Original + virtuelle Kopie, nicht gestapelt) "
-            "– alle werden exportiert",
-            "Alle Fassungen markieren › Photo › Stacking › Group into Stack (Strg+G); die Fassung für die Galerie "
-            "im Stapel anklicken › Photo › Stacking › Move to Top of Stack (Umschalt+S). Oder die überflüssige "
-            "virtuelle Kopie löschen."))
-    # RAW + JPG desselben Fotos im Ordner
-    for rel, items in r["raw_jpg"].items():
-        for stem, exts in items:
-            names = " + ".join(f"{stem}{x.upper()}" for x in exts)
-            tasks[rel].append(("RAW + JPG", names, "", "RAW und JPG vom selben Foto liegen im Ordner – "
-                               "erscheinen sie in Lightroom als zwei Bilder, kommen beide in die Galerie",
-                               "Sind es zwei Kacheln: die JPG-Kachel entfernen (Photo › Remove Photo…), oder "
-                               "Edit › Preferences › General › „Treat JPEG files next to raw files as separate photos“ "
-                               "ausschalten. Ist es nur eine Kachel (RAW+JPEG), ist alles in Ordnung."))
-    # mehrere verschiedene Fotos mit exakt gleicher Aufnahmezeit (Scans mit Ersatzdatum)
-    for (folder_name, stamp), names in r["same_time"].items():
-        rel = rel_of_name.get(folder_name.casefold(), folder_name)
-        tasks[rel].append(("gleiche Zeit", ", ".join(names), nice_time(stamp),
-                           f"{len(names)} verschiedene Fotos mit genau derselben Aufnahmezeit – bei Scans meist ein "
-                           "Ersatzdatum; online ist die Reihenfolge dann zufällig",
-                           f"Serienbilder: nichts tun. Scans: je Foto {TODO_CAPTURE}"))
-    order = {"Ordner": 0, "Ordnername doppelt": 1}
-    for rows in tasks.values():
-        rows.sort(key=lambda row: (order.get(row[0], 2), row[2][6:10] + row[2][3:5] + row[2][:2] + row[2][11:], row[1]))
-    return tasks
-
-
 def build_page(cfg, r, started):
     folders, status = r["folders"], r["status"]
     hints_by_folder = defaultdict(list)   # ohne GPS: das sind die echten Warnungen
@@ -591,8 +522,6 @@ def build_page(cfg, r, started):
     no_gps_folders = sum(1 for st in exported_folders if st["gps"] == st["n"])
     no_person_folders = sum(1 for st in exported_folders if st["p"] == st["n"])
     cleanup = r["orphans"] + r["dups"] + r["pair_exports"] + r["unusable"]
-    tasks = build_tasks(r, hints_by_folder)
-    check_total = sum(len(v) for v in tasks.values())
 
     out = []
     w = out.append
@@ -610,7 +539,6 @@ def build_page(cfg, r, started):
     w(f"<div class='card'><b style='color:var(--ok)'>{fmt(totals['online'])}</b><span>online{pct}</span></div>")
     w(f"<div class='card'><b style='color:var(--wait)'>{fmt(totals['wait'])}</b><span>exportiert, Sync fehlt noch</span></div>")
     w(f"<div class='card'><b style='color:var(--none)'>{fmt(totals['none'])}</b><span>noch nicht exportiert</span></div>")
-    w(f"<div class='card'><b style='color:var(--warn)'>{fmt(check_total)}</b><span>Aufgaben in Lightroom</span></div>")
     w(f"<div class='card'><b style='color:var(--warn)'>{fmt(len(cleanup))}</b><span>überflüssige Exporte (aufraeumen.bat)</span></div>")
     w(f"<div class='card'><b class='muted'>📍 {esc(percent(st_all['gps'], st_all['n']))}</b><span>der exportierten Bilder ohne GPS · "
       f"{fmt(no_gps_folders)} von {fmt(len(exported_folders))} Ordnern ganz ohne</span></div>")
@@ -619,29 +547,9 @@ def build_page(cfg, r, started):
     w("</div>")
     w(bar(totals["online"], totals["wait"], totals["none"], n))
 
-    # ---- Aufgaben in Lightroom, je Ordner
-    w(f"<h2>Zu erledigen in Lightroom ({fmt(check_total)})</h2>")
-    if not check_total:
-        w("<div class='none'>Nichts zu tun.</div>")
-    else:
-        w("<div class='todo'><b>So gehst du vor:</b> 1. Ordner links im <i>Folders</i>-Panel öffnen (Pfad unter "
-          "D:\\Bilder - Raw wie angegeben). 2. Bild finden: <i>Library Filter › Text › Filename › contains</i> und den "
-          "Dateinamen eintippen. 3. Ändern wie in der Spalte „Was tun“. 4. Danach den Ordner neu exportieren "
-          "(<i>Photo › Stacking › Collapse All Stacks</i>, Strg+A, <i>Export</i>), dann sync.bat und aufraeumen.bat. "
-          "Ordner nur in Lightroom umbenennen oder verschieben, nie im Explorer.</div>")
-        w("<div class='tools'><button onclick=\"openTasks(true)\">Alle aufklappen</button>"
-          "<button onclick=\"openTasks(false)\">Alle zuklappen</button></div>")
-        for rel in sorted(tasks, key=str.casefold):
-            rows = tasks[rel]
-            kinds = Counter(kind for kind, *_ in rows)
-            badges = " · ".join(f"{fmt(c)} {esc(k)}" for k, c in kinds.most_common())
-            w(f"<details class='task'><summary><span class='t'>{esc(rel)}</span>"
-              f"<span class='warn'>{badges}</span></summary><div class='inner'><table>"
-              "<tr><th>Datei in Lightroom</th><th>Aufnahmezeit</th><th>Problem</th><th>Was tun in Lightroom</th></tr>")
-            for kind, file, when, problem, todo in rows:
-                w(f"<tr><td><b>{esc(file)}</b></td><td class='nowrap'>{esc(when)}</td><td>{esc(problem)}</td>"
-                  f"<td>{esc(todo)}</td></tr>")
-            w("</table></div></details>")
+    w("<div class='todo'><b>Was in Lightroom zu korrigieren ist</b> (Ordner, Aufnahmezeit, Stapel, fehlende Dateien, "
+      "Stichwörter, Gesichter) zeigt jetzt <b style='color:inherit'>lightroom_pruefen.bat</b> – diese Übersicht zeigt "
+      "nur noch, was exportiert und online ist.</div>")
     if exported_folders:
         w(f"<details><summary><span class='t gps'>Ohne GPS / ohne Personen je Ordner – nur Info</span></summary>"
           "<div class='inner'><div class='todo'>Gezählt werden die exportierten Bilder. Oft ist der Ort unbekannt, und "
@@ -773,7 +681,7 @@ def build_page(cfg, r, started):
     w("</table><div class='small muted'>RAW und JPG mit gleichem Namen im selben Ordner zählen als ein Bild.</div>"
       "</div></details>")
     w("</main></body></html>")
-    return "\n".join(out), totals, check_total, len(cleanup)
+    return "\n".join(out), totals, len(cleanup)
 
 
 # ---------------------------------------------------------------- Browser
@@ -819,7 +727,7 @@ def main():
     cfg = load_config()
     print(f"uebersicht.py v{__version__}")
     r = analyze(cfg)
-    page, totals, check_total, cleanup_total = build_page(cfg, r, started)
+    page, totals, cleanup_total = build_page(cfg, r, started)
     OUT_FILE.write_text(page, encoding="utf-8")
 
     print()
@@ -827,7 +735,7 @@ def main():
     print(f"  online:                    {totals['online']}")
     print(f"  exportiert, Sync fehlt:    {totals['wait']}")
     print(f"  noch nicht exportiert:     {totals['none']}")
-    print(f"Aufgaben in Lightroom:       {check_total}")
+    print("Was in Lightroom zu korrigieren ist: lightroom_pruefen.bat")
     print(f"Aufzuraeumen (aufraeumen.bat): {cleanup_total}")
     print(f"\nUebersicht: {OUT_FILE}")
     if not open_in_browser(OUT_FILE):
