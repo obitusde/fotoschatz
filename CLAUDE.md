@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.8 · 01.10.2026 (GPS: Lücken in der Spur füllen, v0.6.22; davor v0.6.21 Lightroom prüfen mit location-ok + „GPS nachtragen“)
+**Dokumentversion:** v3.9 · 01.10.2026 (`aktualisieren.bat` holt die Skripte, v0.6.23; davor v0.6.22 Lücken in der GPS-Spur füllen)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -33,7 +33,7 @@
 - **Zurückgehen:** alten Stand (Tag) als **neue** Version wiederherstellen. Niemals Historie umschreiben, kein force-push auf `main`.
 - **Niemals Geheimnisse ins Repo** (es ist öffentlich): kein R2-Präfix, keine R2-Zugangsdaten, keine `config.local.json`. Die öffentliche R2-Adresse (`pub-….r2.dev`) ist **kein** Geheimnis – ohne Präfix ist dort nichts abrufbar, und die App muss sie ohnehin kennen.
 - **Repo-Aufbau:** `docs/` = PWA (GitHub Pages) · `sync/` = lokales Sync-Tool (läuft nur auf meinem PC) · `.github/workflows/` = release + deploy · `VERSION` · `CLAUDE.md`.
-- Das Sync-Tool kann in der Cloud geschrieben werden, ausgeführt und mit echten Exporten getestet wird es aber auf meinem Windows-PC. Dafür klar sagen, was ich am PC ausführen soll. Dateien für den PC per Datei-Übergabe liefern; sie liegen dort in `D:\Fotoschatz\_sync\`.
+- Das Sync-Tool kann in der Cloud geschrieben werden, ausgeführt und mit echten Exporten getestet wird es aber auf meinem Windows-PC. Dafür klar sagen, was ich am PC ausführen soll. Dateien liegen dort in `D:\Fotoschatz\_sync\`; **neue Fassungen holt `aktualisieren.bat`** (Doppelklick, seit v0.6.23) – sonst per Datei-Übergabe.
 
 ---
 
@@ -203,6 +203,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - `katalog.py` – Zugriff auf den Lightroom-Katalog, nur über eine Kopie · `katalog_diagnose.py` + `katalog_diagnose.bat` – prüft, ob der Katalog lesbar ist (siehe „Lightroom-Katalog“)
 - `lightroom_pruefen.py` + `lightroom_pruefen.bat` – **Tool 1 „Lightroom prüfen“**: was in Lightroom zu korrigieren ist, dazu „GPS nachtragen“ je Ordner (siehe unten)
 - `gps_test.py` + `gps_test.bat` – GPS-Test: können Fotos ohne GPS ihren Ort aus Handyfotos und Google-Zeitachse bekommen? (siehe „GPS nachtragen“)
+- `aktualisieren.bat` + `aktualisieren.ps1` (v0.6.23) – **neue Skripte holen per Doppelklick**: lädt alle `.py`/`.bat`/`.ps1` und `config.example.json` aus `sync/` im Repo (Stand `main`, fest auf einen Commit, damit alles zusammenpasst und kein alter Zwischenspeicher stört) erst in einen Temp-Ordner und ersetzt nur, wenn alles geladen ist; zeigt neu / aktualisiert / unverändert und die Version. Eigene Dateien (`config.local.json`, `work\`, `google\`, `gpx\`, `katalog\` …) bleiben unberührt. `aktualisieren.bat` ersetzt sich nicht selbst (Windows liest eine laufende .bat zeilenweise) – ändert sie sich, einmal von Hand holen. In der Cloud mit PowerShell 7 getestet (⚠ am PC läuft Windows PowerShell 5.1); Fehlerfall: nichts ersetzt.
 - `config.example.json` – Vorlage für die optionale `config.local.json` (per `.gitignore` ausgeschlossen)
 - Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `orte.txt` (alle Ortsnamen als Baum Land > Bundesland > Stadt > Ort mit Anzahl, so wie Lightroom sie schreibt – ab und zu an Claude schicken, damit englische Namen in `docs/orte.js` übersetzt werden), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
 
