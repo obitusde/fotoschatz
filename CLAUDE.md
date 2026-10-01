@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.3 · 01.10.2026 (GPS per Zeitachse in Lightroom bestätigt, v0.6.17; davor GPS-Test v0.6.14–0.6.16, „Lightroom prüfen“ v0.6.13)
+**Dokumentversion:** v3.4 · 01.10.2026 (Kamera-Uhr-Prüfung mit Tageszeit und typischen Verschiebungen, v0.6.18; davor GPS v0.6.14–0.6.17)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -343,6 +343,13 @@ Ohne Datei gelten diese Standardwerte:
 - **Am PC bestätigt (01.10.2026, v0.6.16):** Japan: Median 52 m, 90 % unter 516 m; 233 von 236 Ricoh-Fotos mit Punkt ≤ 60 min. **Lightroom-Auto-Tag mit der GPX-Datei hat gepasst** („sieht gut aus“) → Annahme „Lightroom liest Kamerazeiten in der PC-Zeitzone“ bestätigt, *Set Time Zone Offset* bleibt auf 0.
 - Ablauf in Lightroom: Library › Ordner › Library Filter › Metadata › Camera (Kamera ohne GPS) → Map › *Map › Tracklog › Load Tracklog…* (`_sync\gpx\<Ordner>.gpx`) → erst 5–10 Fotos markieren › *Map › Tracklog › Auto-Tag Selected Photos* › auf der Karte prüfen (sonst Strg+Z) → dann Strg+A › Auto-Tag → neu exportieren, sync.bat.
 - Weitere Ordner mit vielen Fotos ohne GPS (Stand 30.09.2026, gesamt ≈ 1.100 in der Galerie): Lausanne Street Photography 296, Werner 70. Geburtstag 42, Paris Wochenende allein 36, Erasmus Lyon 2002 35, Weihnachten Neuenrade 28, Göbel-Scans, Lüdenscheid-Scans. Ab 04/2017 deckt die Zeitachse ab; davor nur Fotos mit GPS bzw. von Hand (Fotos auf die Karte ziehen) oder `location-ok`.
+- **Paris (v0.6.16):** Ricoh 36 ohne GPS, Spur gut (alle ≤ 60 min, ~200 m), aber Kamera-Uhr-Warnung „−3 h“ war Zufall (je 7 Treffer bei −3/−4/−6 h, kaum Handyfotos zum Vergleich).
+- **Kamera-Uhr-Prüfung v0.6.18 (Regeln von mir, 01.10.2026):** Handyfotos haben immer die richtige Zeit; Ricoh u. a. Kameras und andere Zeitzonen sind die Ausnahme; die meisten Fotos entstehen 8–20 Uhr.
+  - Vergleich Kamera ↔ Handyfoto: Treffer = Handyfoto ≤ 2 min daneben (gleiche Szene); „zufällig“ = Median der Treffer über −12…+12 h.
+  - In Frage kommen nur typische Fehler: Heimatzeit statt Ortszeit (Unterschied aus der Zeitachse: Ortszeit − PC-Zeitzone am Reisebeginn), ±1 h (Sommer-/Winterzeit), Heimatzeit ±1 h; bei Gleichstand gewinnt Heimatzeit. Untypische Verschiebungen nur bei sehr klarer Übereinstimmung (≥ 10 Treffer, ≥ 3× zufällig, ≥ halbe Fotos).
+  - Regeln: typische Verschiebung, wenn Treffer ≥ 2× zufällig + 3 und ≥ 1,5× Treffer ohne Verschiebung + 3; sonst Tageszeit: ohne Verschiebung < 60 % zwischen 8 und 20 Uhr, mit typischer Verschiebung ≥ 85 % (und +30 Punkte).
+  - Ausgabe je Kamera (ab 5 Fotos): „Uhr stimmt“ / „Uhr stimmt vermutlich“ / „⚠ Uhr vermutlich um +X h daneben (Grund)“ mit Lightroom-Weg *Edit Capture Time… › Shift by set number of hours* / „unklar“ mit Prüfanleitung.
+  - In der Cloud mit 10 nachgebauten Fällen getestet (Heimatzeit, richtig, ±1 h, Heimatzeit+1 h, wenig/viele/keine Handyfotos) – alle richtig.
 
 ### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.

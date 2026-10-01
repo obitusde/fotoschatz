@@ -13,7 +13,7 @@ Aufruf: gps_test.bat (fragt nach einem Teil des Ordnernamens, z. B. Japan)
         oder python gps_test.py Japan
 """
 
-__version__ = "0.6.16"
+__version__ = "0.6.18"
 
 import bisect
 import json
@@ -35,6 +35,8 @@ DEFAULTS = {"catalog": katalog.DEFAULT_CATALOG, "originals_dir": r"D:\Bilder - R
 LATLNG_RE = re.compile(r"(-?\d+(?:\.\d+)?)\s*°?\s*,\s*(-?\d+(?:\.\d+)?)")
 SEGMENT_GAP = timedelta(hours=2)        # laengere Luecken trennen die Spur (keine Linie quer durchs Land)
 MATCH = timedelta(minutes=10)           # fuer die Suche nach der Kamera-Zeitverschiebung
+CLOCK_MATCH = timedelta(minutes=2)      # Kamera- und Handyfoto derselben Szene: meist 1-2 min auseinander
+DAY_START, DAY_END = 8, 20              # die meisten Fotos entstehen zwischen 8 und 20 Uhr (Vorgabe 01.10.2026)
 
 lines = []
 
@@ -307,6 +309,7 @@ def main():
 
     # --- Bezugspunkte 2: Google-Zeitachse
     tl = []
+    zone_counts = Counter()                  # Zeitzone vor Ort (Stunden zu UTC) laut Zeitachse
     files = sorted(GOOGLE_DIR.glob("*.json")) if GOOGLE_DIR.is_dir() else []
     out(f"\n== Google-Zeitachse ({GOOGLE_DIR})")
     if not files:
@@ -332,6 +335,7 @@ def main():
             if offsets:
                 out("    Zeitzonen im Zeitraum (Stunden zu UTC): "
                     + ", ".join(f"{o:+g} h ×{n}" for o, n in offsets.most_common(4)))
+            zone_counts.update(round((p[0] - p[1].replace(tzinfo=None)).total_seconds() / 1800) / 2 for p in inside)
             tl += [(p[0], p[2], p[3]) for p in inside]
     tl.sort()
 
@@ -375,26 +379,84 @@ def main():
             out(f"\n== Genauigkeit Zeitachse (gegen {len(dists)} Fotos mit GPS, Abstand ≤ 5 min): "
                 f"Median {med:.0f} m, 90 % unter {p90:.0f} m")
 
-    # --- Kamera-Uhr: welche Verschiebung passt am besten zu den Handyfotos?
-    out("\n== Kamera-Uhr (Fotos ohne GPS gegen Fotos mit GPS, Treffer = Handyfoto ≤ 10 min)")
+    # --- Kamera-Uhr (Regeln vom 01.10.2026): Handyfotos haben immer die richtige Zeit; ohne Verschiebung ist
+    # der Normalfall; in Frage kommen v. a. Heimatzeit statt Ortszeit und vergessene Sommer-/Winterzeit (±1 h);
+    # die meisten Fotos entstehen zwischen 8 und 20 Uhr.
+    out(f"\n== Kamera-Uhr (Handyfotos = richtige Zeit; Tageszeit {DAY_START}–{DAY_END} Uhr als Plausibilität)")
     phone_times = [p[0] for p in phone]
+    home = first.astimezone().utcoffset().total_seconds() / 3600       # PC-Zeitzone am Reisebeginn
+    delta = None
+    if zone_counts:
+        local = zone_counts.most_common(1)[0][0]
+        delta = local - home
+        out(f"  Zeitzone vor Ort laut Zeitachse {local:+g} h, zu Hause {home:+g} h → Unterschied {delta:+g} h")
+    else:
+        out("  keine Zeitachse im Zeitraum – Zeitzonen-Unterschied unbekannt")
+    typical = {1: "Sommer-/Winterzeit nicht umgestellt", -1: "Sommer-/Winterzeit nicht umgestellt"}
+    if delta:
+        typical[delta] = "Kamera auf Heimatzeit statt Ortszeit"
+        typical.setdefault(delta + 1, "Heimatzeit + Sommer-/Winterzeit")
+        typical.setdefault(delta - 1, "Heimatzeit + Sommer-/Winterzeit")
+    typical.pop(0, None)
+
+    def hits(group, h):
+        shift = timedelta(hours=h)
+        return sum(1 for p in group if (g := nearest_gap(phone_times, p["t"] + shift)) is not None and g <= CLOCK_MATCH)
+
+    def daytime(group, h):
+        shift = timedelta(hours=h)
+        return sum(1 for p in group if DAY_START <= (p["t"] + shift).hour < DAY_END) / len(group)
+
     best_shift = {}
     for model in sorted({p["model"] for p in targets}):
         group = [p for p in targets if p["model"] == model]
-        scores = []
-        for h in range(-12, 13):
-            shift = timedelta(hours=h)
-            hits = sum(1 for p in group if (g := nearest_gap(phone_times, p["t"] + shift)) is not None and g <= MATCH)
-            scores.append((hits, -abs(h), h))
-        scores.sort(reverse=True)
-        best = scores[0][2] if scores and scores[0][0] else 0
-        best_shift[model] = best
-        at0 = next(s[0] for s in scores if s[2] == 0)
-        top = ", ".join(f"{s[2]:+d} h: {s[0]}" for s in scores[:3])
-        out(f"  {model} ({len(group)} ohne GPS): ohne Verschiebung {at0} Treffer · beste: {top}")
-        if best != 0 and len(group) >= 10 and scores[0][0] > at0 * 1.5:
-            out(f"    ⚠ Die Kamera-Uhr ging vermutlich um {abs(best)} h {'nach' if best > 0 else 'vor'} "
-                f"(z. B. Heimatzeit statt Ortszeit).")
+        head = f"  {model} ({len(group)} ohne GPS): "
+        if len(group) < 5:
+            out(head + "zu wenige Fotos für eine Aussage")
+            continue
+        all_hits = {h: hits(group, h) for h in range(-12, 13)}
+        for h in typical:
+            all_hits.setdefault(h, hits(group, h))
+        noise = sorted(all_hits.values())[len(all_hits) // 2]      # so viele Treffer gibt es auch zufaellig
+        clear = 2 * noise + 3
+        h0, d0 = all_hits[0], daytime(group, 0)
+        facts0 = f"ohne Verschiebung {h0} Treffer mit Handyfotos (zufällig ≈ {noise}), {d0:.0%} zwischen {DAY_START} und {DAY_END} Uhr"
+        verdict, shift_h, why = None, 0, ""
+        # 1. Handyfotos belegen eine typische Verschiebung eindeutig
+        prio = lambda h: 0 if h == delta else (1 if abs(h) == 1 else 2)   # bei Gleichstand: Heimatzeit zuerst
+        cands = sorted(typical, key=lambda h: (-all_hits[h], prio(h), abs(h)))
+        if cands:
+            h = cands[0]
+            if all_hits[h] >= clear and all_hits[h] >= 1.5 * h0 + 3:
+                verdict, shift_h = "shift", h
+                why = f"mit {h:+g} h {all_hits[h]} Treffer statt {h0}, {daytime(group, h):.0%} am Tag"
+        # 2. sehr eindeutige, aber untypische Verschiebung
+        if not verdict:
+            h = max(all_hits, key=lambda x: (all_hits[x], -abs(x)))
+            if h != 0 and all_hits[h] >= max(10, 3 * noise, 3 * h0 + 1) and all_hits[h] >= len(group) / 2:
+                verdict, shift_h = "odd", h
+                why = f"mit {h:+g} h {all_hits[h]} Treffer statt {h0} – ungewöhnliche Verschiebung, bitte prüfen"
+        # 3. Tageszeit: ohne Verschiebung viel Nacht, mit typischer Verschiebung Tag (wenn Handyfotos nicht dagegen sprechen)
+        if not verdict and d0 < 0.6 and h0 < clear:
+            day = {h: daytime(group, h) for h in typical}
+            if day:
+                h = max(day, key=lambda x: (day[x], x == delta, -abs(x)))
+                if day[h] >= 0.85 and day[h] - d0 >= 0.3:
+                    verdict, shift_h = "shift", h
+                    why = f"ohne Verschiebung nur {d0:.0%} am Tag, mit {h:+g} h {day[h]:.0%}"
+        if verdict:
+            best_shift[model] = shift_h
+            reason = typical.get(shift_h, "ungewöhnlich")
+            out(head + f"⚠ Uhr vermutlich um {shift_h:+g} h daneben ({reason}): {why}.")
+            out(f"    In Lightroom: diese Fotos markieren › Metadata › Edit Capture Time… › "
+                f"Shift by set number of hours: {shift_h:+g} – danach gps_test.bat noch einmal laufen lassen.")
+        elif h0 >= clear and h0 >= max([all_hits[h] for h in typical] or [0]):
+            out(head + f"Uhr stimmt – {facts0}.")
+        elif d0 >= 0.8:
+            out(head + f"Uhr stimmt vermutlich – {facts0}; keine Hinweise auf eine falsche Uhr.")
+        else:
+            out(head + f"unklar – {facts0}. Bitte in Lightroom kurz prüfen: nach Aufnahmezeit sortieren und "
+                "schauen, ob Kamera- und Handyfotos derselben Szene nebeneinander liegen.")
 
     # --- Abdeckung: wie nah liegt ein Bezugspunkt?
     all_ref = sorted([p[0] for p in phone] + [p[0] for p in tl])
