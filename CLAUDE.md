@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v2.9 · 29.09.2026 (neues Tool „Lightroom prüfen“ aus der Katalog-Kopie, Übersicht nur noch Web-Upload, v0.6.13)
+**Dokumentversion:** v3.0 · 01.10.2026 (GPS-Test mit Google-Zeitachse, v0.6.14; davor „Lightroom prüfen“, v0.6.13)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -202,6 +202,7 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - `aufraeumen.py` + `aufraeumen.bat` – überflüssige Exporte aus `D:\Fotoschatz` entfernen (siehe unten)
 - `katalog.py` – Zugriff auf den Lightroom-Katalog, nur über eine Kopie · `katalog_diagnose.py` + `katalog_diagnose.bat` – prüft, ob der Katalog lesbar ist (siehe „Lightroom-Katalog“)
 - `lightroom_pruefen.py` + `lightroom_pruefen.bat` – **Tool 1 „Lightroom prüfen“**: was in Lightroom zu korrigieren ist (siehe unten)
+- `gps_test.py` + `gps_test.bat` – GPS-Test: können Fotos ohne GPS ihren Ort aus Handyfotos und Google-Zeitachse bekommen? (siehe „GPS nachtragen“)
 - `config.example.json` – Vorlage für die optionale `config.local.json` (per `.gitignore` ausgeschlossen)
 - Ausgaben neben dem Skript: `korrekturen.csv`, `stichwoerter.txt` (alle Stichwörter mit Anzahl und Markierung), `orte.txt` (alle Ortsnamen als Baum Land > Bundesland > Stadt > Ort mit Anzahl, so wie Lightroom sie schreibt – ab und zu an Claude schicken, damit englische Namen in `docs/orte.js` übersetzt werden), `letzter_lauf.txt` (Protokoll, enthält nie das Präfix)
 
@@ -326,6 +327,15 @@ Ohne Datei gelten diese Standardwerte:
 - Am echten Katalog (Diagnose 29.09.2026): 25.808 Gesichter, 13.448 bestätigt, 9.462 Vorschläge offen, 2.898 ohne Namen; 1.777 Bilder nicht gescannt (vermutlich `F:`); 0 virtuelle Kopien, 272 Stapel; 5 Comer-See-Dateien im Explorer aus `2026\_Import` verschoben; 1.444 Bilder GPS ohne Stadt.
 - ⚠ Unbestätigte Namensvorschläge landen vermutlich nicht im Export (nicht geprüft).
 - In der Cloud mit einem nachgebauten Katalog getestet (alle Aufgabenarten; Katalog und Originale danach unverändert).
+
+### GPS nachtragen (v0.6.14, Test)
+- Ziel: Fotos ohne GPS (meist Kamera) bekommen ihren Ort **in Lightroom** über eine GPS-Spur: *Map › Tracklog › Load Tracklog…* › Fotos markieren › *Auto-Tag Selected Photos*. Das Tool schreibt nur die Spur-Datei, nie in Fotos, Katalog oder Originale.
+- Quellen: (1) Fotos **mit** GPS im selben Zeitraum (±1 Tag, ganzer Katalog, meist Handyfotos) aus der Katalog-Kopie; (2) **Google-Zeitachse**, vom Handy exportiert (*Einstellungen › Standort › Standortdienste › Zeitachse › Zeitachsendaten exportieren*, seit 2024/25 nur noch am Handy, nicht mehr Takeout), abgelegt als `_sync\google\*.json`. Gelesen werden Android-Export (`semanticSegments`: Weg/Aufenthalt/Bewegung, `rawSignals`), iPhone-Export (Liste) und alter Takeout (`locations`).
+- **Datenschutz (Entscheidung 01.10.2026: Daten bleiben auf dem PC):** `_sync\google\`, `_sync\gpx\` und `gps_test.txt` sind per `.gitignore` ausgeschlossen. `gps_test.txt` enthält nur Anzahlen, keine Koordinaten – nur diese Datei geht an Claude.
+- `gps_test.bat` fragt nach einem Teil des Ordnernamens (Standard „Japan“) und gibt aus: Fotos je Kamera mit/ohne GPS/`location-ok`; Zeitachse (Format, Jahre, Punkte im Zeitraum, Zeitzonen); Genauigkeit der Zeitachse gegen Fotos mit GPS (Median/90 %); **Kamera-Uhr**: für jede Kamera die Verschiebung (−12…+12 h), bei der die meisten Fotos ohne GPS ein Handyfoto ≤ 10 min daneben haben (erkennt Heimatzeit statt Ortszeit); Abdeckung (Abstand zum nächsten Punkt ≤ 5 min / 15 min / 60 min / 3 h); schreibt `_sync\gpx\<Ordner>.gpx` (Abschnitte bei Lücken > 2 h).
+- Zeiten: Lightroom-Aufnahmezeit = Ortszeit ohne Zeitzone; Zeitachse mit Zeitzone → Ortszeit; reine UTC-Punkte (Rohsignale) bekommen die Zeitzone der Abschnitte daneben. In die GPX-Datei kommt die Ortszeit, umgerechnet über die PC-Zeitzone. ⚠ Annahme: Lightroom liest Kamerazeiten ohne Zeitzone genauso (PC-Zeitzone) – am PC prüfen. Ging die Kamera-Uhr falsch, zuerst in Lightroom *Metadata › Edit Capture Time… › Shift by set number of hours* (richtet auch die Reihenfolge in der Galerie).
+- `location-ok` = mein Merker „bewusst ohne GPS, schon entschieden“ – der GPS-Test lässt diese Bilder aus. ⚠ Geplant (noch nicht gebaut): auch „Lightroom prüfen“ und das Sync-Tool beachten ihn.
+- In der Cloud mit nachgebautem Katalog + Zeitachse getestet (Kamera-Uhr 7 h daneben erkannt, Zeitachse auf ~56 m an den Handyfotos).
 
 ### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.
