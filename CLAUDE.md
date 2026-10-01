@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.1 · 01.10.2026 (GPS-Test: Zeitzone der Google-Zeitachse korrigiert, v0.6.15; davor GPS-Test v0.6.14, „Lightroom prüfen“ v0.6.13)
+**Dokumentversion:** v3.2 · 01.10.2026 (GPS-Test: Zeitzone je Abschnitt, v0.6.16; davor v0.6.15/v0.6.14, „Lightroom prüfen“ v0.6.13)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -338,6 +338,8 @@ Ohne Datei gelten diese Standardwerte:
 - In der Cloud mit nachgebautem Katalog + Zeitachse getestet (Kamera-Uhr 7 h daneben erkannt, Zeitachse auf ~56 m an den Handyfotos).
 - **Am PC, Japan (01.10.2026, v0.6.14):** Zeitachse 137 MB, 338.579 Punkte, 04/2017–10/2026 (alles Android-Format). Japan-Ordner: 452 Bilder, RICOH GR III 234 ohne GPS, Pixel 8 216 mit GPS; Ricoh-Uhr stimmte (beste Verschiebung 0 h). **Fehler gefunden:** alle Zeitachsen-Punkte im Japan-Zeitraum hatten „+2 h“ – der Android-Export schreibt die Zeiten in der Zeitzone des Handys **beim Export**, nicht der Ortszeit → Zeitachse 7 h daneben (Median 7 km Abstand zu Handyfotos).
 - **v0.6.15:** Ortszeit aus `startTimeTimezoneUtcOffsetMinutes`/`endTimeTimezoneUtcOffsetMinutes` der Abschnitte (⚠ Feldname aus dem Android-Format, am echten Export bestätigen); zusätzlich **Selbstkontrolle**: Verschiebung −14…+14 h, bei der die Zeitachse am besten zu den Fotos mit GPS passt (Median-Abstand), wird angewendet, wenn sie den Abstand mindestens halbiert. In der Cloud beide Fälle getestet (mit Feld: direkt richtig; ohne Feld: +7 h erkannt).
+- **Am PC, Japan (v0.6.15):** Zeitzonen-Feld bestätigt (34.253 Abschnitte mit, 18.695 ohne). Ergebnis: 140 von 236 Ricoh-Fotos mit Punkt ≤ 5 min, 64 ≤ 15 min, 29 ≤ 60 min; Median 73 m. Fehler: die globale +7-h-Korrektur verschob auch die schon richtigen Punkte (90 % unter 8,8 km).
+- **v0.6.16:** Abschnitte **ohne** Zeitzonen-Feld gelten als unzuverlässig (Export-Zeitzone) und bekommen die Zeitzone der Abschnitte mit Feld daneben (≤ 36 h), wie die Rohsignale. Kamera-Uhr-Warnung erst ab 10 Fotos je Kamera. In der Cloud mit gemischtem Export getestet (alle Punkte +9 h, keine Verschiebung nötig).
 
 ### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.

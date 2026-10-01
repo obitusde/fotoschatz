@@ -13,7 +13,7 @@ Aufruf: gps_test.bat (fragt nach einem Teil des Ordnernamens, z. B. Japan)
         oder python gps_test.py Japan
 """
 
-__version__ = "0.6.15"
+__version__ = "0.6.16"
 
 import bisect
 import json
@@ -96,7 +96,7 @@ def timeline_points(data):
     zones = []        # (UTC, Abstand zu UTC) aus Abschnitten mit echter Ortszeit
     info = Counter()
 
-    def add(stamp, latlng, source, offset_min=None):
+    def add(stamp, latlng, source, offset_min=None, export_zone=False):
         t = parse_iso(stamp)
         p = parse_latlng(latlng)
         if not (t and p):
@@ -108,7 +108,9 @@ def timeline_points(data):
             zones.append((t[1], local - t[1].replace(tzinfo=None)))
             pts.append([local, t[1], p[0], p[1], source, False])
             return
-        utc_only = str(stamp).strip().endswith(("Z", "+00:00"))
+        # export_zone: Android-Abschnitt ohne Zeitzonen-Feld - die Zeitzone im Text ist die beim Export,
+        # also unzuverlaessig -> wie reine UTC-Punkte ueber die Abschnitte daneben bestimmen
+        utc_only = export_zone or str(stamp).strip().endswith(("Z", "+00:00"))
         if not utc_only:
             zones.append((t[1], t[0] - t[1].replace(tzinfo=None)))
         pts.append([t[0], t[1], p[0], p[1], source, utc_only])
@@ -119,16 +121,16 @@ def timeline_points(data):
             eo = seg.get("endTimeTimezoneUtcOffsetMinutes", so)
             info["mit Zeitzonen-Feld" if so is not None else "ohne Zeitzonen-Feld"] += 1
             for p in seg.get("timelinePath", []) or []:
-                add(p.get("time"), p.get("point"), "Weg", so)
+                add(p.get("time"), p.get("point"), "Weg", so, so is None)
             visit = seg.get("visit")
             if visit:
                 loc = (visit.get("topCandidate") or {}).get("placeLocation")
-                add(seg.get("startTime"), loc, "Aufenthalt", so)
-                add(seg.get("endTime"), loc, "Aufenthalt", eo)
+                add(seg.get("startTime"), loc, "Aufenthalt", so, so is None)
+                add(seg.get("endTime"), loc, "Aufenthalt", eo, eo is None)
             act = seg.get("activity")
             if act:
-                add(seg.get("startTime"), act.get("start"), "Bewegung", so)
-                add(seg.get("endTime"), act.get("end"), "Bewegung", eo)
+                add(seg.get("startTime"), act.get("start"), "Bewegung", so, so is None)
+                add(seg.get("endTime"), act.get("end"), "Bewegung", eo, eo is None)
         for sig in data.get("rawSignals", []) or []:
             pos = sig.get("position")
             if pos:
@@ -390,7 +392,7 @@ def main():
         at0 = next(s[0] for s in scores if s[2] == 0)
         top = ", ".join(f"{s[2]:+d} h: {s[0]}" for s in scores[:3])
         out(f"  {model} ({len(group)} ohne GPS): ohne Verschiebung {at0} Treffer · beste: {top}")
-        if best != 0 and scores[0][0] > at0 * 1.5:
+        if best != 0 and len(group) >= 10 and scores[0][0] > at0 * 1.5:
             out(f"    ⚠ Die Kamera-Uhr ging vermutlich um {abs(best)} h {'nach' if best > 0 else 'vor'} "
                 f"(z. B. Heimatzeit statt Ortszeit).")
 
