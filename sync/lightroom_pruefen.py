@@ -12,7 +12,7 @@ Aufruf: lightroom_pruefen.bat (Doppelklick) oder python lightroom_pruefen.py
 Optional in config.local.json: "catalog", "originals_dir", "ignore_keywords"
 """
 
-__version__ = "0.6.22"
+__version__ = "0.6.24"
 
 
 import json
@@ -482,6 +482,9 @@ td.num,th.num{text-align:right}
 details.task>summary>.t{min-width:min(260px,60%)}
 .inner{overflow-x:auto}
 .big{font-weight:600}
+table.gpstab th.sort{white-space:normal;vertical-align:bottom;font-size:.8rem}
+table.gpstab td:first-child{min-width:170px}
+table.gpstab td:last-child{min-width:190px}
 """
 
 JS = """
@@ -525,7 +528,8 @@ def gps_section(w, info, tl_info):
     if not rows:
         w("<div class='none'>Alle Bilder haben GPS oder location-ok.</div>")
         return
-    w("<details open><summary><span class='t'>Ordner mit Bildern ohne GPS</span></summary><div class='inner'><table>"
+    w("<details open><summary><span class='t'>Ordner mit Bildern ohne GPS</span></summary><div class='inner'>"
+      "<table class='gpstab'>"
       "<tr><th class='sort' onclick='sortTable(this)'>Ordner in Lightroom</th>"
       "<th class='sort num' onclick='sortTable(this)'>ohne GPS</th>"
       "<th class='sort num' onclick='sortTable(this)'>mit Spur ≤ 1 h</th>"
@@ -540,9 +544,9 @@ def gps_section(w, info, tl_info):
         if n and n * 2 >= st["nogps"]:
             advice = f"gps_test.bat mit „{name}“"
         elif n:
-            advice = f"gps_test.bat mit „{name}“ für einen Teil, Rest von Hand"
+            advice = f"gps_test.bat mit „{name}“, Rest von Hand"
         else:
-            advice = "von Hand auf die Karte ziehen oder location-ok"
+            advice = "von Hand auf die Karte oder location-ok"
         w(f"<tr><td>{esc(show(rel))}</td>{num(st['nogps'], True)}{num(st['reach'])}{num(st['reach_tl'])}"
           f"{num(st['reach_photo'])}{num(st['reach_gap'])}{num(st['gpsok'])}<td>{esc(advice)}</td></tr>")
     w("</table></div></details>")
