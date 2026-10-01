@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.0 · 01.10.2026 (GPS-Test mit Google-Zeitachse, v0.6.14; davor „Lightroom prüfen“, v0.6.13)
+**Dokumentversion:** v3.1 · 01.10.2026 (GPS-Test: Zeitzone der Google-Zeitachse korrigiert, v0.6.15; davor GPS-Test v0.6.14, „Lightroom prüfen“ v0.6.13)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -336,6 +336,8 @@ Ohne Datei gelten diese Standardwerte:
 - Zeiten: Lightroom-Aufnahmezeit = Ortszeit ohne Zeitzone; Zeitachse mit Zeitzone → Ortszeit; reine UTC-Punkte (Rohsignale) bekommen die Zeitzone der Abschnitte daneben. In die GPX-Datei kommt die Ortszeit, umgerechnet über die PC-Zeitzone. ⚠ Annahme: Lightroom liest Kamerazeiten ohne Zeitzone genauso (PC-Zeitzone) – am PC prüfen. Ging die Kamera-Uhr falsch, zuerst in Lightroom *Metadata › Edit Capture Time… › Shift by set number of hours* (richtet auch die Reihenfolge in der Galerie).
 - `location-ok` = mein Merker „bewusst ohne GPS, schon entschieden“ – der GPS-Test lässt diese Bilder aus. ⚠ Geplant (noch nicht gebaut): auch „Lightroom prüfen“ und das Sync-Tool beachten ihn.
 - In der Cloud mit nachgebautem Katalog + Zeitachse getestet (Kamera-Uhr 7 h daneben erkannt, Zeitachse auf ~56 m an den Handyfotos).
+- **Am PC, Japan (01.10.2026, v0.6.14):** Zeitachse 137 MB, 338.579 Punkte, 04/2017–10/2026 (alles Android-Format). Japan-Ordner: 452 Bilder, RICOH GR III 234 ohne GPS, Pixel 8 216 mit GPS; Ricoh-Uhr stimmte (beste Verschiebung 0 h). **Fehler gefunden:** alle Zeitachsen-Punkte im Japan-Zeitraum hatten „+2 h“ – der Android-Export schreibt die Zeiten in der Zeitzone des Handys **beim Export**, nicht der Ortszeit → Zeitachse 7 h daneben (Median 7 km Abstand zu Handyfotos).
+- **v0.6.15:** Ortszeit aus `startTimeTimezoneUtcOffsetMinutes`/`endTimeTimezoneUtcOffsetMinutes` der Abschnitte (⚠ Feldname aus dem Android-Format, am echten Export bestätigen); zusätzlich **Selbstkontrolle**: Verschiebung −14…+14 h, bei der die Zeitachse am besten zu den Fotos mit GPS passt (Median-Abstand), wird angewendet, wenn sie den Abstand mindestens halbiert. In der Cloud beide Fälle getestet (mit Feld: direkt richtig; ohne Feld: +7 h erkannt).
 
 ### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.

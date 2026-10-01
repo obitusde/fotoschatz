@@ -13,7 +13,7 @@ Aufruf: gps_test.bat (fragt nach einem Teil des Ordnernamens, z. B. Japan)
         oder python gps_test.py Japan
 """
 
-__version__ = "0.6.14"
+__version__ = "0.6.15"
 
 import bisect
 import json
@@ -94,29 +94,41 @@ def timeline_points(data):
     Android-Export (semanticSegments/rawSignals), iPhone-Export (Liste), alter Takeout (locations)."""
     pts = []
     zones = []        # (UTC, Abstand zu UTC) aus Abschnitten mit echter Ortszeit
+    info = Counter()
 
-    def add(stamp, latlng, source):
+    def add(stamp, latlng, source, offset_min=None):
         t = parse_iso(stamp)
         p = parse_latlng(latlng)
-        if t and p:
-            utc_only = str(stamp).strip().endswith(("Z", "+00:00"))
-            if not utc_only:
-                zones.append((t[1], t[0] - t[1].replace(tzinfo=None)))
-            pts.append([t[0], t[1], p[0], p[1], source, utc_only])
+        if not (t and p):
+            return
+        if offset_min is not None:
+            # Android-Export: die Zeitangaben tragen die Zeitzone des Handys beim EXPORT, die echte
+            # Ortszeit steht in ...TimezoneUtcOffsetMinutes
+            local = t[1].replace(tzinfo=None) + timedelta(minutes=float(offset_min))
+            zones.append((t[1], local - t[1].replace(tzinfo=None)))
+            pts.append([local, t[1], p[0], p[1], source, False])
+            return
+        utc_only = str(stamp).strip().endswith(("Z", "+00:00"))
+        if not utc_only:
+            zones.append((t[1], t[0] - t[1].replace(tzinfo=None)))
+        pts.append([t[0], t[1], p[0], p[1], source, utc_only])
 
     if isinstance(data, dict):
         for seg in data.get("semanticSegments", []) or []:
+            so = seg.get("startTimeTimezoneUtcOffsetMinutes")
+            eo = seg.get("endTimeTimezoneUtcOffsetMinutes", so)
+            info["mit Zeitzonen-Feld" if so is not None else "ohne Zeitzonen-Feld"] += 1
             for p in seg.get("timelinePath", []) or []:
-                add(p.get("time"), p.get("point"), "Weg")
+                add(p.get("time"), p.get("point"), "Weg", so)
             visit = seg.get("visit")
             if visit:
                 loc = (visit.get("topCandidate") or {}).get("placeLocation")
-                add(seg.get("startTime"), loc, "Aufenthalt")
-                add(seg.get("endTime"), loc, "Aufenthalt")
+                add(seg.get("startTime"), loc, "Aufenthalt", so)
+                add(seg.get("endTime"), loc, "Aufenthalt", eo)
             act = seg.get("activity")
             if act:
-                add(seg.get("startTime"), act.get("start"), "Bewegung")
-                add(seg.get("endTime"), act.get("end"), "Bewegung")
+                add(seg.get("startTime"), act.get("start"), "Bewegung", so)
+                add(seg.get("endTime"), act.get("end"), "Bewegung", eo)
         for sig in data.get("rawSignals", []) or []:
             pos = sig.get("position")
             if pos:
@@ -155,7 +167,7 @@ def timeline_points(data):
             j = nearest_index(zone_times, p[1])
             if abs(zone_times[j] - p[1]) <= timedelta(hours=36):
                 p[0] = p[1].replace(tzinfo=None) + zones[j][1]
-    return [tuple(p[:5]) for p in pts]
+    return [tuple(p[:5]) for p in pts], info
 
 
 def describe_format(data):
@@ -303,8 +315,10 @@ def main():
         except (OSError, json.JSONDecodeError) as err:
             out(f"  {f.name}: nicht lesbar ({err})")
             continue
-        pts = timeline_points(data)
+        pts, info = timeline_points(data)
         out(f"  {f.name}: {f.stat().st_size / 1e6:.1f} MB, Format {describe_format(data)}, {len(pts)} Punkte")
+        if info:
+            out("    Abschnitte: " + ", ".join(f"{k} {v}" for k, v in info.most_common()))
         if pts:
             out(f"    gesamt von {min(p[0] for p in pts):%d.%m.%Y} bis {max(p[0] for p in pts):%d.%m.%Y}")
             years = Counter(p[0].year for p in pts)
@@ -318,6 +332,32 @@ def main():
                     + ", ".join(f"{o:+g} h ×{n}" for o, n in offsets.most_common(4)))
             tl += [(p[0], p[2], p[3]) for p in inside]
     tl.sort()
+
+    # --- Selbstkontrolle Zeitzone: passt die Zeitachse zeitlich zu den Fotos mit GPS?
+    if tl and phone:
+        def median_dist(shift_h):
+            shifted = [(t + timedelta(hours=shift_h), lat, lng) for t, lat, lng in tl]
+            times = [p[0] for p in shifted]
+            d = []
+            for t, lat, lng in phone:
+                j = nearest_index(times, t)
+                if j is not None and abs(times[j] - t) <= timedelta(minutes=5):
+                    d.append(distance_m(lat, lng, shifted[j][1], shifted[j][2]))
+            d.sort()
+            return (d[len(d) // 2], len(d)) if len(d) >= 10 else (None, len(d))
+        results = {h: median_dist(h) for h in range(-14, 15)}
+        valid = [(m, h) for h, (m, n) in results.items() if m is not None]
+        m0 = results[0][0]
+        out("\n== Zeitzone der Zeitachse (Abstand zu Fotos mit GPS, Median)")
+        if valid:
+            best_m, best_h = min(valid)
+            out(f"  ohne Verschiebung: {'–' if m0 is None else f'{m0:.0f} m'} · beste Verschiebung {best_h:+d} h: "
+                f"{best_m:.0f} m ({results[best_h][1]} Vergleiche)")
+            if best_h != 0 and (m0 is None or best_m < m0 / 2):
+                tl = [(t + timedelta(hours=best_h), lat, lng) for t, lat, lng in tl]
+                out(f"  → Zeitachse um {best_h:+d} h verschoben (Zeitzone im Export passte nicht)")
+        else:
+            out("  zu wenige Vergleiche")
 
     # --- Genauigkeit: Zeitachse gegen Fotos mit GPS
     if tl and phone:
