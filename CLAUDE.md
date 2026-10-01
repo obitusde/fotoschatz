@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.4 · 01.10.2026 (Kamera-Uhr-Prüfung mit Tageszeit und typischen Verschiebungen, v0.6.18; davor GPS v0.6.14–0.6.17)
+**Dokumentversion:** v3.5 · 01.10.2026 (GPS-Test: Aufenthalte aufgefüllt, Selbstkontrolle vorsichtiger, v0.6.19; davor Kamera-Uhr v0.6.18)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -350,6 +350,8 @@ Ohne Datei gelten diese Standardwerte:
   - Regeln: typische Verschiebung, wenn Treffer ≥ 2× zufällig + 3 und ≥ 1,5× Treffer ohne Verschiebung + 3; sonst Tageszeit: ohne Verschiebung < 60 % zwischen 8 und 20 Uhr, mit typischer Verschiebung ≥ 85 % (und +30 Punkte).
   - Ausgabe je Kamera (ab 5 Fotos): „Uhr stimmt“ / „Uhr stimmt vermutlich“ / „⚠ Uhr vermutlich um +X h daneben (Grund)“ mit Lightroom-Weg *Edit Capture Time… › Shift by set number of hours* / „unklar“ mit Prüfanleitung.
   - In der Cloud mit 10 nachgebauten Fällen getestet (Heimatzeit, richtig, ±1 h, Heimatzeit+1 h, wenig/viele/keine Handyfotos) – alle richtig.
+- **Werner 70. Geburtstag (v0.6.18, am PC):** Fehler gefunden – (1) die Zeitzonen-Selbstkontrolle hat die Zeitachse um −4 h verschoben, obwohl ohne Verschiebung < 10 Vergleiche möglich waren (nur 10 Handyfotos vom Vortag); (2) ein Aufenthalt (Feier) hat in der Zeitachse nur Anfangs- und Endpunkt → 34 von 42 Fotos > 60 min vom nächsten Punkt. Diese GPX-Datei nicht verwenden.
+- **v0.6.19:** Selbstkontrolle verschiebt nur noch, wenn es ohne Verschiebung mindestens 10 Vergleiche gibt und die Verschiebung den Abstand halbiert und unter 1 km bringt; bei Gleichstand gilt 0 h. Aufenthalte (≤ 24 h) bekommen alle 10 min einen Punkt am selben Ort. In der Cloud getestet (Feier 9–18 Uhr, Handyfotos nur am Vortag: alle 42 Fotos ≤ 5 min, keine Verschiebung; frühere Testfälle unverändert richtig).
 
 ### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.

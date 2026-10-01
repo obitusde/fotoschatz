@@ -13,7 +13,7 @@ Aufruf: gps_test.bat (fragt nach einem Teil des Ordnernamens, z. B. Japan)
         oder python gps_test.py Japan
 """
 
-__version__ = "0.6.18"
+__version__ = "0.6.19"
 
 import bisect
 import json
@@ -35,6 +35,7 @@ DEFAULTS = {"catalog": katalog.DEFAULT_CATALOG, "originals_dir": r"D:\Bilder - R
 LATLNG_RE = re.compile(r"(-?\d+(?:\.\d+)?)\s*°?\s*,\s*(-?\d+(?:\.\d+)?)")
 SEGMENT_GAP = timedelta(hours=2)        # laengere Luecken trennen die Spur (keine Linie quer durchs Land)
 MATCH = timedelta(minutes=10)           # fuer die Suche nach der Kamera-Zeitverschiebung
+STAY_STEP = timedelta(minutes=10)       # Punkte innerhalb eines Aufenthalts
 CLOCK_MATCH = timedelta(minutes=2)      # Kamera- und Handyfoto derselben Szene: meist 1-2 min auseinander
 DAY_START, DAY_END = 8, 20              # die meisten Fotos entstehen zwischen 8 und 20 Uhr (Vorgabe 01.10.2026)
 
@@ -117,6 +118,19 @@ def timeline_points(data):
             zones.append((t[1], t[0] - t[1].replace(tzinfo=None)))
         pts.append([t[0], t[1], p[0], p[1], source, utc_only])
 
+    def fill_stay(n0):
+        """Aufenthalt (z. B. Feier von 9 bis 18 Uhr) hat nur Anfang und Ende - dazwischen alle 10 min
+        einen Punkt am selben Ort, damit auch Fotos mitten im Aufenthalt einen nahen Punkt haben."""
+        if len(pts) != n0 + 2:
+            return
+        a, b = pts[n0], pts[n0 + 1]
+        if not (timedelta(0) < b[1] - a[1] <= timedelta(hours=24)):
+            return
+        k = 1
+        while a[1] + STAY_STEP * k < b[1]:
+            pts.append([a[0] + STAY_STEP * k, a[1] + STAY_STEP * k, a[2], a[3], a[4], a[5]])
+            k += 1
+
     if isinstance(data, dict):
         for seg in data.get("semanticSegments", []) or []:
             so = seg.get("startTimeTimezoneUtcOffsetMinutes")
@@ -127,8 +141,10 @@ def timeline_points(data):
             visit = seg.get("visit")
             if visit:
                 loc = (visit.get("topCandidate") or {}).get("placeLocation")
+                n0 = len(pts)
                 add(seg.get("startTime"), loc, "Aufenthalt", so, so is None)
                 add(seg.get("endTime"), loc, "Aufenthalt", eo, eo is None)
+                fill_stay(n0)
             act = seg.get("activity")
             if act:
                 add(seg.get("startTime"), act.get("start"), "Bewegung", so, so is None)
@@ -150,8 +166,10 @@ def timeline_points(data):
             visit = seg.get("visit")
             if visit:
                 loc = (visit.get("topCandidate") or {}).get("placeLocation")
+                n0 = len(pts)
                 add(seg.get("startTime"), loc, "Aufenthalt")
                 add(seg.get("endTime"), loc, "Aufenthalt")
+                fill_stay(n0)
             act = seg.get("activity")
             if act:
                 add(seg.get("startTime"), act.get("start"), "Bewegung")
@@ -352,14 +370,16 @@ def main():
             d.sort()
             return (d[len(d) // 2], len(d)) if len(d) >= 10 else (None, len(d))
         results = {h: median_dist(h) for h in range(-14, 15)}
-        valid = [(m, h) for h, (m, n) in results.items() if m is not None]
+        valid = [(m, abs(h), h) for h, (m, n) in results.items() if m is not None]
         m0 = results[0][0]
         out("\n== Zeitzone der Zeitachse (Abstand zu Fotos mit GPS, Median)")
         if valid:
-            best_m, best_h = min(valid)
+            best_m, _, best_h = min(valid)
             out(f"  ohne Verschiebung: {'–' if m0 is None else f'{m0:.0f} m'} · beste Verschiebung {best_h:+d} h: "
                 f"{best_m:.0f} m ({results[best_h][1]} Vergleiche)")
-            if best_h != 0 and (m0 is None or best_m < m0 / 2):
+            if m0 is None:
+                out("  → keine Verschiebung: ohne Verschiebung zu wenige Vergleiche (< 10 Fotos mit GPS nahe der Zeitachse)")
+            elif best_h != 0 and best_m < m0 / 2 and best_m < 1000:
                 tl = [(t + timedelta(hours=best_h), lat, lng) for t, lat, lng in tl]
                 out(f"  → Zeitachse um {best_h:+d} h verschoben (Zeitzone im Export passte nicht)")
         else:
