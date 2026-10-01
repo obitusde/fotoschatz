@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.5 · 01.10.2026 (GPS-Test: Aufenthalte aufgefüllt, Selbstkontrolle vorsichtiger, v0.6.19; davor Kamera-Uhr v0.6.18)
+**Dokumentversion:** v3.6 · 01.10.2026 (GPS-Test: Uhr-Befund strenger, Belege-Paare, v0.6.20; davor v0.6.19 Aufenthalte, v0.6.18 Kamera-Uhr)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -352,6 +352,8 @@ Ohne Datei gelten diese Standardwerte:
   - In der Cloud mit 10 nachgebauten Fällen getestet (Heimatzeit, richtig, ±1 h, Heimatzeit+1 h, wenig/viele/keine Handyfotos) – alle richtig.
 - **Werner 70. Geburtstag (v0.6.18, am PC):** Fehler gefunden – (1) die Zeitzonen-Selbstkontrolle hat die Zeitachse um −4 h verschoben, obwohl ohne Verschiebung < 10 Vergleiche möglich waren (nur 10 Handyfotos vom Vortag); (2) ein Aufenthalt (Feier) hat in der Zeitachse nur Anfangs- und Endpunkt → 34 von 42 Fotos > 60 min vom nächsten Punkt. Diese GPX-Datei nicht verwenden.
 - **v0.6.19:** Selbstkontrolle verschiebt nur noch, wenn es ohne Verschiebung mindestens 10 Vergleiche gibt und die Verschiebung den Abstand halbiert und unter 1 km bringt; bei Gleichstand gilt 0 h. Aufenthalte (≤ 24 h) bekommen alle 10 min einen Punkt am selben Ort. In der Cloud getestet (Feier 9–18 Uhr, Handyfotos nur am Vortag: alle 42 Fotos ≤ 5 min, keine Verschiebung; frühere Testfälle unverändert richtig).
+- **Am PC (v0.6.19):** Werner 70: alle 42 ≤ 5 min, keine Verschiebung ✔. Weihnachten Neuenrade: alle 28 ≤ 5 min, Median 4 m ✔. Comer See: alle 73 Fotos (Pixel) haben schon GPS. Lausanne: 300 Ricoh, nur 12 Handyfotos; Spur gut (254 ≤ 5 min, Median 39 m), aber Uhr-Warnung „+1 h“ beruhte auf nur 3 Treffern → Fehlalarm-Gefahr.
+- **v0.6.20:** Uhr-Befund braucht mindestens 5 Paare (Kamera ↔ Handyfoto ≤ 2 min); Zufallsmaß = beste **untypische** Verschiebung ±2…±6 h, ein Befund muss ≥ 1,5× davon + 3 sein. Wenige Treffer → „unklar – schwacher Hinweis auf …“ mit den Paaren (Dateinamen + Uhrzeiten) zum Nachprüfen in Lightroom; bei einem Befund werden bis zu 5 Belege genannt. Keine Fotos ohne GPS → „nichts zu tun“. In der Cloud mit 56 Zufalls-Läufen getestet: 55 richtig, 1 vorsichtig „unklar“, 0 falsch.
 
 ### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.

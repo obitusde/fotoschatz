@@ -13,7 +13,7 @@ Aufruf: gps_test.bat (fragt nach einem Teil des Ordnernamens, z. B. Japan)
         oder python gps_test.py Japan
 """
 
-__version__ = "0.6.19"
+__version__ = "0.6.20"
 
 import bisect
 import json
@@ -37,6 +37,7 @@ SEGMENT_GAP = timedelta(hours=2)        # laengere Luecken trennen die Spur (kei
 MATCH = timedelta(minutes=10)           # fuer die Suche nach der Kamera-Zeitverschiebung
 STAY_STEP = timedelta(minutes=10)       # Punkte innerhalb eines Aufenthalts
 CLOCK_MATCH = timedelta(minutes=2)      # Kamera- und Handyfoto derselben Szene: meist 1-2 min auseinander
+MIN_CLOCK_HITS = 5                      # so viele Paare braucht ein sicherer Uhr-Befund mindestens
 DAY_START, DAY_END = 8, 20              # die meisten Fotos entstehen zwischen 8 und 20 Uhr (Vorgabe 01.10.2026)
 
 lines = []
@@ -277,6 +278,7 @@ def main():
         sys.exit(1)
     rows = db.execute("""
         SELECT i.id_local AS id, i.captureTime AS t, fo.pathFromRoot AS path, r.absolutePath AS root,
+               f.baseName AS base, f.extension AS ext,
                e.hasGPS AS hasGPS, e.gpsLatitude AS lat, e.gpsLongitude AS lng, m.value AS model
         FROM Adobe_images i
         JOIN AgLibraryFile f ON f.id_local = i.rootFile
@@ -296,6 +298,7 @@ def main():
             continue
         has = bool(r["hasGPS"]) and r["lat"] is not None and r["lng"] is not None
         photos.append({"id": r["id"], "t": t, "folder": r["path"] or "",
+                       "file": (r["base"] or "") + (f".{r['ext']}" if r["ext"] else ""),
                        "root": r["root"] or "", "gps": (r["lat"], r["lng"]) if has else None,
                        "model": r["model"] or "(unbekannt)", "ok": r["id"] in ok_ids})
     wanted = [p for p in photos if search.casefold() in p["folder"].casefold()
@@ -419,6 +422,18 @@ def main():
         typical.setdefault(delta - 1, "Heimatzeit + Sommer-/Winterzeit")
     typical.pop(0, None)
 
+    phone_files = sorted((p["t"], p["file"]) for p in photos if p["gps"] and lo <= p["t"] <= hi)
+    phone_file_times = [x[0] for x in phone_files]
+
+    def pairs(group, h, limit=5):
+        """Belege: Kamerafoto (verschoben) und Handyfoto <= 2 min auseinander - zum Nachpruefen in Lightroom."""
+        shift, found = timedelta(hours=h), []
+        for p in sorted(group, key=lambda x: x["t"]):
+            j = nearest_index(phone_file_times, p["t"] + shift)
+            if j is not None and abs(phone_file_times[j] - (p["t"] + shift)) <= CLOCK_MATCH:
+                found.append(f"{p['file']} ({p['t']:%d.%m. %H:%M}) ↔ {phone_files[j][1]} ({phone_files[j][0]:%H:%M})")
+        return found[:limit]
+
     def hits(group, h):
         shift = timedelta(hours=h)
         return sum(1 for p in group if (g := nearest_gap(phone_times, p["t"] + shift)) is not None and g <= CLOCK_MATCH)
@@ -437,10 +452,12 @@ def main():
         all_hits = {h: hits(group, h) for h in range(-12, 13)}
         for h in typical:
             all_hits.setdefault(h, hits(group, h))
-        noise = sorted(all_hits.values())[len(all_hits) // 2]      # so viele Treffer gibt es auch zufaellig
-        clear = 2 * noise + 3
+        # Zufallsmass: die beste untypische Verschiebung tagsueber (±2…±6 h) - so viele Paare passen auch zufaellig
+        others = [hits(group, h) for h in range(-6, 7) if h != 0 and abs(h) != 1 and h not in typical]
+        noise = max(others or [0])
+        clear = max(MIN_CLOCK_HITS, 1.5 * noise + 3)
         h0, d0 = all_hits[0], daytime(group, 0)
-        facts0 = f"ohne Verschiebung {h0} Treffer mit Handyfotos (zufällig ≈ {noise}), {d0:.0%} zwischen {DAY_START} und {DAY_END} Uhr"
+        facts0 = f"ohne Verschiebung {h0} Treffer mit Handyfotos (zufällig bis {noise}), {d0:.0%} zwischen {DAY_START} und {DAY_END} Uhr"
         verdict, shift_h, why = None, 0, ""
         # 1. Handyfotos belegen eine typische Verschiebung eindeutig
         prio = lambda h: 0 if h == delta else (1 if abs(h) == 1 else 2)   # bei Gleichstand: Heimatzeit zuerst
@@ -464,12 +481,25 @@ def main():
                 if day[h] >= 0.85 and day[h] - d0 >= 0.3:
                     verdict, shift_h = "shift", h
                     why = f"ohne Verschiebung nur {d0:.0%} am Tag, mit {h:+g} h {day[h]:.0%}"
+        weak = None   # schwacher Hinweis: wenige Treffer bei einer typischen Verschiebung, keine ohne
+        if (not verdict and cands and all_hits[cands[0]] >= 3 and all_hits[cands[0]] > h0 + 1
+                and all_hits[cands[0]] > noise):
+            weak = cands[0]
         if verdict:
             best_shift[model] = shift_h
             reason = typical.get(shift_h, "ungewöhnlich")
             out(head + f"⚠ Uhr vermutlich um {shift_h:+g} h daneben ({reason}): {why}.")
             out(f"    In Lightroom: diese Fotos markieren › Metadata › Edit Capture Time… › "
                 f"Shift by set number of hours: {shift_h:+g} – danach gps_test.bat noch einmal laufen lassen.")
+            for line in pairs(group, shift_h):
+                out(f"    Beleg: {line}")
+        elif weak is not None:
+            out(head + f"unklar – nur ein schwacher Hinweis auf {weak:+g} h ({typical[weak]}): {all_hits[weak]} Treffer "
+                f"statt {h0}, zu wenige Handyfotos für eine sichere Aussage. {d0:.0%} zwischen {DAY_START} und "
+                f"{DAY_END} Uhr. Bitte in Lightroom vergleichen (nach Aufnahmezeit sortieren): zeigen diese Paare "
+                f"dieselbe Szene, ging die Uhr um {weak:+g} h falsch – sonst stimmt sie:")
+            for line in pairs(group, weak):
+                out(f"    Paar: {line}")
         elif h0 >= clear and h0 >= max([all_hits[h] for h in typical] or [0]):
             out(head + f"Uhr stimmt – {facts0}.")
         elif d0 >= 0.8:
@@ -477,6 +507,9 @@ def main():
         else:
             out(head + f"unklar – {facts0}. Bitte in Lightroom kurz prüfen: nach Aufnahmezeit sortieren und "
                 "schauen, ob Kamera- und Handyfotos derselben Szene nebeneinander liegen.")
+
+    if not targets:
+        out("  Alle Fotos haben GPS (oder location-ok) – nichts zu tun.")
 
     # --- Abdeckung: wie nah liegt ein Bezugspunkt?
     all_ref = sorted([p[0] for p in phone] + [p[0] for p in tl])
@@ -488,7 +521,8 @@ def main():
             continue
         c = Counter(bucket(nearest_gap(ref, p["t"] + timedelta(hours=best_shift.get(p["model"], 0) if use_shift else 0)))
                     for p in targets)
-        out(f"  {label}: " + " · ".join(f"{b} {c[b]}" for b in BUCKETS if c[b]))
+        if targets:
+            out(f"  {label}: " + " · ".join(f"{b} {c[b]}" for b in BUCKETS if c[b]))
 
     # --- GPS-Spur zum Ausprobieren
     points = [(t, lat, lng) for t, lat, lng in phone] + tl
