@@ -13,7 +13,7 @@ Aufruf: gps_test.bat (fragt nach einem Teil des Ordnernamens, z. B. Japan)
         oder python gps_test.py Japan
 """
 
-__version__ = "0.6.20"
+__version__ = "0.6.22"
 
 import bisect
 import json
@@ -39,6 +39,9 @@ STAY_STEP = timedelta(minutes=10)       # Punkte innerhalb eines Aufenthalts
 CLOCK_MATCH = timedelta(minutes=2)      # Kamera- und Handyfoto derselben Szene: meist 1-2 min auseinander
 MIN_CLOCK_HITS = 5                      # so viele Paare braucht ein sicherer Uhr-Befund mindestens
 DAY_START, DAY_END = 8, 20              # die meisten Fotos entstehen zwischen 8 und 20 Uhr (Vorgabe 01.10.2026)
+GAP_FILL_MIN = timedelta(minutes=30)    # kuerzere Luecken bleiben, wie sie sind
+GAP_FILL_MAX = timedelta(hours=3)       # Luecke so lang, Punkt davor und danach am selben Ort -> dazwischen auffuellen
+GAP_FILL_DIST = 1000                    # "selber Ort": Punkt davor und danach hoechstens so viele Meter auseinander
 
 lines = []
 
@@ -230,6 +233,25 @@ def bucket(gap):
         return "kein Punkt"
     m = gap.total_seconds() / 60
     return "≤ 5 min" if m <= 5 else "≤ 15 min" if m <= 15 else "≤ 60 min" if m <= 60 else "≤ 3 h" if m <= 180 else "> 3 h"
+
+
+def fill_gaps(points):
+    """Luecken in der Spur fuellen (Idee 2, 01.10.2026): liegen zwei aufeinanderfolgende Punkte hoechstens 3 h
+    auseinander und am selben Ort (<= 1 km), war man vermutlich die ganze Zeit dort (z. B. Abend im Restaurant)
+    -> alle 10 min ein Punkt, gleichmaessig zwischen den beiden (bei langsamem Gehen genauer als ein fester Ort).
+    points: (Ortszeit, lat, lng). Gibt (Punkte sortiert, Anzahl Luecken)."""
+    pts = sorted(points)
+    extra, gaps = [], 0
+    for a, b in zip(pts, pts[1:]):
+        span = b[0] - a[0]
+        if GAP_FILL_MIN < span <= GAP_FILL_MAX and distance_m(a[1], a[2], b[1], b[2]) <= GAP_FILL_DIST:
+            gaps += 1
+            k = 1
+            while a[0] + STAY_STEP * k < b[0]:
+                f = (STAY_STEP * k) / span
+                extra.append((a[0] + STAY_STEP * k, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f))
+                k += 1
+    return sorted(pts + extra), gaps
 
 
 BUCKETS = ["≤ 5 min", "≤ 15 min", "≤ 60 min", "≤ 3 h", "> 3 h", "kein Punkt"]
@@ -511,21 +533,31 @@ def main():
     if not targets:
         out("  Alle Fotos haben GPS (oder location-ok) – nichts zu tun.")
 
+    # --- Luecken fuellen (gleicher Ort davor und danach, <= 3 h)
+    points = [(t, lat, lng) for t, lat, lng in phone] + tl
+    filled, gaps = fill_gaps(points)
+    filled_times = [p[0] for p in filled]
+
     # --- Abdeckung: wie nah liegt ein Bezugspunkt?
     all_ref = sorted([p[0] for p in phone] + [p[0] for p in tl])
     out("\n== Abdeckung der Fotos ohne GPS (Abstand zum nächsten Punkt)")
     for label, ref, use_shift in (("nur Fotos mit GPS", phone_times, False),
                                   ("Fotos mit GPS + Zeitachse", all_ref, False),
-                                  ("Fotos mit GPS + Zeitachse, Kamera-Uhr korrigiert", all_ref, True)):
-        if use_shift and not any(best_shift.values()):
+                                  ("dazu Lücken gefüllt", filled_times, False),
+                                  ("dazu Kamera-Uhr korrigiert", filled_times, True)):
+        if (use_shift and not any(best_shift.values())) or (ref is filled_times and not use_shift and not gaps):
             continue
         c = Counter(bucket(nearest_gap(ref, p["t"] + timedelta(hours=best_shift.get(p["model"], 0) if use_shift else 0)))
                     for p in targets)
         if targets:
             out(f"  {label}: " + " · ".join(f"{b} {c[b]}" for b in BUCKETS if c[b]))
+    if gaps:
+        out(f"  Lücken gefüllt: {gaps} (Punkt davor und danach am selben Ort ≤ {GAP_FILL_DIST} m, Lücke ≤ "
+            f"{GAP_FILL_MAX.seconds // 3600} h → alle {STAY_STEP.seconds // 60} min ein Punkt dazwischen) – "
+            f"{len(filled) - len(points)} Punkte dazu")
 
     # --- GPS-Spur zum Ausprobieren
-    points = [(t, lat, lng) for t, lat, lng in phone] + tl
+    points = filled
     if points:
         GPX_DIR.mkdir(exist_ok=True)
         name = re.sub(r'[\\/:*?"<>|]+', "_", folders.most_common(1)[0][0].split("\\")[-1])

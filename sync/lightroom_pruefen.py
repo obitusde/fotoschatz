@@ -12,7 +12,7 @@ Aufruf: lightroom_pruefen.bat (Doppelklick) oder python lightroom_pruefen.py
 Optional in config.local.json: "catalog", "originals_dir", "ignore_keywords"
 """
 
-__version__ = "0.6.21"
+__version__ = "0.6.22"
 
 
 import json
@@ -101,7 +101,7 @@ def read_catalog(db, cfg):
                fo.id_local AS folderId, fo.pathFromRoot AS pathFromRoot,
                r.id_local AS rootId, r.absolutePath AS root, r.name AS rootName,
                s.stack AS stack, s.position AS position,
-               e.hasGPS AS hasGPS, h.cityRef AS cityRef, fp.lastFaceDetector AS faceDetector
+               e.hasGPS AS hasGPS, e.gpsLatitude AS lat, e.gpsLongitude AS lng, h.cityRef AS cityRef, fp.lastFaceDetector AS faceDetector
         FROM Adobe_images i
         JOIN AgLibraryFile f ON f.id_local = i.rootFile
         JOIN AgLibraryFolder fo ON fo.id_local = f.folder
@@ -133,7 +133,7 @@ def read_catalog(db, cfg):
             "folder": "/".join(parts), "parts": parts,
             "hidden": any(p.startswith("_") for p in parts),
             "stack": r["stack"], "position": r["position"],
-            "gps": bool(r["hasGPS"]), "city": r["cityRef"] is not None, "ok": r["id"] in ok_ids,
+            "gps": bool(r["hasGPS"]), "lat": r["lat"], "lng": r["lng"], "city": r["cityRef"] is not None, "ok": r["id"] in ok_ids,
             "scanned": r["faceDetector"] is not None,
         }
         # In der Galerie landet: nicht in einem _-Ordner und im Stapel oben (bzw. gar nicht gestapelt)
@@ -396,10 +396,11 @@ def folder_info(c):
 
 def gps_reach(c, info):
     """Je Ordner: wie viele Fotos ohne GPS (ohne location-ok) haben einen Bezugspunkt <= 1 h daneben -
-    einen Punkt der Google-Zeitachse oder ein Foto mit GPS (ganzer Katalog, z. B. Handyfotos)?
+    einen Punkt der Google-Zeitachse oder ein Foto mit GPS (ganzer Katalog, z. B. Handyfotos)? Zusaetzlich:
+    wie viele erst durch gefuellte Luecken (gleicher Ort davor und danach, wie in gps_test.fill_gaps).
     Dort lohnt sich gps_test.bat. Gibt Angaben zur Zeitachse zurueck (nur Anzahlen und Zeitraum)."""
     tl_info = {"files": [], "points": 0, "first": None, "last": None, "errors": []}
-    tl_times = []
+    tl_pts = []
     files = sorted(gps_test.GOOGLE_DIR.glob("*.json")) if gps_test.GOOGLE_DIR.is_dir() else []
     for f in files:
         try:
@@ -410,11 +411,16 @@ def gps_reach(c, info):
         pts, _ = gps_test.timeline_points(data)
         del data
         tl_info["files"].append(f.name)
-        tl_times += [p[0] for p in pts]
-    tl_times.sort()
+        tl_pts += [(p[0], p[2], p[3]) for p in pts]
+    tl_pts.sort()
+    tl_times = [p[0] for p in tl_pts]
     if tl_times:
         tl_info.update(points=len(tl_times), first=tl_times[0], last=tl_times[-1])
-    photo_times = sorted(i["time"] for i in c["images"] if i["gps"] and i["time"])
+    photo_pts = sorted((i["time"], i["lat"], i["lng"]) for i in c["images"]
+                       if i["gps"] and i["time"] and i["lat"] is not None and i["lng"] is not None)
+    photo_times = [p[0] for p in photo_pts]
+    filled, _ = gps_test.fill_gaps(tl_pts + photo_pts)
+    filled_times = [p[0] for p in filled]
 
     def near(times, t):
         gap = gps_test.nearest_gap(times, t)
@@ -428,6 +434,7 @@ def gps_reach(c, info):
         st["reach_tl"] += by_tl
         st["reach_photo"] += by_photo
         st["reach"] += by_tl or by_photo
+        st["reach_gap"] += not (by_tl or by_photo) and near(filled_times, i["time"])
     return tl_info
 
 
@@ -496,7 +503,7 @@ def gps_section(w, info, tl_info):
     esc, fmt = U.esc, U.fmt
     rows = [(rel, st) for rel, st in info.items() if st["nogps"]]
     total = sum(st["nogps"] for _, st in rows)
-    reach = sum(st["reach"] for _, st in rows)
+    reach = sum(st["reach"] + st["reach_gap"] for _, st in rows)
     ok = sum(st["gpsok"] for st in info.values())
     w(f"<h2>GPS nachtragen ({fmt(total)} Bilder ohne GPS)</h2>")
     if tl_info["files"]:
@@ -509,7 +516,9 @@ def gps_section(w, info, tl_info):
         w(f"<div class='warn'>{esc(err)}</div>")
     w(f"<div class='todo'>Ohne GPS zählt nur, was nicht mit <b style='color:inherit'>location-ok</b> markiert ist "
       f"({fmt(ok)} Bilder sind so markiert = erledigt). <b style='color:inherit'>Mit Spur</b> = ein Punkt der "
-      "Zeitachse oder ein Foto mit GPS liegt höchstens 1 Stunde daneben – dort lohnt sich <i>gps_test.bat</i> "
+      "Zeitachse oder ein Foto mit GPS liegt höchstens 1 Stunde daneben; <b style='color:inherit'>+ über Lücke</b> = "
+      "erst durch eine gefüllte Lücke (Punkt davor und danach am selben Ort, höchstens 3 h dazwischen). Dort lohnt "
+      "sich <i>gps_test.bat</i> "
       f"(davon {fmt(reach)} Bilder). Ging die Kamera-Uhr falsch, stimmt die Zahl nur ungefähr; gps_test prüft die Uhr. "
       "Ohne Spur: im Map-Modul die Fotos markieren und auf den Ort ziehen (Ort oben bei <i>Search Map</i> suchen), "
       "oder Stichwort <i>location-ok</i> vergeben, wenn der Ort unbekannt ist.</div>")
@@ -522,18 +531,20 @@ def gps_section(w, info, tl_info):
       "<th class='sort num' onclick='sortTable(this)'>mit Spur ≤ 1 h</th>"
       "<th class='sort num' onclick='sortTable(this)'>davon Zeitachse</th>"
       "<th class='sort num' onclick='sortTable(this)'>davon Foto mit GPS</th>"
+      "<th class='sort num' onclick='sortTable(this)'>+ über Lücke</th>"
       "<th class='sort num' onclick='sortTable(this)'>location-ok</th>"
       "<th class='sort' onclick='sortTable(this)'>Vorschlag</th></tr>")
-    for rel, st in sorted(rows, key=lambda x: (-x[1]["reach"], -x[1]["nogps"], x[0].casefold())):
+    for rel, st in sorted(rows, key=lambda x: (-x[1]["reach"] - x[1]["reach_gap"], -x[1]["nogps"], x[0].casefold())):
         name = rel.split("/")[-1] if rel else ""
-        if st["reach"] and st["reach"] * 2 >= st["nogps"]:
+        n = st["reach"] + st["reach_gap"]
+        if n and n * 2 >= st["nogps"]:
             advice = f"gps_test.bat mit „{name}“"
-        elif st["reach"]:
+        elif n:
             advice = f"gps_test.bat mit „{name}“ für einen Teil, Rest von Hand"
         else:
             advice = "von Hand auf die Karte ziehen oder location-ok"
         w(f"<tr><td>{esc(show(rel))}</td>{num(st['nogps'], True)}{num(st['reach'])}{num(st['reach_tl'])}"
-          f"{num(st['reach_photo'])}{num(st['gpsok'])}<td>{esc(advice)}</td></tr>")
+          f"{num(st['reach_photo'])}{num(st['reach_gap'])}{num(st['gpsok'])}<td>{esc(advice)}</td></tr>")
     w("</table></div></details>")
 
 
@@ -562,7 +573,7 @@ def build_page(cfg, catalog_path, c, tasks, hidden_not_imported, info, tl_info, 
       "</span></div>")
     w(f"<div class='card'><b class='muted'>{fmt(tot['unnamed'])}</b><span>Gesichter ohne Namen (oft Fremde)</span></div>")
     w(f"<div class='card'><b>{fmt(tot['nogps'])}</b><span>Bilder ohne GPS (ohne location-ok), davon "
-      f"{fmt(tot['reach'])} mit Spur – siehe „GPS nachtragen“</span></div>")
+      f"{fmt(tot['reach'] + tot['reach_gap'])} mit Spur – siehe „GPS nachtragen“</span></div>")
     w(f"<div class='card'><b class='muted'>{fmt(tot['nocity'])}</b><span>Bilder mit GPS, aber ohne Stadt</span></div>")
     w(f"<div class='card'><b class='muted'>{fmt(len(dup_groups))}</b><span>Stichwörter doppelt</span></div>")
     w("</div>")
@@ -715,7 +726,8 @@ def main():
         print(f"  {n:6}  {kind}")
     print(f"Stichwoerter doppelt: {len(dup_groups)}")
     tot = sum(info.values(), Counter())
-    print(f"Ohne GPS (ohne location-ok): {tot['nogps']}, davon mit Spur <= 1 h: {tot['reach']}")
+    print(f"Ohne GPS (ohne location-ok): {tot['nogps']}, davon mit Spur <= 1 h: {tot['reach']}, "
+          f"dazu ueber gefuellte Luecken: {tot['reach_gap']}")
     print(f"\nErgebnis: {OUT_FILE}")
     if not U.open_in_browser(OUT_FILE):
         print("Bitte die Datei in den Browser ziehen (z. B. Chrome), um sie anzusehen.")
