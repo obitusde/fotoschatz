@@ -12,7 +12,7 @@ Aufruf: lightroom_pruefen.bat (Doppelklick) oder python lightroom_pruefen.py
 Optional in config.local.json: "catalog", "originals_dir", "ignore_keywords"
 """
 
-__version__ = "0.6.27"
+__version__ = "0.6.28"
 
 
 import json
@@ -96,7 +96,7 @@ def read_catalog(db, cfg):
     base = slash(cfg["originals_dir"]).rstrip("/").casefold() + "/"
     c = {"images": [], "outside": Counter(), "outside_path": {}}
     rows = q("""
-        SELECT i.id_local AS id, i.captureTime AS captureTime, i.masterImage AS master, i.pick AS pick,
+        SELECT i.id_local AS id, i.captureTime AS captureTime, i.masterImage AS master, i.pick AS pick, i.rating AS rating,
                f.baseName AS baseName, f.extension AS extension, f.sidecarExtensions AS sidecars,
                fo.id_local AS folderId, fo.pathFromRoot AS pathFromRoot,
                r.id_local AS rootId, r.absolutePath AS root, r.name AS rootName,
@@ -131,7 +131,7 @@ def read_catalog(db, cfg):
         ext = (r["extension"] or "").lower()
         img = {
             "id": r["id"], "time": parse_time(r["captureTime"]), "raw_time": r["captureTime"],
-            "master": r["master"], "pick": r["pick"] or 0,
+            "master": r["master"], "pick": r["pick"] or 0, "rating": int(r["rating"] or 0),
             "base": r["baseName"] or "", "ext": ext,
             "file": (r["baseName"] or "") + (f".{r['extension']}" if r["extension"] else ""),
             "sidecars": [s.strip().lower() for s in (r["sidecars"] or "").split(",") if s.strip()],
