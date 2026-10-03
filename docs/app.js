@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.25";
+const APP_VERSION = "0.6.26";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;

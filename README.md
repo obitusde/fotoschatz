@@ -25,7 +25,7 @@ Lightroom ──Export──> D:\Fotoschatz ──sync.bat──> Cloudflare R2 
 | 4 | Exportieren: *Collapse All Stacks* › Strg+A › Export mit deiner Vorlage (2048 px, nach `D:\Fotoschatz`) | Lightroom |
 | 5 | `probelauf.bat` (zeigt nur an), dann `sync.bat` (lädt hoch) | PC |
 | 6 | `aufraeumen.bat` (überflüssige alte Exporte weg) und nochmal `sync.bat` | PC |
-| 7 | Ab und zu `uebersicht.bat`: Was ist exportiert und online, was fehlt? | PC |
+| 7 | Ab und zu `uebersicht.bat`: Was ist exportiert und online, was fehlt? Und **Lightroom geschlossen** `zeitachse_pruefen.bat`: Stimmen Kamera-Uhren und GPS? | PC |
 
 **Grundregel:** Korrigiert wird **nur in Lightroom**, danach neu exportieren. Nie Dateien im Explorer umbenennen, verschieben oder ändern, sonst passt der Katalog nicht mehr.
 
@@ -42,6 +42,7 @@ Lightroom ──Export──> D:\Fotoschatz ──sync.bat──> Cloudflare R2 
 | `sync.bat` | Prüft alle Exporte in `D:\Fotoschatz`, macht Vorschaubilder und `index.json` und lädt Neues hoch. Geänderte Bilder werden ersetzt, verschwundene Exporte online gelöscht. Probleme stehen in `korrekturen.csv`. | Bilder mit falschem Dateinamen oder ungültiger Zeit werden **nicht** hochgeladen. Bricht ab, wenn mehr als 100 Bilder gelöscht würden (Schutz). Kennt `location-ok` noch nicht und meldet dort „keine GPS-Daten“. |
 | `aufraeumen.bat` | Findet überflüssige Exporte (ohne Original, doppelt, RAW+JPG) und **verschiebt** sie nach `_sync\geloescht\` (fragt vorher). | Löscht nicht endgültig. Rückgängig: zurückschieben. Danach `sync.bat`, sonst bleiben sie online. |
 | `uebersicht.bat` | Vergleicht Originale, Exporte und Online-Stand. Ergebnis als Seite im Browser. | Sieht Lightroom-Stapel nicht. Bilder in Stapeln können als „nicht exportiert“ erscheinen. |
+| `zeitachse_pruefen.bat` | Prüft den **ganzen Katalog** auf einmal: (1) Kamera-Uhr je Ordner und Kamera (Vergleich mit Handyfotos derselben Szene und Tageszeit) und (2) bei Fotos **mit** GPS ab 04/2017, ob der Ort mehr als 3 km neben der Google-Zeitachse liegt. Ergebnis als Seite im Browser, mit Belegen und Lightroom-Weg. | Ändert nichts. **Lightroom muss geschlossen sein.** Nur Verdachtsfälle: erst die Belege in Lightroom vergleichen, dann korrigieren. „Weit weg“ kann richtig sein (Foto von jemand anderem, Flug, Funkloch). Alte Scans und Fotos ohne Kamera-Angabe prüft es nicht. Fotos, die schon mit falscher Uhr eine GPS-Spur bekommen haben, liegen „passend“ zur Zeitachse; die findet nur die Uhr-Prüfung. |
 | `katalog_diagnose.bat` | Technischer Test, ob der Katalog lesbar ist. Ergebnis an Claude schicken. | Nur bei Problemen nötig. |
 
 Die `.py`-Dateien gehören zu den `.bat`-Dateien (`regeln.py` und `katalog.py` sind gemeinsame Bausteine).
