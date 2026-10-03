@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.10 · 01.10.2026 (Lightroom prüfen: GPS-Tabelle lesbarer, v0.6.24; davor v0.6.23 `aktualisieren.bat`)
+**Dokumentversion:** v3.11 · 03.10.2026 (README für mich: Ablauf, Skripte, Achtung-Punkte, offene Aufgaben, v0.6.25; davor v0.6.24 GPS-Tabelle lesbarer)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -32,7 +32,7 @@
 - **Nach jedem Push:** Status der Workflows prüfen und melden: „live in Version x.y.z" oder den Fehler in einfachen Worten.
 - **Zurückgehen:** alten Stand (Tag) als **neue** Version wiederherstellen. Niemals Historie umschreiben, kein force-push auf `main`.
 - **Niemals Geheimnisse ins Repo** (es ist öffentlich): kein R2-Präfix, keine R2-Zugangsdaten, keine `config.local.json`. Die öffentliche R2-Adresse (`pub-….r2.dev`) ist **kein** Geheimnis – ohne Präfix ist dort nichts abrufbar, und die App muss sie ohnehin kennen.
-- **Repo-Aufbau:** `docs/` = PWA (GitHub Pages) · `sync/` = lokales Sync-Tool (läuft nur auf meinem PC) · `.github/workflows/` = release + deploy · `VERSION` · `CLAUDE.md`.
+- **Repo-Aufbau:** `docs/` = PWA (GitHub Pages) · `sync/` = lokales Sync-Tool (läuft nur auf meinem PC) · `.github/workflows/` = release + deploy · `VERSION` · `CLAUDE.md` · `README.md` (Kurzfassung für mich: Ablauf, was jedes Skript macht und nicht macht, Achtung-Punkte, offene Aufgaben – bei neuen Skripten oder geändertem Ablauf mitpflegen).
 - Das Sync-Tool kann in der Cloud geschrieben werden, ausgeführt und mit echten Exporten getestet wird es aber auf meinem Windows-PC. Dafür klar sagen, was ich am PC ausführen soll. Dateien liegen dort in `D:\Fotoschatz\_sync\`; **neue Fassungen holt `aktualisieren.bat`** (Doppelklick, seit v0.6.23) – sonst per Datei-Übergabe.
 
 ---
