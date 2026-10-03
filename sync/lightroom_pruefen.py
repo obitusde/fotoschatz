@@ -12,7 +12,7 @@ Aufruf: lightroom_pruefen.bat (Doppelklick) oder python lightroom_pruefen.py
 Optional in config.local.json: "catalog", "originals_dir", "ignore_keywords"
 """
 
-__version__ = "0.6.26"
+__version__ = "0.6.27"
 
 
 import json
@@ -102,7 +102,8 @@ def read_catalog(db, cfg):
                r.id_local AS rootId, r.absolutePath AS root, r.name AS rootName,
                s.stack AS stack, s.position AS position,
                e.hasGPS AS hasGPS, e.gpsLatitude AS lat, e.gpsLongitude AS lng, cm.value AS model,
-               h.cityRef AS cityRef, fp.lastFaceDetector AS faceDetector
+               h.cityRef AS cityRef, ci.value AS cityName, co.value AS countryName,
+               fp.lastFaceDetector AS faceDetector
         FROM Adobe_images i
         JOIN AgLibraryFile f ON f.id_local = i.rootFile
         JOIN AgLibraryFolder fo ON fo.id_local = f.folder
@@ -111,6 +112,8 @@ def read_catalog(db, cfg):
         LEFT JOIN AgHarvestedExifMetadata e ON e.image = i.id_local
         LEFT JOIN AgInternedExifCameraModel cm ON cm.id_local = e.cameraModelRef
         LEFT JOIN AgHarvestedIptcMetadata h ON h.image = i.id_local
+        LEFT JOIN AgInternedIptcCity ci ON ci.id_local = h.cityRef
+        LEFT JOIN AgInternedIptcCountry co ON co.id_local = h.countryRef
         LEFT JOIN Adobe_libraryImageFaceProcessHistory fp ON fp.image = i.id_local""")
     ok_ids = {r[0] for r in q("""SELECT ki.image FROM AgLibraryKeywordImage ki
                                  JOIN AgLibraryKeyword k ON k.id_local = ki.tag
@@ -136,7 +139,8 @@ def read_catalog(db, cfg):
             "hidden": any(p.startswith("_") for p in parts),
             "stack": r["stack"], "position": r["position"],
             "gps": bool(r["hasGPS"]), "lat": r["lat"], "lng": r["lng"],
-            "model": r["model"] or "(unbekannt)", "city": r["cityRef"] is not None, "ok": r["id"] in ok_ids,
+            "model": r["model"] or "(unbekannt)",
+            "place": ", ".join(x for x in (r["cityName"], r["countryName"]) if x), "city": r["cityRef"] is not None, "ok": r["id"] in ok_ids,
             "scanned": r["faceDetector"] is not None,
         }
         # In der Galerie landet: nicht in einem _-Ordner und im Stapel oben (bzw. gar nicht gestapelt)
