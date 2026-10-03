@@ -1,7 +1,7 @@
 "use strict";
 
 // Fotoschatz Service Worker. Version folgt VERSION / APP_VERSION.
-const VERSION = "0.6.28";
+const VERSION = "0.6.29";
 const APP_CACHE = `fotoschatz-app-${VERSION}`;
 const THUMB_CACHE = "fotoschatz-thumb";
 const IMG_CACHE = "fotoschatz-img";

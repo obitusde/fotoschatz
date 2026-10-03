@@ -7,6 +7,6 @@
   "thumb_quality": 70,
   "max_delete": 100,
   "transfers": 8,
-  "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok"],
+  "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok", "ort-egal", "personen-egal"],
   "originals_dir": "D:\\Bilder - Raw"
 }

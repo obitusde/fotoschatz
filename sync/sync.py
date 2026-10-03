@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.6.6"
+__version__ = "0.6.29"
 
 import argparse
 import csv
@@ -41,7 +41,7 @@ DEFAULTS = {
     "thumb_quality": 70,
     "max_delete": 100,
     "transfers": 8,
-    "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok"],
+    "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok", "ort-egal", "personen-egal"],
 }
 
 CSV_FILE = SCRIPT_DIR / "korrekturen.csv"

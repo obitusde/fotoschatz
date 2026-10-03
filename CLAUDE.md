@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.14 · 03.10.2026 (`personen_pruefen`: Bilder ohne Person je Ordner mit Grund, v0.6.28; davor v0.6.27 `zeitachse_pruefen` neu)
+**Dokumentversion:** v3.15 · 03.10.2026 (Sterne ★ wichtig / ★★ Lieblingsbild, Merker `ort-egal`/`personen-egal`, v0.6.29; davor v0.6.28 `personen_pruefen`)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -94,6 +94,8 @@
 
 | Thema | Entscheidung |
 |---|---|
+| Sterne (03.10.2026) | **★ = wichtig, ★★ = Lieblingsbild**, 0 = normal (die meisten). Werden in Lightroom neu gesetzt (alte 3–5★ ersetze ich). Wichtige und Lieblingsbilder prüfe ich gezielt (Personen u. a.); die App nutzt ★★/★ später für Rückblick und Best-of |
+| Merker-Stichwörter (03.10.2026) | `ort-egal` (früher `location-ok`) = bewusst ohne GPS · `personen-egal` = bewusst ohne Personen. Die Tools melden solche Bilder nicht mehr; alte Namen (`location-ok`, `personen-ok`) gelten übergangsweise weiter (`katalog.ORT_EGAL`/`PERSONEN_EGAL`). In Lightroom *Include on Export* aus, in `ignore_keywords` ausgeblendet |
 | Hosting Bilder | Cloudflare R2, öffentlich lesbar, alles unter einem geheimen Pfad-Präfix |
 | Hosting App | GitHub Pages, Repo `obitusde/fotoschatz`, Ordner `docs/`, statische PWA, kein Backend |
 | Bildgröße | **2048 px** lange Kante, JPEG-Qualität **70** (≈ 0,5–1,2 MB je Bild; Handy + PC) |
@@ -377,6 +379,7 @@ Ohne Datei gelten diese Standardwerte:
 - Lightroom schließen, `personen_pruefen.bat` → Katalog-Kopie → `personen_pruefen.html` (Datei- und Personennamen, bleibt auf dem PC) + `personen_pruefen.txt` (nur Anzahlen und Ordnernamen, für Claude). Beide per `.gitignore` ausgeschlossen. Ändert nichts. Nur Bilder „für die Galerie“.
 - **Person** = bestätigtes Gesicht **oder** Stichwort mit bekanntem Personennamen (wie im Sync-Tool). Bekannte Namen = Personen-Stichwörter, Stichwörter unter „Person/Persons/Personen/People“, Namen bestätigter Gesichter.
 - **Diagnose (Kacheln):** Person über Gesicht und Stichwort · nur Gesicht · nur Stichwort (von Hand) · ohne Person · Gesicht bestätigt, aber Stichwort fehlt · Sterne-Verteilung (`Adobe_images.rating`, jetzt in `read_catalog`).
+- **v0.6.29:** oben eigene Liste „★★ Lieblingsbilder und ★ wichtige Bilder ohne Person“ über alle Ordner (Lieblingsbilder zuerst, mit Ordner-Spalte und „alle Dateinamen kopieren“); Filter „alle / ★ wichtig und ★★ / nur ★★“; Bilder mit `personen-egal` werden nicht gemeldet (Kachel mit Anzahl). In der Cloud getestet (Lieblings- vor wichtigen Bildern, `personen-egal` ausgelassen; `gps_test` an 34 Testfällen bis auf die Beschriftung „ort-egal“ gleich).
 - **Gründe ohne Person** (schnellste Abhilfe zuerst): Name vorgeschlagen · Gesicht ohne Namen · kein Gesicht erkannt (selbst ansehen, *Draw Face Region*) · nicht nach Gesichtern durchsucht. Dazu „Stichwort fehlt“ (hat Person, Lightroom-Fehler) mit in der Liste.
 - **Ordner:** „Ordner mit Personen“ (≥ 20 % der Bilder mit Person – dort fehlen Namen am ehesten), sortiert nach Anzahl ohne Person; „Ordner mit wenig Personen“ (Landschaft/Street) zugeklappt. Je Ordner Tabelle Datei (Kopieren ohne Endung) · Aufnahme · Sterne · Grund · Erkannt; Knopf „alle Dateinamen kopieren“ (mit Leerzeichen, für *Filename › Contains* – ⚠ am PC prüfen, ob Lightroom dann alle zeigt). Filter „ab ★…★★★★“ (Bewertungen sind laut mir bisher kaum gepflegt – Pflege ist noch offen).
 - In der Cloud mit nachgebautem Katalog getestet (alle Fälle richtig zugeordnet, Kopieren und Sterne-Filter im Browser geprüft, Katalog unverändert, Syntax für Python 3.8).
@@ -573,14 +576,14 @@ Ohne Datei gelten diese Standardwerte:
 1. **Rückblick „Heute vor X Jahren"** auf dem Startbildschirm der App:
    - Bilder mit gleichem Tag/Monat aus früheren Jahren, gruppiert nach Jahr.
    - Gibt es am Tag nichts, ±3 Tage.
-   - Bevorzugt Bilder mit hoher Bewertung.
+   - Bevorzugt ★★ Lieblingsbilder, dann ★ wichtige.
 2. **„Überrasch mich":** zufällige Auswahl (bevorzugt gut bewertet) oder zufälliger Ordner.
 3. **Karte:**
    - Leaflet + OpenStreetMap (Namensnennung und Nutzungsregeln der Kacheln beachten), Cluster mit Anzahl.
    - Antippen → Bilder an diesem Ort.
 4. **Umkreissuche:** Punkt auf der Karte wählen + Radius (1 / 5 / 20 / 50 km) → Entfernungsberechnung im Browser → Raster. Zusätzlich „In meiner Nähe" über den Standort des Handys.
 5. **Personen-Seite:** alle Personen mit Anzahl; pro Person chronologisch („durch die Jahre").
-6. **Best-of-Filter** nach Bewertung (z. B. ≥ 4 Sterne), kombinierbar mit Suche/Ordner.
+6. **Best-of-Filter** nach Bewertung (★★ Lieblingsbilder, ★ wichtig – Entscheidung 03.10.2026), kombinierbar mit Suche/Ordner.
 7. **Diashow:** Vollbild mit automatischem Weiterblättern, einstellbares Intervall, optional zufällig.
 8. **Teilen:** Einzelbild über das Android-Teilen-Menü (Web Share API mit Datei), z. B. an WhatsApp.
 9. **Deep-Links** auf Ordner (und ggf. einzelne Bilder).

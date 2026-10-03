@@ -57,7 +57,8 @@ Die `.py`-Dateien gehören zu den `.bat`-Dateien (`regeln.py` und `katalog.py` s
 - **`D:\Fotoschatz`** ist nur der Export. Er darf gelöscht und neu exportiert werden.
 - **Stapel:** Nur das oberste Bild eines Stapels kommt in die Galerie. Vor dem Export *Collapse All Stacks*. Vor *Edit Capture Time* oder GPS-Zuordnung dagegen *Expand All Stacks*, sonst bleiben versteckte Fotos falsch.
 - **Aufnahmezeit ändern = neuer Exportname.** Danach exportieren, `sync.bat`, `aufraeumen.bat`.
-- **`location-ok`** (Stichwort) heißt: „bewusst ohne GPS, schon entschieden“. Die Prüf-Tools zeigen diese Bilder dann nicht mehr als offen.
+- **Sterne:** ★ = wichtig, ★★ = Lieblingsbild, sonst keine. Wichtige und Lieblingsbilder prüfst du gezielt (`personen_pruefen`, Filter „★ wichtig und ★★“).
+- **Merker-Stichwörter:** `ort-egal` = bewusst ohne GPS, `personen-egal` = bewusst ohne Personen. Die Prüf-Tools melden diese Bilder dann nicht mehr. (Altes `location-ok` gilt übergangsweise weiter.)
 - **Ordnernamen** beginnen mit einer Jahreszahl und müssen eindeutig sein. Ordner mit `_` am Anfang (z. B. `_Import`) kommen nie online.
 - **Geheimnisse nie ins Repo** (es ist öffentlich): das Präfix, die R2-Zugangsdaten, `config.local.json`, `rclone.conf`, `fotoschatz-secrets.ps1`. Auch die Google-Zeitachse, `gpx\` und die HTML-Berichte bleiben auf dem PC.
 - **R2 ist kein Backup.** Originale und Katalog weiter selbst sichern.

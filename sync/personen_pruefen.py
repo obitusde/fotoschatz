@@ -11,6 +11,8 @@ Liste: je Ordner die Bilder ohne Person, mit Grund und Weg in Lightroom:
   - kein Gesicht erkannt                      -> selbst ansehen, ggf. Draw Face Region
   - noch nicht nach Gesichtern durchsucht     -> Gesichtserkennung laufen lassen
 Dazu: Gesicht bestaetigt, aber Stichwort fehlt (bekannter Lightroom-Fehler) -> Name anklicken, Enter.
+Sterne (Entscheidung 03.10.2026): 1 = wichtig, 2 = Lieblingsbild - diese stehen oben in eigener Liste.
+Stichwort "personen-egal" = bewusst ohne Personen, wird nicht gemeldet.
 
 Ausgaben neben diesem Skript, bleiben auf dem PC:
   - personen_pruefen.html  mit Dateinamen und Personennamen
@@ -19,7 +21,7 @@ Ausgaben neben diesem Skript, bleiben auf dem PC:
 Aufruf: personen_pruefen.bat (Doppelklick) oder python personen_pruefen.py
 """
 
-__version__ = "0.6.28"
+__version__ = "0.6.29"
 
 import sys
 import time
@@ -69,14 +71,14 @@ def read_people(db):
             names.add(k["name"].casefold())
     for tags in conf_tags.values():
         names.update(kws[t]["name"].casefold() for t in tags if t in kws and kws[t]["name"])
-    names -= PERSON_PARENTS
+    names -= PERSON_PARENTS | set(katalog.PERSONEN_EGAL) | set(katalog.ORT_EGAL)
     return kws, img_kw, conf_tags, names
 
 
 def classify(c, kws, img_kw, conf_tags, names):
     """Je Bild fuer die Galerie: Quelle der Personen bzw. Grund, warum keine Person da ist."""
     stats = Counter()
-    folders = defaultdict(lambda: {"items": [], "n": 0, "with": 0, "reasons": Counter(), "rated": 0})
+    folders = defaultdict(lambda: {"items": [], "n": 0, "with": 0, "egal": 0, "reasons": Counter(), "rated": 0})
     for i in c["images"]:
         if not i["gallery"]:
             continue
@@ -103,11 +105,17 @@ def classify(c, kws, img_kw, conf_tags, names):
             stats["missing_kw"] += 1
             f["reasons"]["missing_kw"] += 1
         if face_names or kw_names:
+            stats[f"rated_with{min(i['rating'], 2)}"] += 1
             f["with"] += 1
             if missing_kw:      # hat Person, aber Lightroom-Fehler: in der Liste mit aufnehmen
                 f["items"].append({"i": i, "reason": "missing_kw", "names": missing_kw, "faces": faces})
             continue
+        if any(t in kws and str(kws[t]["name"] or "").casefold() in katalog.PERSONEN_EGAL for t in tags):
+            stats["egal"] += 1          # bewusst ohne Personen - erledigt
+            f["egal"] += 1
+            continue
         stats["none"] += 1
+        stats[f"rated_none{min(i['rating'], 2)}"] += 1
         if faces["suggested"]:
             reason = "suggested"
         elif faces["unnamed"]:
@@ -162,6 +170,25 @@ def stars(n):
     return "★" * n if n else ""
 
 
+def row_cells(it):
+    """Zellen Datei · Aufnahme · Sterne · Grund · Erkannt fuer ein Bild ohne Person."""
+    esc = U.esc
+    i, faces, key = it["i"], it["faces"], it["reason"]
+    label = "Stichwort fehlt" if key == "missing_kw" else REASONS[key][0]
+    info = []
+    if it["names"]:
+        info.append("benannt: " + ", ".join(it["names"]))
+    if faces["suggested"]:
+        info.append(f"{faces['suggested']} Vorschlag")
+    if faces["unnamed"]:
+        info.append(f"{faces['unnamed']} ohne Namen")
+    when = f"{i['time']:%d.%m.%Y %H:%M}" if i["time"] else ""
+    return (f"<td><b>{esc(i['file'])}</b> <button class='cp' data-c='{esc(i['base'])}' "
+            f"onclick='copyText(this,this.dataset.c)'>Kopieren</button></td><td>{when}</td>"
+            f"<td class='stars'>{stars(i['rating'])}</td><td class='reason r-{key}'>{esc(label)}</td>"
+            f"<td class='small'>{esc(' · '.join(info))}</td>")
+
+
 def build_page(catalog_path, folders, stats, names, started):
     esc, fmt = U.esc, U.fmt
     out = []
@@ -184,9 +211,11 @@ def build_page(catalog_path, folders, stats, names, started):
         w(f"<div class='card'><b>{fmt(value)}</b><span>{label} · {value / n:.0%}</span></div>")
     w(f"<div class='card'><b style='color:var(--none)'>{fmt(stats['missing_kw'])}</b><span>Gesicht bestätigt, aber "
       "Stichwort fehlt (Lightroom-Fehler)</span></div>")
-    rated = n - stats["stars0"]
-    w(f"<div class='card'><b class='muted'>{fmt(rated)}</b><span>mit Sternen bewertet ({rated / n:.0%}) · "
-      + " · ".join(f"{s}★ {fmt(stats[f'stars{s}'])}" for s in range(5, 0, -1)) + "</span></div>")
+    fav = sum(stats[f"stars{s}"] for s in range(2, 6))
+    w(f"<div class='card'><b>{fmt(stats['stars1'])} · {fmt(fav)}</b><span>★ wichtig · ★★ Lieblingsbild "
+      f"(ab 2 Sternen) – davon ohne Person: {fmt(stats['rated_none1'])} · {fmt(stats['rated_none2'])}</span></div>")
+    w(f"<div class='card'><b class='muted'>{fmt(stats['egal'])}</b><span>mit <i>personen-egal</i> markiert "
+      "(bewusst ohne Personen, erledigt)</span></div>")
     w("</div>")
 
     w("<div class='steps'><b>Ohne Person – Gründe und was du in Lightroom tust</b> (schnellste zuerst):<ul>")
@@ -195,14 +224,33 @@ def build_page(catalog_path, folders, stats, names, started):
       "Rahmen klicken › Enter.</li>")
     for key, (label, todo) in REASONS.items():
         w(f"<li><span class='r-{key}'><b>{label}</b></span> ({fmt(stats[key])}): {esc(todo)}</li>")
+    w("<li><b>Gar keine Person auf dem Bild</b> (wichtiges Bild, z. B. Landschaft): Stichwort <i>personen-egal</i> "
+      "setzen – dann wird es nicht mehr gemeldet.</li>")
     w("</ul>Bild finden: <i>Kopieren</i> beim Bild (Dateiname ohne Endung) › in Lightroom <i>Catalog › All Photographs</i> "
       "› <i>Library Filter › Text › Filename › Contains</i> › Strg+V. Beim Ordner kopiert <i>alle Dateinamen</i> die "
       "angezeigten Bilder auf einmal (mit Leerzeichen getrennt) – ⚠ am PC prüfen, ob Lightroom dann alle zeigt.</div>")
 
-    w("<div class='bar2'>Zeigen: <button class='fst on' onclick='setStars(this,0)'>alle</button>")
-    for s in (1, 2, 3, 4):
-        w(f"<button class='fst' onclick='setStars(this,{s})'>ab {stars(s)}</button>")
-    w("</div>")
+    w("<div class='bar2'>Zeigen: <button class='fst on' onclick='setStars(this,0)'>alle</button>"
+      "<button class='fst' onclick='setStars(this,1)'>★ wichtig und ★★</button>"
+      "<button class='fst' onclick='setStars(this,2)'>nur ★★ Lieblingsbilder</button></div>")
+
+    # ---- Wichtige und Lieblingsbilder ohne Person, ueber alle Ordner (das, was zuerst stimmen soll)
+    order = {"missing_kw": 0, "suggested": 1, "unnamed": 2, "noface": 3, "unscanned": 4}
+    top = sorted(((rel, it) for rel, f in folders.items() for it in f["items"] if it["i"]["rating"] >= 1),
+                 key=lambda x: (-min(x[1]["i"]["rating"], 2), order[x[1]["reason"]], x[0].casefold(),
+                                x[1]["i"]["time"] or datetime.min))
+    w(f"<h2>★★ Lieblingsbilder und ★ wichtige Bilder ohne Person ({fmt(len(top))})</h2>")
+    if not top:
+        w("<div class='none'>Keine – alle bewerteten Bilder haben eine Person oder <i>personen-egal</i>.</div>")
+    else:
+        w("<details class='task' open><summary><span class='t'>Liste</span><span class='nums'>Lieblingsbilder zuerst"
+          "</span></summary><div class='inner'><button class='cp' onclick='copyFolder(this)'>alle Dateinamen "
+          "kopieren</button><table><tr><th>Ordner</th><th>Datei</th><th>Aufnahme</th><th>Sterne</th><th>Grund</th>"
+          "<th>Erkannt</th></tr>")
+        for rel, it in top[:MAX_LIST * 3]:
+            w(f"<tr data-st='{it['i']['rating']}' data-b='{esc(it['i']['base'])}'><td>{esc(LP.show(rel))}</td>"
+              + row_cells(it) + "</tr>")
+        w("</table></div></details>")
 
     people = sorted((x for x in folders.items() if x[1]["share"] >= PEOPLE_SHARE and x[1]["items"]),
                     key=lambda x: (-x[1]["todo"], x[0].casefold()))
@@ -219,21 +267,7 @@ def build_page(catalog_path, folders, stats, names, started):
           "<button class='cp' onclick='copyFolder(this)'>alle Dateinamen kopieren</button><table>"
           "<tr><th>Datei</th><th>Aufnahme</th><th>Sterne</th><th>Grund</th><th>Erkannt</th></tr>")
         for it in f["items"][:MAX_LIST]:
-            i, faces, key = it["i"], it["faces"], it["reason"]
-            label = "Stichwort fehlt" if key == "missing_kw" else REASONS[key][0]
-            info = []
-            if it["names"]:
-                info.append("benannt: " + ", ".join(it["names"]))
-            if faces["suggested"]:
-                info.append(f"{faces['suggested']} Vorschlag")
-            if faces["unnamed"]:
-                info.append(f"{faces['unnamed']} ohne Namen")
-            when = f"{i['time']:%d.%m.%Y %H:%M}" if i["time"] else ""
-            w(f"<tr data-st='{i['rating']}' data-b='{esc(i['base'])}'><td><b>{esc(i['file'])}</b> "
-              f"<button class='cp' data-c='{esc(i['base'])}' onclick='copyText(this,this.dataset.c)'>Kopieren</button>"
-              f"</td><td>{when}</td>")
-            w(f"<td class='stars'>{stars(i['rating'])}</td><td class='reason r-{key}'>{esc(label)}</td>"
-              f"<td class='small'>{esc(' · '.join(info))}</td></tr>")
+            w(f"<tr data-st='{it['i']['rating']}' data-b='{esc(it['i']['base'])}'>" + row_cells(it) + "</tr>")
         if len(f["items"]) > MAX_LIST:
             w(f"<tr><td colspan='5' class='muted'>… und {fmt(len(f['items']) - MAX_LIST)} weitere</td></tr>")
         w("</table></div></details>")
@@ -261,7 +295,9 @@ def write_txt(folders, stats, names):
              f"nur Stichwort: {stats['kw_only']} · ohne Person: {stats['none']} ({stats['none'] / n:.0%})",
              f"Gesicht bestaetigt, Stichwort fehlt: {stats['missing_kw']}",
              "Ohne Person nach Grund: " + " · ".join(f"{REASONS[k][0]}: {stats[k]}" for k in REASONS),
-             "Sterne: " + " · ".join(f"{s}: {stats[f'stars{s}']}" for s in range(5, -1, -1)), "",
+             "Sterne: " + " · ".join(f"{s}: {stats[f'stars{s}']}" for s in range(5, -1, -1)),
+             f"Bewertet ohne Person: wichtig (1) {stats['rated_none1']} · Lieblingsbild (2+) {stats['rated_none2']} · "
+             f"personen-egal: {stats['egal']}", "",
              "Ordner (ohne Person / Bilder / Anteil mit Person / Vorschlag / ohne Namen / kein Gesicht / nicht durchsucht):"]
     for rel, f in sorted(folders.items(), key=lambda x: (-x[1]["todo"], x[0].casefold()))[:60]:
         r = f["reasons"]

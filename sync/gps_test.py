@@ -13,7 +13,7 @@ Aufruf: gps_test.bat (fragt nach einem Teil des Ordnernamens, z. B. Japan)
         oder python gps_test.py Japan
 """
 
-__version__ = "0.6.26"
+__version__ = "0.6.29"
 
 import bisect
 import json
@@ -407,7 +407,7 @@ def main():
         LEFT JOIN AgInternedExifCameraModel m ON m.id_local = e.cameraModelRef""").fetchall()
     ok_ids = {r[0] for r in db.execute("""SELECT ki.image FROM AgLibraryKeywordImage ki
                                           JOIN AgLibraryKeyword k ON k.id_local = ki.tag
-                                          WHERE LOWER(k.name) = 'location-ok'""")}
+                                          WHERE LOWER(k.name) IN (""" + katalog.sql_names(katalog.ORT_EGAL) + ")")}
     db.close()
 
     photos = []
@@ -438,10 +438,10 @@ def main():
     out("\n== Fotos im Ordner nach Kamera")
     by_model = defaultdict(Counter)
     for p in wanted:
-        by_model[p["model"]]["mit GPS" if p["gps"] else ("location-ok" if p["ok"] else "ohne GPS")] += 1
+        by_model[p["model"]]["mit GPS" if p["gps"] else ("ort-egal" if p["ok"] else "ohne GPS")] += 1
     for model, c in sorted(by_model.items(), key=lambda x: -sum(x[1].values())):
         out(f"  {model}: " + ", ".join(f"{k} {v}" for k, v in c.most_common()))
-    out(f"  → ohne GPS (ohne location-ok): {len(targets)}")
+    out(f"  → ohne GPS (ohne ort-egal): {len(targets)}")
 
     # --- Bezugspunkte 1: Fotos MIT GPS im Zeitraum (aus dem ganzen Katalog, z. B. Handyfotos)
     phone = sorted((p["t"], p["gps"][0], p["gps"][1]) for p in photos if p["gps"] and lo <= p["t"] <= hi)
@@ -549,7 +549,7 @@ def main():
             out(f"    {res['label']}: {line}")
 
     if not targets:
-        out("  Alle Fotos haben GPS (oder location-ok) – nichts zu tun.")
+        out("  Alle Fotos haben GPS (oder ort-egal) – nichts zu tun.")
 
     # --- Luecken fuellen (gleicher Ort davor und danach, <= 3 h)
     points = [(t, lat, lng) for t, lat, lng in phone] + tl

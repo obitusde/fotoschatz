@@ -9,7 +9,7 @@ Aenderungen.
 Wird von katalog_diagnose.py (und spaeter von der Lightroom-Pruefung) benutzt.
 """
 
-__version__ = "0.6.12"
+__version__ = "0.6.29"
 
 import os
 import shutil
@@ -21,6 +21,17 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 COPY_DIR = SCRIPT_DIR / "katalog"
 DEFAULT_CATALOG = r"C:\Daten\Lightroom Catalog"
+
+
+# Merker-Stichwoerter (Entscheidung 03.10.2026): "bewusst ohne ..., schon entschieden" - die Pruef-Tools melden
+# solche Bilder nicht mehr. Alte Namen gelten in der Uebergangszeit weiter.
+ORT_EGAL = ("ort-egal", "location-ok")
+PERSONEN_EGAL = ("personen-egal", "personen-ok")
+
+
+def sql_names(names):
+    """('a', 'b') -> "'a', 'b'" fuer WHERE LOWER(name) IN (...)"""
+    return ", ".join("'" + n.replace("'", "''") + "'" for n in names)
 
 
 class CatalogError(Exception):

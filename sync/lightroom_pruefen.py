@@ -12,7 +12,7 @@ Aufruf: lightroom_pruefen.bat (Doppelklick) oder python lightroom_pruefen.py
 Optional in config.local.json: "catalog", "originals_dir", "ignore_keywords"
 """
 
-__version__ = "0.6.28"
+__version__ = "0.6.29"
 
 
 import json
@@ -35,7 +35,7 @@ OUT_FILE = SCRIPT_DIR / "lightroom_pruefen.html"
 DEFAULTS = {
     "catalog": katalog.DEFAULT_CATALOG,
     "originals_dir": r"D:\Bilder - Raw",
-    "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok"],
+    "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok", "ort-egal", "personen-egal"],
 }
 EDIT_RE = re.compile(r"^(?P<base>.+?)(?P<suffix>(?:-(?:edit|bearbeitet|hdr|pano|enhanced|verbessert|nr|rr|sr|ai)"
                      r"(?:-\d+)?)+)$", re.IGNORECASE)
@@ -117,7 +117,7 @@ def read_catalog(db, cfg):
         LEFT JOIN Adobe_libraryImageFaceProcessHistory fp ON fp.image = i.id_local""")
     ok_ids = {r[0] for r in q("""SELECT ki.image FROM AgLibraryKeywordImage ki
                                  JOIN AgLibraryKeyword k ON k.id_local = ki.tag
-                                 WHERE LOWER(k.name) = 'location-ok'""")}
+                                 WHERE LOWER(k.name) IN (""" + katalog.sql_names(katalog.ORT_EGAL) + ")")}
     for r in rows:
         root = slash(r["root"])
         if not (root.casefold() + "/").replace("//", "/").startswith(base):
@@ -402,7 +402,7 @@ def folder_info(c):
 
 
 def gps_reach(c, info):
-    """Je Ordner: wie viele Fotos ohne GPS (ohne location-ok) haben einen Bezugspunkt <= 1 h daneben -
+    """Je Ordner: wie viele Fotos ohne GPS (ohne ort-egal) haben einen Bezugspunkt <= 1 h daneben -
     einen Punkt der Google-Zeitachse oder ein Foto mit GPS (ganzer Katalog, z. B. Handyfotos)? Zusaetzlich:
     wie viele erst durch gefuellte Luecken (gleicher Ort davor und danach, wie in gps_test.fill_gaps).
     Dort lohnt sich gps_test.bat. Gibt Angaben zur Zeitachse zurueck (nur Anzahlen und Zeitraum)."""
@@ -509,7 +509,7 @@ def num(n, big=False):
 
 
 def gps_section(w, info, tl_info):
-    """Abschnitt "GPS nachtragen": je Ordner ohne GPS, location-ok, davon mit Spur, Empfehlung."""
+    """Abschnitt "GPS nachtragen": je Ordner ohne GPS, ort-egal, davon mit Spur, Empfehlung."""
     esc, fmt = U.esc, U.fmt
     rows = [(rel, st) for rel, st in info.items() if st["nogps"]]
     total = sum(st["nogps"] for _, st in rows)
@@ -524,16 +524,16 @@ def gps_section(w, info, tl_info):
           "GPS (z. B. Handyfotos).</div>")
     for err in tl_info["errors"]:
         w(f"<div class='warn'>{esc(err)}</div>")
-    w(f"<div class='todo'>Ohne GPS zählt nur, was nicht mit <b style='color:inherit'>location-ok</b> markiert ist "
+    w(f"<div class='todo'>Ohne GPS zählt nur, was nicht mit <b style='color:inherit'>ort-egal</b> markiert ist "
       f"({fmt(ok)} Bilder sind so markiert = erledigt). <b style='color:inherit'>Mit Spur</b> = ein Punkt der "
       "Zeitachse oder ein Foto mit GPS liegt höchstens 1 Stunde daneben; <b style='color:inherit'>+ über Lücke</b> = "
       "erst durch eine gefüllte Lücke (Punkt davor und danach am selben Ort, höchstens 3 h dazwischen). Dort lohnt "
       "sich <i>gps_test.bat</i> "
       f"(davon {fmt(reach)} Bilder). Ging die Kamera-Uhr falsch, stimmt die Zahl nur ungefähr; gps_test prüft die Uhr. "
       "Ohne Spur: im Map-Modul die Fotos markieren und auf den Ort ziehen (Ort oben bei <i>Search Map</i> suchen), "
-      "oder Stichwort <i>location-ok</i> vergeben, wenn der Ort unbekannt ist.</div>")
+      "oder Stichwort <i>ort-egal</i> vergeben, wenn der Ort unbekannt ist.</div>")
     if not rows:
-        w("<div class='none'>Alle Bilder haben GPS oder location-ok.</div>")
+        w("<div class='none'>Alle Bilder haben GPS oder ort-egal.</div>")
         return
     w("<details open><summary><span class='t'>Ordner mit Bildern ohne GPS</span></summary><div class='inner'>"
       "<table class='gpstab'>"
@@ -543,7 +543,7 @@ def gps_section(w, info, tl_info):
       "<th class='sort num' onclick='sortTable(this)'>davon Zeitachse</th>"
       "<th class='sort num' onclick='sortTable(this)'>davon Foto mit GPS</th>"
       "<th class='sort num' onclick='sortTable(this)'>+ über Lücke</th>"
-      "<th class='sort num' onclick='sortTable(this)'>location-ok</th>"
+      "<th class='sort num' onclick='sortTable(this)'>ort-egal</th>"
       "<th class='sort' onclick='sortTable(this)'>Vorschlag</th></tr>")
     for rel, st in sorted(rows, key=lambda x: (-x[1]["reach"] - x[1]["reach_gap"], -x[1]["nogps"], x[0].casefold())):
         name = rel.split("/")[-1] if rel else ""
@@ -553,7 +553,7 @@ def gps_section(w, info, tl_info):
         elif n:
             advice = f"gps_test.bat mit „{name}“, Rest von Hand"
         else:
-            advice = "von Hand auf die Karte oder location-ok"
+            advice = "von Hand auf die Karte oder ort-egal"
         w(f"<tr><td>{esc(show(rel))}</td>{num(st['nogps'], True)}{num(st['reach'])}{num(st['reach_tl'])}"
           f"{num(st['reach_photo'])}{num(st['reach_gap'])}{num(st['gpsok'])}<td>{esc(advice)}</td></tr>")
     w("</table></div></details>")
@@ -583,7 +583,7 @@ def build_page(cfg, catalog_path, c, tasks, hidden_not_imported, info, tl_info, 
     w(f"<div class='card'><b>{fmt(tot['suggested'])}</b><span>Gesichter mit Namensvorschlag, noch nicht bestätigt"
       "</span></div>")
     w(f"<div class='card'><b class='muted'>{fmt(tot['unnamed'])}</b><span>Gesichter ohne Namen (oft Fremde)</span></div>")
-    w(f"<div class='card'><b>{fmt(tot['nogps'])}</b><span>Bilder ohne GPS (ohne location-ok), davon "
+    w(f"<div class='card'><b>{fmt(tot['nogps'])}</b><span>Bilder ohne GPS (ohne ort-egal), davon "
       f"{fmt(tot['reach'] + tot['reach_gap'])} mit Spur – siehe „GPS nachtragen“</span></div>")
     w(f"<div class='card'><b class='muted'>{fmt(tot['nocity'])}</b><span>Bilder mit GPS, aber ohne Stadt</span></div>")
     w(f"<div class='card'><b class='muted'>{fmt(len(dup_groups))}</b><span>Stichwörter doppelt</span></div>")
@@ -651,7 +651,7 @@ def build_page(cfg, catalog_path, c, tasks, hidden_not_imported, info, tl_info, 
       "<th class='sort num' onclick='sortTable(this)'>Gesichter ohne Namen</th>"
       "<th class='sort num' onclick='sortTable(this)'>bestätigt</th>"
       "<th class='sort num' onclick='sortTable(this)'>ohne Gesichtserkennung</th>"
-      "<th class='sort num' onclick='sortTable(this)'>ohne GPS (ohne location-ok)</th>"
+      "<th class='sort num' onclick='sortTable(this)'>ohne GPS (ohne ort-egal)</th>"
       "<th class='sort num' onclick='sortTable(this)'>GPS ohne Stadt</th></tr>")
     for rel, st in sorted(info.items(), key=lambda x: (-x[1]["suggested"], x[0].casefold())):
         w(f"<tr><td>{esc(show(rel))}</td>{num(st['n'])}{num(st['suggested'], bool(st['suggested']))}"
@@ -737,7 +737,7 @@ def main():
         print(f"  {n:6}  {kind}")
     print(f"Stichwoerter doppelt: {len(dup_groups)}")
     tot = sum(info.values(), Counter())
-    print(f"Ohne GPS (ohne location-ok): {tot['nogps']}, davon mit Spur <= 1 h: {tot['reach']}, "
+    print(f"Ohne GPS (ohne ort-egal): {tot['nogps']}, davon mit Spur <= 1 h: {tot['reach']}, "
           f"dazu ueber gefuellte Luecken: {tot['reach_gap']}")
     print(f"\nErgebnis: {OUT_FILE}")
     if not U.open_in_browser(OUT_FILE):
