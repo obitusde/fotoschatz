@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.15 · 03.10.2026 (Sterne ★ wichtig / ★★ Lieblingsbild, Merker `ort-egal`/`personen-egal`, v0.6.29; davor v0.6.28 `personen_pruefen`)
+**Dokumentversion:** v3.16 · 04.10.2026 (Sync fragt bei vielen Löschungen nach statt abzubrechen, v0.6.31; davor v0.6.29 Sterne/Merker)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -270,7 +270,7 @@ Ohne Datei gelten diese Standardwerte:
 8. **`index.json` komplett neu bauen** aus `state.json` (schnell, da gecacht).
 9. **Sicherheitsprüfungen vor dem Upload:**
    - Export-Ordner leer oder nicht gefunden → **Abbruch**.
-   - Mehr als `max_delete` Löschungen → **Abbruch** mit Hinweis (Schutz vor versehentlichem Leeren des Buckets).
+   - Mehr als `max_delete` Löschungen → **Rückfrage** (seit v0.6.31, vorher Abbruch): zeigt Anzahl und 10 Beispiele, fragt „j/n“; nur bei „j“ geht es weiter (dann gilt die Zahl auch für `rclone --max-delete` in diesem Lauf), sonst Abbruch ohne Änderung; ohne Konsolenfenster Abbruch; im Probelauf nur Anzeige. Anlass 04.10.2026: erster großer Sync (3.291 Bilder) wollte die 140 alten Testbilder mit alten Dateinamen löschen und brach ab.
    - Präfix fehlt, enthält andere Zeichen als `[A-Za-z0-9]` (Leerzeichen am Rand werden entfernt), oder ist kürzer als 32 Zeichen → **Abbruch**.
    - Defektes Bild (Vorschaubild lässt sich nicht erzeugen) → SCHWER, nur dieses Bild wird ausgelassen.
    - Option `--dry-run`: zeigt nur an, was passieren würde.

@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.6.29"
+__version__ = "0.6.31"
 
 import argparse
 import csv
@@ -326,6 +326,26 @@ def upload(cfg, prefix, staging):
                             "--max-delete", str(cfg["max_delete"])] + common, f"abgleichen: {sub}/")
 
 
+def confirm_deletions(removed, limit, dry):
+    """Mehr Loeschungen als max_delete: Beispiele zeigen und nachfragen (v0.6.31, statt Abbruch).
+    Schutz vor einem leeren oder falschen Export-Ordner bleibt: ohne "j" wird nichts geaendert."""
+    log(f"\nACHTUNG: {len(removed)} Bilder wuerden online geloescht (Schutzgrenze max_delete = {limit}).")
+    log("Sie waren beim letzten Sync dabei und fehlen jetzt im Export-Ordner, z. B.:")
+    for name in removed[:10]:
+        log(f"  - {name}")
+    if len(removed) > 10:
+        log(f"  ... und {len(removed) - 10} weitere")
+    if dry:
+        log("Probelauf: beim echten Lauf (sync.bat) wird hier nachgefragt.")
+        return
+    if not (sys.stdin and sys.stdin.isatty()):
+        fail("Keine Rueckfrage moeglich (kein Konsolenfenster). Bitte sync.bat per Doppelklick starten.")
+    answer = input("Ist der Export-Ordner vollstaendig und sollen diese Bilder online geloescht werden? (j/n): ")
+    if answer.strip().lower() not in ("j", "ja", "y", "yes"):
+        fail("Abgebrochen - es wurde nichts hochgeladen und nichts geloescht.")
+    log(f"OK - {len(removed)} Bilder werden online entfernt.")
+
+
 # ---------------------------------------------------------------- Hauptablauf
 
 def main():
@@ -391,8 +411,8 @@ def main():
         f"  unveraendert: {counts['unveraendert']}  entfernt: {len(removed)}")
 
     if len(removed) > cfg["max_delete"]:
-        fail(f"{len(removed)} Bilder wuerden online geloescht (Grenze max_delete = {cfg['max_delete']}). "
-             "Ist der Export-Ordner vollstaendig? Falls gewollt: max_delete in config.local.json erhoehen.")
+        confirm_deletions(removed, cfg["max_delete"], dry)
+        cfg["max_delete"] = len(removed)      # nur fuer diesen Lauf (auch fuer rclone --max-delete)
 
     # 3. Metadaten der neuen/geaenderten (und der SCHWER-Bilder fuer die Tabelle)
     exif_paths = [t[0] for t in to_process] + to_refresh + severe_paths
