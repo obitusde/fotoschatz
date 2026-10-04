@@ -1,12 +1,12 @@
 "use strict";
 
-const APP_VERSION = "0.6.33";
+const APP_VERSION = "0.6.34";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
 const INFO_KEY = "fotoschatz.info";
 const INSTALL_KEY = "fotoschatz.install-hidden";
-const ORDER_KEY = "fotoschatz.search-order";   // Suchergebnisse: "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
+const ORDER_KEY = "fotoschatz.order";   // Suche und Alle Bilder: "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
 const HEADER_H = 44;
 const GAP = 2;
 const MAX_ZOOM = 4;
@@ -180,7 +180,16 @@ function prepare(index) {
 
 /* ---------------------------------------------------------------- Kopfzeile & Leiste */
 
+const oldestFirst = () => readPref(ORDER_KEY) !== "desc";
+const orderLabel = () => (oldestFirst() ? "⇅ älteste zuerst" : "⇅ neueste zuerst");
+
+function toggleOrder() {
+  writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
+}
+
 function setHeader(title, subtitle = "", back = false) {
+  const order = $("#order");
+  if (order) order.hidden = true;
   $("#title").textContent = title;
   $("#subtitle").textContent = subtitle;
   $("#back").hidden = !back;
@@ -901,16 +910,15 @@ function mountSearch(main, state, m) {
   main.append(bar, body, results);
 
   const hasFilter = () => s.keys.length > 0 || words(s.text).length > 0;
-  const oldestFirst = () => readPref(ORDER_KEY) !== "desc";
 
-  // Kleiner Umschalter im Raster: aelteste / neueste zuerst (wird gemerkt)
+  // Kleiner Umschalter im Raster: aelteste / neueste zuerst (gemerkt, gilt auch fuer Alle Bilder)
   function renderOrder() {
     order.hidden = s.mode !== "results";
-    order.textContent = oldestFirst() ? "⇅ älteste zuerst" : "⇅ neueste zuerst";
+    order.textContent = orderLabel();
     order.title = "Reihenfolge umdrehen";
   }
   order.addEventListener("click", () => {
-    writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
+    toggleOrder();
     renderOrder();
     renderResults();
   });
@@ -1174,7 +1182,8 @@ function mountSearch(main, state, m) {
 let mounted = null;
 const scrollMemory = new Map();
 
-const viewKey = (s) => (s.v === "folder" ? `folder:${s.f}` : s.v);
+// Alle Bilder: je Reihenfolge eigene Scroll-Position (sonst passt sie nach dem Umschalten nicht)
+const viewKey = (s) => (s.v === "folder" ? `folder:${s.f}` : s.v === "all" ? `all:${oldestFirst() ? "asc" : "desc"}` : s.v);
 
 function mountView(state) {
   const key = viewKey(state);
@@ -1200,7 +1209,10 @@ function mountView(state) {
     m.grid = new Grid(main, m.list);
   } else if (state.v === "all") {
     setHeader("Alle Bilder", countLabel(DATA.photos.length));
-    m.list = DATA.allDesc;
+    const order = $("#order");
+    order.textContent = orderLabel();
+    order.hidden = false;
+    m.list = oldestFirst() ? DATA.photos : DATA.allDesc;
     const monthOf = (p) => fmtMonth.format(parseLocal(p.t));
     m.grid = new Grid(main, m.list, monthOf, (month) => {
       $("#subtitle").textContent = month || countLabel(DATA.photos.length);
@@ -1331,6 +1343,15 @@ async function start() {
   registerServiceWorker();
   Viewer.init();
   $("#back").addEventListener("click", () => history.back());
+  // Umschalter in der Kopfzeile von Alle Bilder: Reihenfolge umdrehen, oben neu beginnen
+  $("#order").addEventListener("click", () => {
+    toggleOrder();
+    if (!mounted || !mounted.key.startsWith("all:")) return;
+    if (mounted.grid) mounted.grid.destroy();
+    mounted = null;
+    scrollMemory.delete(viewKey({ v: "all" }));
+    mountView({ v: "all" });
+  });
   for (const btn of document.querySelectorAll("#nav button")) {
     btn.addEventListener("click", () => switchTab(btn.dataset.view));
   }

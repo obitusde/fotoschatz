@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.18 · 04.10.2026 (Suchergebnisse älteste zuerst mit Jahresüberschriften und Umschalter, v0.6.33; davor v0.6.32 Sync-Ausgabe erklärt)
+**Dokumentversion:** v3.19 · 04.10.2026 (Alle Bilder und Suche älteste zuerst mit Umschalter, v0.6.34; davor v0.6.32 Sync-Ausgabe erklärt)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -480,7 +480,7 @@ Ohne Datei gelten diese Standardwerte:
    - **Reine Textliste, keine Titelbilder** (bewusst so entschieden – nichts zu pflegen, nichts zufällig).
    - Jahre absteigend (Überschrift mit Anzahl bleibt beim Scrollen oben), darunter die Ordner neueste zuerst: Name ohne Datumspräfix, darunter Datum · Anzahl; „Weitere Bilder" am Ende des Jahres.
    - Fußzeile: Anzahl Bilder · Stand des Index · App-Version.
-2. **Alle Bilder:** Zeitleiste, neueste zuerst, gruppiert nach Monat; der aktuelle Monat steht im Untertitel der Kopfzeile.
+2. **Alle Bilder:** Zeitleiste, gruppiert nach Monat; der aktuelle Monat steht im Untertitel der Kopfzeile. **Seit v0.6.34 älteste zuerst** (Wunsch 04.10.2026), Umschalter „⇅ älteste zuerst / neueste zuerst“ klein rechts in der Kopfzeile (nur in dieser Ansicht); Umschalten beginnt oben. Rechts tippen im Betrachter = nächstes Bild im Raster.
 3. **Ordnerinhalt:** Raster nach Aufnahmezeit sortiert.
 4. **Suche** (v0.5.0, umgebaut v0.6.0):
    - **Zwei Modi:** *Auswahl* (Begriffe wählen, keine Bilder) und *Raster*. Unter dem Suchfeld steht immer die Zahl der passenden Bilder („40 Bilder passen“) und der Knopf **Anzeigen** (bzw. Enter). Anzeigen legt einen Verlaufseintrag an: Zurück-Taste / „Ändern“ führt vom Raster zur Auswahl. Suchfeld oder Chip im Raster antippen → zurück zur Auswahl (Chip wird dabei entfernt). Aus dem Betrachter zurück → Raster.
@@ -491,7 +491,7 @@ Ohne Datei gelten diese Standardwerte:
    - **Beim Tippen:** Vorschläge gruppiert nach Personen, Orten (mit Lage, z. B. „Nürnberg – Bayern, Deutschland“), Ordnern (mit Datum), Jahren, Stichwörtern, jeweils mit Anzahl; Gruppe mit exaktem Treffer oben. Erste Zeile „Freitext … übernehmen“: alle Wörter müssen vorkommen in Beschreibung, Orten (deutsch **und** englisch), Ordnername, Personen, Stichwörtern.
    - Gewählte Begriffe werden zu Chips und mit **UND** verknüpft (z. B. Person + Land + Jahr).
    - Groß-/Kleinschreibung, Akzente und Satzzeichen ignorieren (é→e, ä→a, ß→ss, „ile de france“ findet „Île-de-France“).
-   - Ergebnis als Raster, **älteste zuerst** (Wunsch 04.10.2026, v0.6.33), mit **Überschrift je Jahr** („2006 · 39 Bilder“); das Jahr oben im Bild steht im Untertitel der Kopfzeile. Kleiner Umschalter „⇅ älteste zuerst / neueste zuerst“ neben der Trefferzahl (nur im Raster), wird gemerkt (`fotoschatz.search-order`, Standard älteste zuerst). Der Betrachter blättert in derselben Reihenfolge: rechts tippen = nächstes Bild im Raster (bei „älteste zuerst“ das nächst neuere), links = zurück. In der Cloud im Browser getestet (hell/dunkel, Umschalter, Neuladen, Tippen). Chips und Text bleiben beim Tab-Wechsel erhalten.
+   - Ergebnis als Raster, **älteste zuerst** (Wunsch 04.10.2026, v0.6.33), mit **Überschrift je Jahr** („2006 · 39 Bilder“); das Jahr oben im Bild steht im Untertitel der Kopfzeile. Kleiner Umschalter „⇅ älteste zuerst / neueste zuerst“ neben der Trefferzahl (nur im Raster), wird gemerkt – **eine gemeinsame Einstellung für Suche und Alle Bilder** (`fotoschatz.order`, Standard älteste zuerst, v0.6.34). Scroll-Position von Alle Bilder wird je Reihenfolge getrennt gemerkt. Der Betrachter blättert in derselben Reihenfolge: rechts tippen = nächstes Bild im Raster (bei „älteste zuerst“ das nächst neuere), links = zurück. In der Cloud im Browser getestet (hell/dunkel, Umschalter, Neuladen, Tippen). Chips und Text bleiben beim Tab-Wechsel erhalten.
    - Gemessen mit 23.100 künstlichen Bildern: Aufbau einmalig ≈ 0,13 s, Vorschläge je Tastendruck ≈ 2 ms (Cloud-Rechner; Handy langsamer, aber unkritisch).
    - **Orte auf Deutsch** (in der App, nicht im Sync-Tool – Übersetzungen gehen ohne PC-Schritt live):
      - Länder automatisch über den Browser (`Intl.DisplayNames`, englisch → deutsch, plus einige Schreibvarianten wie „USA“, „Czech Republic“); nur auf das Feld Land angewendet.
