@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.17 · 04.10.2026 (Sync erklärt beim Ausführen jeden Schritt, eigene Fortschrittszeilen, v0.6.32; davor v0.6.31 Rückfrage bei vielen Löschungen)
+**Dokumentversion:** v3.18 · 04.10.2026 (Suchergebnisse älteste zuerst mit Jahresüberschriften und Umschalter, v0.6.33; davor v0.6.32 Sync-Ausgabe erklärt)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -491,7 +491,7 @@ Ohne Datei gelten diese Standardwerte:
    - **Beim Tippen:** Vorschläge gruppiert nach Personen, Orten (mit Lage, z. B. „Nürnberg – Bayern, Deutschland“), Ordnern (mit Datum), Jahren, Stichwörtern, jeweils mit Anzahl; Gruppe mit exaktem Treffer oben. Erste Zeile „Freitext … übernehmen“: alle Wörter müssen vorkommen in Beschreibung, Orten (deutsch **und** englisch), Ordnername, Personen, Stichwörtern.
    - Gewählte Begriffe werden zu Chips und mit **UND** verknüpft (z. B. Person + Land + Jahr).
    - Groß-/Kleinschreibung, Akzente und Satzzeichen ignorieren (é→e, ä→a, ß→ss, „ile de france“ findet „Île-de-France“).
-   - Ergebnis als Raster, neueste zuerst. Chips und Text bleiben beim Tab-Wechsel erhalten.
+   - Ergebnis als Raster, **älteste zuerst** (Wunsch 04.10.2026, v0.6.33), mit **Überschrift je Jahr** („2006 · 39 Bilder“); das Jahr oben im Bild steht im Untertitel der Kopfzeile. Kleiner Umschalter „⇅ älteste zuerst / neueste zuerst“ neben der Trefferzahl (nur im Raster), wird gemerkt (`fotoschatz.search-order`, Standard älteste zuerst). Der Betrachter blättert in derselben Reihenfolge: rechts tippen = nächstes Bild im Raster (bei „älteste zuerst“ das nächst neuere), links = zurück. In der Cloud im Browser getestet (hell/dunkel, Umschalter, Neuladen, Tippen). Chips und Text bleiben beim Tab-Wechsel erhalten.
    - Gemessen mit 23.100 künstlichen Bildern: Aufbau einmalig ≈ 0,13 s, Vorschläge je Tastendruck ≈ 2 ms (Cloud-Rechner; Handy langsamer, aber unkritisch).
    - **Orte auf Deutsch** (in der App, nicht im Sync-Tool – Übersetzungen gehen ohne PC-Schritt live):
      - Länder automatisch über den Browser (`Intl.DisplayNames`, englisch → deutsch, plus einige Schreibvarianten wie „USA“, „Czech Republic“); nur auf das Feld Land angewendet.

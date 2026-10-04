@@ -225,7 +225,15 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
   margin: 8px auto 0;
   padding: 0 4px;
 }
-.search-count { font-size: .9rem; color: var(--muted); }
+.search-count { flex: 1; font-size: .9rem; color: var(--muted); }
+.search-order {
+  flex: none;
+  padding: 6px 8px;
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: .8rem;
+}
+.search-order:hover { color: inherit; background: var(--surface); }
 .search-action {
   flex: none;
   padding: 7px 18px;

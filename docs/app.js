@@ -1,11 +1,12 @@
 "use strict";
 
-const APP_VERSION = "0.6.32";
+const APP_VERSION = "0.6.33";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
 const INFO_KEY = "fotoschatz.info";
 const INSTALL_KEY = "fotoschatz.install-hidden";
+const ORDER_KEY = "fotoschatz.search-order";   // Suchergebnisse: "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
 const HEADER_H = 44;
 const GAP = 2;
 const MAX_ZOOM = 4;
@@ -889,16 +890,30 @@ function mountSearch(main, state, m) {
   });
   const clear = el("button", { type: "button", class: "icon-btn search-clear", "aria-label": "Eingabe löschen" }, svgNode(ICON_X));
   const countText = el("span", { class: "search-count" });
+  const order = el("button", { type: "button", class: "search-order", hidden: true });
   const action = el("button", { type: "button", class: "search-action" });
   const bar = el("div", { class: "search-bar" },
     chips,
     el("div", { class: "search-field" }, svgNode(ICON_SEARCH), input, clear),
-    el("div", { class: "search-status" }, countText, action));
+    el("div", { class: "search-status" }, countText, order, action));
   const body = el("div", { class: "search-body" });
   const results = el("div", { class: "search-results" });
   main.append(bar, body, results);
 
   const hasFilter = () => s.keys.length > 0 || words(s.text).length > 0;
+  const oldestFirst = () => readPref(ORDER_KEY) !== "desc";
+
+  // Kleiner Umschalter im Raster: aelteste / neueste zuerst (wird gemerkt)
+  function renderOrder() {
+    order.hidden = s.mode !== "results";
+    order.textContent = oldestFirst() ? "⇅ älteste zuerst" : "⇅ neueste zuerst";
+    order.title = "Reihenfolge umdrehen";
+  }
+  order.addEventListener("click", () => {
+    writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
+    renderOrder();
+    renderResults();
+  });
 
   // Aenderungen im Raster-Modus: erst zur Auswahl zurueck (Verlauf), dann ausfuehren
   const edit = (fn) => {
@@ -1057,9 +1072,12 @@ function mountSearch(main, state, m) {
   }
 
   function renderResults() {
-    const signature = JSON.stringify([s.keys, words(s.text)]);
+    const signature = JSON.stringify([s.keys, words(s.text), oldestFirst()]);
     if (signature === s.shown) {
-      if (m.grid) m.grid.render();
+      if (m.grid) {
+        m.grid.render();
+        $("#subtitle").textContent = m.grid.lastSection || "";
+      }
       return;
     }
     s.shown = signature;
@@ -1068,9 +1086,19 @@ function mountSearch(main, state, m) {
     results.replaceChildren();
     const pos = searchPositions(s.keys, s.text) || [];
     m.list = pos.map((i) => DATA.allDesc[i]);
+    if (oldestFirst()) m.list.reverse();
     window.scrollTo(0, 0);
-    if (m.list.length) m.grid = new Grid(results, m.list);
-    else results.append(el("p", { class: "center muted", text: "Keine Bilder gefunden." }));
+    if (!m.list.length) {
+      results.append(el("p", { class: "center muted", text: "Keine Bilder gefunden." }));
+      return;
+    }
+    // Ueberschrift je Jahr; das Jahr oben im Bild steht im Untertitel der Kopfzeile
+    const perYear = new Map();
+    for (const p of m.list) perYear.set(p.t.slice(0, 4), (perYear.get(p.t.slice(0, 4)) || 0) + 1);
+    const yearOf = (p) => `${p.t.slice(0, 4)} · ${countLabel(perYear.get(p.t.slice(0, 4)))}`;
+    m.grid = new Grid(results, m.list, yearOf, (year) => {
+      if (s.mode === "results") $("#subtitle").textContent = year || "";
+    });
   }
 
   function update() {
@@ -1079,6 +1107,7 @@ function mountSearch(main, state, m) {
     renderChips();
     const pos = searchPositions(s.keys, s.text);
     renderStatus(pos);
+    renderOrder();
     if (s.mode === "results") {
       $("#subtitle").textContent = "";
       body.replaceChildren();
