@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.16 · 04.10.2026 (Sync fragt bei vielen Löschungen nach statt abzubrechen, v0.6.31; davor v0.6.29 Sterne/Merker)
+**Dokumentversion:** v3.17 · 04.10.2026 (Sync erklärt beim Ausführen jeden Schritt, eigene Fortschrittszeilen, v0.6.32; davor v0.6.31 Rückfrage bei vielen Löschungen)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -281,6 +281,7 @@ Ohne Datei gelten diese Standardwerte:
     - Nur wenn sich etwas geändert hat oder ein früherer Upload fehlschlug (`upload_pending`). Bei rclone-Fehler Abbruch; der nächste Lauf wiederholt den Upload.
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
+12. **Ausgabe beim Ausführen (v0.6.32, Wunsch 04.10.2026: „soll beim Ausführen kurz erklärt werden“):** oben 3 Zeilen, was Sync macht („online ist danach genau das, was im Export-Ordner liegt“); dann 6 Schritte `[1/6]`…`[6/6]` mit je einem Satz Erklärung (Exporte vergleichen · Infos lesen · Vorschaubilder · Prüfliste · Inhaltsverzeichnis · Hochladen a/b/c). Fortschritt als **eine Zeile, die sich im Konsolenfenster selbst überschreibt** (Anzahl, %, vergangen, Restzeit; ohne Konsole höchstens alle 30 s eine Zeile), ins Protokoll kommt nur das Ergebnis. rclone läuft mit `--use-json-log --stats 2s --stats-log-level NOTICE`; aus den Statistiken entsteht eine deutsche Zeile („große Bilder: 2.374 von 3.291 (72 %) · 1,3 GB von 1,8 GB · 10 MB/s · noch ca. 1 min“), Fehlermeldungen von rclone werden mit unkenntlichem Präfix gezeigt. Zusammenfassung: „Online jetzt: … Bilder in … Ordnern“, dieser Lauf, nicht hochgeladen, mit Hinweis, Pfad zu `korrekturen.csv`. In der Cloud getestet (Konsole per `script` und ohne Konsole, gedrosselter Upload, rclone-Fehler, Rückfrage mit „j“, Lauf ohne Änderungen; Protokoll ohne Präfix).
 
 ### Übersichts-Tool `uebersicht.py` (v0.6.4, erweitert v0.6.6–v0.6.10; v0.6.11: Ordner-Vorschläge wieder entfernt – „nicht gut“, Entscheidung 29.09.2026)
 - Vergleicht **Originale** (`originals_dir`, Standard `D:\Bilder - Raw`, nur Verzeichnislisten), **Exporte** (`export_dir`) und **online** (`work\state.json`: Datei unverändert seit dem letzten Sync und kein `upload_pending`).

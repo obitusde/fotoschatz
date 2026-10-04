@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.6.31"
+__version__ = "0.6.32"
 
 import argparse
 import csv
@@ -73,6 +73,119 @@ def fail(text):
 
 def write_log():
     LOG_FILE.write_text("\n".join(_log_lines) + "\n", encoding="utf-8")
+
+
+def step(no, text):
+    """Ueberschrift eines Arbeitsschritts mit kurzer Erklaerung (v0.6.32)."""
+    log("")
+    log(f"[{no}/6] {text}")
+
+
+# ---------------------------------------------------------------- Fortschritt (v0.6.32)
+
+def num(n):
+    """3291 -> 3.291"""
+    return f"{n:,}".replace(",", ".")
+
+
+def bilder(n):
+    """1 -> 1 Bild, 3291 -> 3.291 Bilder"""
+    return f"{num(n)} Bild" if n == 1 else f"{num(n)} Bilder"
+
+
+def size_text(b):
+    if b >= 1024 ** 3:
+        return f"{b / 1024 ** 3:.1f} GB".replace(".", ",")
+    if b >= 1024 ** 2:
+        return f"{b / 1024 ** 2:.0f} MB"
+    return f"{max(1, round(b / 1024))} KB" if b else "0 KB"
+
+
+def clock(seconds):
+    """Dauer als m:ss bzw. h:mm:ss"""
+    seconds = int(seconds)
+    h, rest = divmod(seconds, 3600)
+    m, s = divmod(rest, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def remaining(seconds):
+    if seconds < 60:
+        return "unter 1 min"
+    if seconds < 3600:
+        return f"ca. {round(seconds / 60)} min"
+    h, m = divmod(round(seconds / 60), 60)
+    return f"ca. {h} h {m:02d} min"
+
+
+class LiveLine:
+    """Eine Zeile, die sich im Konsolenfenster laufend selbst ueberschreibt.
+    Ins Protokoll (letzter_lauf.txt) kommt nur das Endergebnis. Ohne Konsole: hoechstens alle 30 s eine Zeile."""
+
+    def __init__(self):
+        self.live = sys.stdout.isatty()
+        self.width = 0
+        self.last = time.time()      # kurze Schritte zeigen gar keine Zwischenzeile
+
+    def due(self):
+        """True, wenn die Zeile wieder erneuert werden darf (Konsole: alle 0,5 s, sonst alle 30 s)."""
+        now = time.time()
+        if now - self.last < (0.5 if self.live else 30):
+            return False
+        self.last = now
+        return True
+
+    def show(self, text):
+        if not self.due():
+            return
+        self.write(text)
+
+    def write(self, text):
+        if not self.live:
+            print(text, flush=True)
+            return
+        cols = shutil.get_terminal_size((100, 25)).columns - 1
+        text = text[:cols]
+        sys.stdout.write("\r" + text.ljust(self.width))
+        sys.stdout.flush()
+        self.width = max(self.width, len(text))
+
+    def clear(self):
+        if self.live and self.width:
+            sys.stdout.write("\r" + " " * self.width + "\r")
+            sys.stdout.flush()
+        self.width = 0
+
+    def finish(self, text):
+        self.clear()
+        log(text)
+
+
+class Progress:
+    """Fortschritt mit Anzahl, Prozent, vergangener und geschaetzter Restzeit."""
+
+    def __init__(self, label, total):
+        self.label, self.total = label, total
+        self.start = time.time()
+        self.line = LiveLine()
+
+    def update(self, done):
+        if not self.line.due():
+            return
+        elapsed = time.time() - self.start
+        pct = done * 100 // max(self.total, 1)
+        text = f"    {self.label}: {num(done)} von {num(self.total)} ({pct} %) · {clock(elapsed)} vergangen"
+        if 0 < done < self.total and elapsed >= 3:
+            text += f" · noch {remaining(elapsed / done * (self.total - done))}"
+        self.line.write(text)
+
+    def finish(self, text=None):
+        if text is None:
+            text = f"    {self.label}: {bilder(self.total)} in {clock(time.time() - self.start)}"
+        self.line.finish(text)
+
+    def close(self):
+        self.line.clear()
 
 
 # ---------------------------------------------------------------- Einstellungen
@@ -298,52 +411,118 @@ def write_places_file(records):
 
 # ---------------------------------------------------------------- Upload
 
-def run_rclone(rclone, args, label):
-    log(f"  > {label}")
-    result = subprocess.run([rclone] + args)
-    if result.returncode != 0:
-        fail(f"rclone meldet Fehler (Code {result.returncode}). Nichts ist verloren - "
-             "beim naechsten Lauf wird der Upload wiederholt.")
+RCLONE_STATS = ["--use-json-log", "--stats", "2s", "--stats-log-level", "NOTICE"]
+
+
+def rclone_line(label, st, kind):
+    """Eigene deutsche Fortschrittszeile aus den rclone-Statistiken."""
+    done, total = st.get("transfers", 0), st.get("totalTransfers", 0)
+    if kind == "sync" and not total:
+        return f"    {label}: {num(st.get('deletes', 0))} gelöscht · {num(st.get('checks', 0))} Dateien geprüft"
+    if not total:
+        return f"    {label}: prüfe, was schon online ist ({num(st.get('checks', 0))} Dateien)"
+    b, tb = st.get("bytes", 0), st.get("totalBytes", 0)
+    pct = b * 100 // tb if tb else done * 100 // total
+    text = f"    {label}: {num(done)} von {num(total)} ({pct} %) · {size_text(b)} von {size_text(tb)}"
+    speed = st.get("speed") or 0
+    if speed >= 1024 ** 2:
+        text += f" · {speed / 1024 ** 2:.0f} MB/s"
+    elif speed:
+        text += " · unter 1 MB/s"
+    if st.get("eta") is not None and done < total:
+        text += f" · noch {remaining(st['eta'])}"
+    return text
+
+
+def rclone_done(label, st, kind, seconds):
+    done, deletes = st.get("transfers", 0), st.get("deletes", 0)
+    if kind == "index":
+        return f"    {label} hochgeladen – ab jetzt zeigt die App den neuen Stand"
+    parts = []
+    if done:
+        parts.append(f"{num(done)} hochgeladen ({size_text(st.get('bytes', 0))})")
+    if kind == "sync":
+        parts.append(f"{num(deletes)} gelöscht" if deletes else "nichts zu löschen")
+    if not parts:
+        parts.append("nichts Neues – alles schon online")
+    return f"    {label}: {', '.join(parts)} · in {clock(seconds)}"
+
+
+def run_rclone(rclone, args, label, kind, prefix):
+    """rclone starten. Statt der englischen rclone-Ausgabe erscheint eine deutsche Fortschrittszeile;
+    Fehlermeldungen von rclone werden gezeigt (Praefix unkenntlich gemacht)."""
+    started = time.time()
+    line = LiveLine()
+    stats = {}
+    proc = subprocess.Popen([rclone] + args + RCLONE_STATS, stderr=subprocess.PIPE,
+                            encoding="utf-8", errors="replace")
+    for raw in proc.stderr:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            entry = {"level": "error", "msg": raw}
+        if "stats" in entry:
+            stats = entry["stats"]
+            line.show(rclone_line(label, stats, kind))
+            continue
+        msg = str(entry.get("msg", "")).strip()
+        if not msg or "Config file" in msg and "not found" in msg:
+            continue
+        if entry.get("object"):
+            msg = f"{entry['object']}: {msg}"
+        line.clear()
+        log(f"    rclone meldet: {msg.replace(prefix, '<Praefix>')}")
+    proc.wait()
+    if proc.returncode != 0:
+        line.clear()
+        fail(f"rclone meldet Fehler (Code {proc.returncode}), siehe Meldungen oben. Nichts ist verloren - "
+             "beim nächsten Lauf wird der Upload wiederholt.")
+    line.finish(rclone_done(label, stats, kind, time.time() - started))
 
 
 def upload(cfg, prefix, staging):
     rclone = regeln.find_tool("rclone", "Installieren mit: winget install Rclone.Rclone")
     remote = f"{cfg['rclone_remote']}/{prefix}"
-    common = ["--size-only", "--transfers", str(cfg["transfers"]), "--checkers", "16",
-              "--stats", "5s", "--stats-one-line", "-P"]
+    common = ["--size-only", "--transfers", str(cfg["transfers"]), "--checkers", "16"]
+    names = {"img": "große Bilder", "thumb": "Vorschaubilder"}
 
-    log("Upload 1/3: neue Bilder und Vorschaubilder")
+    log("    a) Neue Bilder hochladen (was schon online ist, wird übersprungen)")
     for sub in ("img", "thumb"):
         run_rclone(rclone, ["copy", str(staging / sub), f"{remote}/{sub}",
-                            "--header-upload", CACHE_IMMUTABLE] + common, f"hochladen: {sub}/")
-    log("Upload 2/3: index.json")
+                            "--header-upload", CACHE_IMMUTABLE] + common, names[sub], "copy", prefix)
+    log("    b) Inhaltsverzeichnis hochladen")
     run_rclone(rclone, ["copyto", str(staging / "index.json"), f"{remote}/index.json",
-                        "--header-upload", CACHE_NO_CACHE, "--ignore-times"], "hochladen: index.json")
-    log("Upload 3/3: alte Dateien online entfernen")
+                        "--header-upload", CACHE_NO_CACHE, "--ignore-times"], "index.json", "index", prefix)
+    log("    c) Alte Dateien online löschen (Bilder, die nicht mehr im Export-Ordner sind, und alte Fassungen)")
     for sub in ("img", "thumb"):
         run_rclone(rclone, ["sync", str(staging / sub), f"{remote}/{sub}",
                             "--header-upload", CACHE_IMMUTABLE,
-                            "--max-delete", str(cfg["max_delete"])] + common, f"abgleichen: {sub}/")
+                            "--max-delete", str(cfg["max_delete"])] + common, names[sub], "sync", prefix)
 
 
 def confirm_deletions(removed, limit, dry):
     """Mehr Loeschungen als max_delete: Beispiele zeigen und nachfragen (v0.6.31, statt Abbruch).
     Schutz vor einem leeren oder falschen Export-Ordner bleibt: ohne "j" wird nichts geaendert."""
-    log(f"\nACHTUNG: {len(removed)} Bilder wuerden online geloescht (Schutzgrenze max_delete = {limit}).")
-    log("Sie waren beim letzten Sync dabei und fehlen jetzt im Export-Ordner, z. B.:")
+    log("")
+    log(f"    ACHTUNG: {bilder(len(removed))} würden online gelöscht (Schutzgrenze max_delete = {limit}).")
+    log("    Sie waren beim letzten Sync dabei und fehlen jetzt im Export-Ordner, z. B.:")
     for name in removed[:10]:
-        log(f"  - {name}")
+        log(f"      - {name}")
     if len(removed) > 10:
-        log(f"  ... und {len(removed) - 10} weitere")
+        log(f"      ... und {num(len(removed) - 10)} weitere")
+    log("    Hinweis: Im Export-Ordner müssen ALLE Exporte bleiben - was dort fehlt, wird auch online gelöscht.")
     if dry:
-        log("Probelauf: beim echten Lauf (sync.bat) wird hier nachgefragt.")
+        log("    Probelauf: beim echten Lauf (sync.bat) wird hier nachgefragt.")
         return
     if not (sys.stdin and sys.stdin.isatty()):
-        fail("Keine Rueckfrage moeglich (kein Konsolenfenster). Bitte sync.bat per Doppelklick starten.")
-    answer = input("Ist der Export-Ordner vollstaendig und sollen diese Bilder online geloescht werden? (j/n): ")
+        fail("Keine Rückfrage möglich (kein Konsolenfenster). Bitte sync.bat per Doppelklick starten.")
+    answer = input("    Ist der Export-Ordner vollständig und sollen diese Bilder online gelöscht werden? (j/n): ")
     if answer.strip().lower() not in ("j", "ja", "y", "yes"):
-        fail("Abgebrochen - es wurde nichts hochgeladen und nichts geloescht.")
-    log(f"OK - {len(removed)} Bilder werden online entfernt.")
+        fail("Abgebrochen - es wurde nichts hochgeladen und nichts gelöscht.")
+    log(f"    OK - {bilder(len(removed))} werden online entfernt.")
 
 
 # ---------------------------------------------------------------- Hauptablauf
@@ -356,17 +535,19 @@ def main():
     started = time.time()
     now = datetime.now()
 
-    log(f"Fotoschatz sync.py v{__version__}" + ("  --  PROBELAUF (--dry-run), es wird nichts veraendert" if dry else ""))
-    log(f"Start: {now:%Y-%m-%d %H:%M:%S}")
-
     cfg = load_config()
-    prefix = load_prefix(cfg["secrets_file"])
     export_dir = Path(cfg["export_dir"])
+    log(f"Fotoschatz Sync {__version__}  ({now:%d.%m.%Y %H:%M})"
+        + ("  --  PROBELAUF: zeigt nur an, ändert nichts" if dry else ""))
+    log(f"Bringt die Exporte aus {export_dir} in die Online-Galerie.")
+    log("Online ist danach genau das, was im Export-Ordner liegt: Neues kommt dazu,")
+    log("Geändertes wird ersetzt, was im Ordner fehlt, wird online gelöscht.")
+
+    prefix = load_prefix(cfg["secrets_file"])
     work_dir = Path(cfg["work_dir"])
     staging = work_dir / "staging"
     state_file = work_dir / "state.json"
-    log(f"Export-Ordner: {export_dir}")
-    log(f"Ziel:          {cfg['rclone_remote']}/<Praefix, {len(prefix)} Zeichen>/")
+    log(f"Ziel: {cfg['rclone_remote']}/<Präfix, {len(prefix)} Zeichen>/")
 
     if not export_dir.is_dir():
         fail(f"Export-Ordner nicht gefunden: {export_dir}")
@@ -378,17 +559,19 @@ def main():
     old_files = state["files"]
     first_run = not old_files
 
-    # 1. Dateinamen pruefen
+    # 1. Dateinamen pruefen und Aenderungen erkennen
+    step(1, "Exporte prüfen: Dateinamen lesen und mit dem letzten Lauf vergleichen")
     analyses = {p.name: regeln.analyze_name(p.name, now) for p in jpgs}
     ok_paths = [p for p in jpgs if not regeln.is_severe(analyses[p.name]["problems"])]
     severe_paths = [p for p in jpgs if regeln.is_severe(analyses[p.name]["problems"])]
 
-    # 2. Aenderungen erkennen
     new_files = {}
     to_process = []
     to_refresh = []
     counts = Counter()
-    for path in ok_paths:
+    progress = Progress("Exporte vergleichen", len(ok_paths))
+    for i, path in enumerate(ok_paths, 1):
+        progress.update(i)
         stat = path.stat()
         prev = old_files.get(path.name)
         unchanged = prev and prev["size"] == stat.st_size and prev["mtime_ns"] == stat.st_mtime_ns
@@ -404,25 +587,33 @@ def main():
                 to_refresh.append(path)
             continue
         to_process.append((path, sha, stat, "ersetzt" if prev else "neu"))
+    progress.close()
     removed = sorted(name for name in old_files if name not in {p.name for p in ok_paths})
+    n_new = sum(1 for t in to_process if t[3] == "neu")
+    n_repl = len(to_process) - n_new
 
-    log(f"Bilder im Export-Ordner: {len(jpgs)}  (davon SCHWER, werden nicht hochgeladen: {len(severe_paths)})")
-    log(f"neu: {sum(1 for t in to_process if t[3] == 'neu')}  ersetzt: {sum(1 for t in to_process if t[3] == 'ersetzt')}"
-        f"  unveraendert: {counts['unveraendert']}  entfernt: {len(removed)}")
+    log(f"    {num(len(jpgs))} Exporte im Ordner")
+    log(f"    {num(n_new)} neu · {num(n_repl)} geändert (werden ersetzt) · {num(counts['unveraendert'])} unverändert"
+        f" · {num(len(removed))} nicht mehr im Ordner (werden online gelöscht)")
+    if severe_paths:
+        log(f"    {num(len(severe_paths))} mit unbrauchbarem Dateinamen - werden nicht hochgeladen (siehe korrekturen.csv)")
+    if to_refresh:
+        log(f"    {num(len(to_refresh))} unveränderte Bilder: Infos werden neu gelesen (neues Format, kein neuer Bild-Upload)")
 
     if len(removed) > cfg["max_delete"]:
         confirm_deletions(removed, cfg["max_delete"], dry)
         cfg["max_delete"] = len(removed)      # nur fuer diesen Lauf (auch fuer rclone --max-delete)
 
-    # 3. Metadaten der neuen/geaenderten (und der SCHWER-Bilder fuer die Tabelle)
+    # 2. Metadaten der neuen/geaenderten (und der SCHWER-Bilder fuer die Tabelle)
+    step(2, "Infos aus den Bildern lesen (Personen, Ort, GPS, Beschreibung) - nur neue und geänderte")
     exif_paths = [t[0] for t in to_process] + to_refresh + severe_paths
     exif = {}
-    if to_refresh:
-        log(f"Metadaten-Format erneuert: {len(to_refresh)} vorhandene Bilder werden neu gelesen (kein Bild-Upload)")
     if exif_paths:
-        log(f"Metadaten lesen: {len(exif_paths)} Bilder ...")
-        exif = regeln.read_exif(exiftool, exif_paths,
-                                progress=lambda done, total: log(f"  {done}/{total}"))
+        progress = Progress("Infos lesen", len(exif_paths))
+        exif = regeln.read_exif(exiftool, exif_paths, progress=lambda done, total: progress.update(done))
+        progress.finish()
+    else:
+        log("    nichts zu tun")
     refreshed = 0
     for path in to_refresh:
         entry = exif.get(path.name)
@@ -430,12 +621,14 @@ def main():
             new_files[path.name] = dict(new_files[path.name], meta=regeln.extract_metadata(entry), mv=META_VERSION)
             refreshed += 1
 
-    # 4. Verarbeiten
+    # 3. Verarbeiten
+    step(3, "Vorschaubilder erstellen (kleine Bilder fürs Raster in der App), große Bilder bereitlegen")
     if not dry:
         for sub in ("img", "thumb"):
             (staging / sub).mkdir(parents=True, exist_ok=True)
     known_ids = {rec["id"]: name for name, rec in new_files.items()}
     unreadable = {}
+    progress = Progress("Vorschaubilder", len(to_process))
     for i, (path, sha, stat, status) in enumerate(to_process, 1):
         entry = exif.get(path.name)
         meta = regeln.extract_metadata(entry) if entry else {}
@@ -458,13 +651,21 @@ def main():
                 unreadable[path.name] = str(err)
                 analyses[path.name]["problems"].append((regeln.SCHWER, f"Bild nicht lesbar: {err}"))
                 continue
-            if i % 50 == 0 or i == len(to_process):
-                log(f"  verarbeitet {i}/{len(to_process)}")
+            progress.update(i)
         new_files[path.name] = rec
+    if dry:
+        log("    Probelauf: übersprungen")
+    elif to_process:
+        progress.finish()
+    else:
+        log("    nichts zu tun")
+    if unreadable:
+        log(f"    {bilder(len(unreadable))} nicht lesbar - werden nicht hochgeladen (siehe korrekturen.csv)")
     counts["neu"] = sum(1 for t in to_process if t[3] == "neu" and t[0].name not in unreadable)
     counts["ersetzt"] = sum(1 for t in to_process if t[3] == "ersetzt" and t[0].name not in unreadable)
 
-    # 5. Hinweise aus den Metadaten und neue Stichwoerter
+    # 4. Hinweise aus den Metadaten, neue Stichwoerter, Korrektur-Tabelle
+    step(4, "Prüfliste schreiben: was in Lightroom zu verbessern ist")
     keyword_counter = Counter()
     all_persons = set()
     for name, rec in new_files.items():
@@ -482,7 +683,6 @@ def main():
                     analyses[name]["problems"].append(
                         (regeln.HINWEIS, f"neues Stichwort '{kw}' - ggf. in ignore_keywords aufnehmen"))
 
-    # 6. Korrektur-Tabelle und Stichwortliste
     rows = []
     for path in jpgs:
         a = analyses[path.name]
@@ -498,23 +698,27 @@ def main():
     severe_total = sum(1 for p in jpgs if regeln.is_severe(analyses[p.name]["problems"]))
     hint_total = sum(1 for p in jpgs if analyses[p.name]["problems"]
                      and not regeln.is_severe(analyses[p.name]["problems"]))
+    log(f"    korrekturen.csv: {bilder(severe_total)} schwer (nicht hochgeladen),"
+        f" {num(hint_total)} mit Hinweis (trotzdem hochgeladen, z. B. ohne GPS)")
+    log("    stichwoerter.txt und orte.txt aktualisiert")
 
     if dry:
-        log("")
-        log("PROBELAUF beendet - nichts wurde veraendert.")
+        step(5, "Inhaltsverzeichnis für die App - im Probelauf übersprungen")
+        step(6, "Hochladen - im Probelauf übersprungen")
         if removed:
-            log("Wuerde online entfernen:")
+            log("    Würde online entfernen:")
             for name in removed[:20]:
-                log(f"  - {name}")
+                log(f"      - {name}")
             if len(removed) > 20:
-                log(f"  ... und {len(removed) - 20} weitere")
-        summary(counts, removed, severe_total, hint_total, rows, started, uploaded=False)
+                log(f"      ... und {num(len(removed) - 20)} weitere")
+        summary(counts, removed, severe_total, hint_total, rows, started, dry=True)
         return
 
     for name in unreadable:
         new_files.pop(name, None)
 
-    # 7. Staging aufraeumen und vervollstaendigen
+    # 5. Staging aufraeumen und vervollstaendigen, index.json
+    step(5, "Inhaltsverzeichnis für die App bauen (index.json: alle Bilder mit Datum, Ort, Personen)")
     img_keep, thumb_keep = set(), set()
     for name, rec in new_files.items():
         base = f"{rec['id']}.{rec['hash']}"
@@ -528,11 +732,10 @@ def main():
     clean_dir(staging / "img", img_keep)
     clean_dir(staging / "thumb", thumb_keep)
 
-    # 8. index.json
     index = build_index(new_files, analyses, cfg["ignore_keywords"])
     write_json_atomic(staging / "index.json", index, compact=True)
     index_kb = (staging / "index.json").stat().st_size / 1024
-    log(f"index.json: {index['count']} Bilder, {len(index['folders'])} Ordner, {index_kb:.0f} KB")
+    log(f"    {bilder(index['count'])} in {num(len(index['folders']))} Ordnern · {index_kb:,.0f} KB".replace(",", "."))
 
     changed = counts["neu"] or counts["ersetzt"] or removed or refreshed
     state = {
@@ -543,35 +746,39 @@ def main():
     }
     write_json_atomic(state_file, state)
 
-    # 9. Upload
+    # 6. Upload
     uploaded = False
     if state["upload_pending"]:
-        log("")
+        step(6, "Hochladen zu Cloudflare R2 (Online-Speicher der Galerie)")
         upload(cfg, prefix, staging)
         state["upload_pending"] = False
         write_json_atomic(state_file, state)
         uploaded = True
     else:
-        log("Keine Aenderungen - kein Upload noetig.")
+        step(6, "Hochladen - nicht nötig, online ist schon alles aktuell")
 
-    summary(counts, removed, severe_total, hint_total, rows, started, uploaded)
+    summary(counts, removed, severe_total, hint_total, rows, started, uploaded=uploaded, index=index)
 
 
-def summary(counts, removed, severe_total, hint_total, rows, started, uploaded):
+def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=False, dry=False, index=None):
     log("")
-    log("=== Zusammenfassung ===")
-    log(f"neu:          {counts['neu']}")
-    log(f"ersetzt:      {counts['ersetzt']}")
-    log(f"entfernt:     {len(removed)}")
-    log(f"unveraendert: {counts['unveraendert']}")
-    log(f"SCHWER (nicht hochgeladen): {severe_total}")
-    log(f"mit Hinweisen (hochgeladen): {hint_total}")
-    log(f"Upload: {'ja' if uploaded else 'nein'}")
-    log(f"Laufzeit: {time.time() - started:.0f} s   Tool-Version: {__version__}")
+    took = clock(time.time() - started)
+    if dry:
+        log(f"=== Probelauf fertig nach {took} - nichts wurde verändert ===")
+        log(f"Beim echten Lauf: {num(counts['neu'])} neu · {num(counts['ersetzt'])} ersetzt"
+            f" · {num(len(removed))} gelöscht · {num(counts['unveraendert'])} unverändert")
+    else:
+        log(f"=== Fertig nach {took} ===")
+        if index is not None:
+            log(f"Online jetzt: {bilder(index['count'])} in {num(len(index['folders']))} Ordnern"
+                + ("" if uploaded else " (unverändert)"))
+        log(f"Dieser Lauf: {num(counts['neu'])} neu · {num(counts['ersetzt'])} ersetzt"
+            f" · {num(len(removed))} gelöscht · {num(counts['unveraendert'])} unverändert")
+    log(f"Nicht hochgeladen (Dateiname oder Bild unbrauchbar): {num(severe_total)}")
+    log(f"Mit Hinweis (trotzdem hochgeladen): {num(hint_total)}")
     if rows:
-        log(f"Korrektur-Tabelle: {CSV_FILE} ({len(rows)} Zeilen)")
-    log(f"Stichwortliste:    {KEYWORD_FILE}")
-    log(f"Ortsliste:         {PLACES_FILE}")
+        log(f"-> In Lightroom verbessern: {CSV_FILE} ({num(len(rows))} Zeilen, mit Excel öffnen)")
+    log(f"Protokoll: {LOG_FILE}  ·  Sync-Version {__version__}")
     write_log()
 
 
