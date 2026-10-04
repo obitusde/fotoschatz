@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.19 · 04.10.2026 (Alle Bilder und Suche älteste zuerst mit Umschalter, v0.6.34; davor v0.6.32 Sync-Ausgabe erklärt)
+**Dokumentversion:** v3.20 · 04.10.2026 (Alle Bilder nach Jahren, Bild-Infos mit Bezeichnungen und Dateiname, v0.6.35; davor v0.6.34 älteste zuerst)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -434,13 +434,15 @@ Ohne Datei gelten diese Standardwerte:
       "sl": "Tour Eiffel", "ci": "Paris", "st": "Île-de-France", "co": "France",
       "la": 48.8584, "lo": 2.2945,
       "r": 4,
-      "fp": [0.488, 0.166]
+      "fp": [0.488, 0.166],
+      "o": "2006-05-27_10-07-11.JPG"
     }
   ]
 }
 ```
 - `folders.x = 1` markiert „Weitere Bilder" (in der Ordneransicht am Ende des Jahres).
 - `fp` = Fokuspunkt (x, y relativ 0..1): Mitte des Rahmens um alle Lightroom-Gesichtsbereiche (`XMP-mwg-rs:RegionArea*`, Typ Face); fehlt ohne Gesichter.
+- `o` = Originaldatei in Lightroom (`XMP-crs:RawFileName`, seit v0.6.35, für die Bild-Infos; ≈ +20 Byte je Bild). Sync lädt `index.json` jetzt auch hoch, wenn sich nur ihr Inhalt geändert hat (Vergleich mit der letzten Fassung im Staging) – so kommt ein neues Feld ohne Bild-Upload online.
 - `folders.cover` wird vom Sync-Tool noch geschrieben, von der App aber nicht genutzt (keine Titelbilder).
 - URLs werden in der App aus `SECRET`, `id` und `h` zusammengesetzt, nicht im Index gespeichert.
 - Leere Felder weglassen.
@@ -480,7 +482,7 @@ Ohne Datei gelten diese Standardwerte:
    - **Reine Textliste, keine Titelbilder** (bewusst so entschieden – nichts zu pflegen, nichts zufällig).
    - Jahre absteigend (Überschrift mit Anzahl bleibt beim Scrollen oben), darunter die Ordner neueste zuerst: Name ohne Datumspräfix, darunter Datum · Anzahl; „Weitere Bilder" am Ende des Jahres.
    - Fußzeile: Anzahl Bilder · Stand des Index · App-Version.
-2. **Alle Bilder:** Zeitleiste, gruppiert nach Monat; der aktuelle Monat steht im Untertitel der Kopfzeile. **Seit v0.6.34 älteste zuerst** (Wunsch 04.10.2026), Umschalter „⇅ älteste zuerst / neueste zuerst“ klein rechts in der Kopfzeile (nur in dieser Ansicht); Umschalten beginnt oben. Rechts tippen im Betrachter = nächstes Bild im Raster.
+2. **Alle Bilder:** Zeitleiste, **gruppiert nach Jahr** („2006 · 242 Bilder“, seit v0.6.35, vorher nach Monat); das aktuelle Jahr steht im Untertitel der Kopfzeile. **Seit v0.6.34 älteste zuerst** (Wunsch 04.10.2026), Umschalter „⇅ älteste zuerst / neueste zuerst“ klein rechts in der Kopfzeile (nur in dieser Ansicht); Umschalten beginnt oben. Rechts tippen im Betrachter = nächstes Bild im Raster.
 3. **Ordnerinhalt:** Raster nach Aufnahmezeit sortiert.
 4. **Suche** (v0.5.0, umgebaut v0.6.0):
    - **Zwei Modi:** *Auswahl* (Begriffe wählen, keine Bilder) und *Raster*. Unter dem Suchfeld steht immer die Zahl der passenden Bilder („40 Bilder passen“) und der Knopf **Anzeigen** (bzw. Enter). Anzeigen legt einen Verlaufseintrag an: Zurück-Taste / „Ändern“ führt vom Raster zur Auswahl. Suchfeld oder Chip im Raster antippen → zurück zur Auswahl (Chip wird dabei entfernt). Aus dem Betrachter zurück → Raster.
@@ -502,7 +504,7 @@ Ohne Datei gelten diese Standardwerte:
    - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter (sofort), Mitte = Bedienelemente aus/ein (mit ≈ 0,3 s Verzögerung wegen Doppeltippen). Wischen links/rechts blättert.
    - **Zoom** (v0.5.0): zwei Finger auf-/zuziehen (bis 4-fach); Doppeltippen in der Mitte bzw. Doppelklick = 2,5-fach an dieser Stelle, nochmal = zurück; am PC Mausrad. Vergrößert: ein Finger/Maus verschiebt den Ausschnitt (nicht über den Bildrand hinaus), Tippen = Bedienelemente, Blättern per Wischen ist aus. Blättern (Taste, Knopf) oder Drehen setzt den Zoom zurück.
    - **Präsentations-Klicker / Tastatur:** weiter = Bild ab, Pfeil rechts, Leertaste; zurück = Bild auf, Pfeil links.
-   - Infos (Datum, Ordner, Personen, Ort, Beschreibung – ausgeblendet, wenn gleich dem Ordnernamen –, Bewertung) über den Knopf (i) bzw. Taste I; **anfangs ausgeblendet**, Einstellung wird gemerkt (`fotoschatz.info`).
+   - Infos über den Knopf (i) bzw. Taste I, **jede Zeile mit Bezeichnung** (v0.6.35): Aufnahme · Ordner (voller Name wie in Lightroom, lose Bilder „JJJJ Weitere Bilder“) · Personen · Ort · Beschreibung (= Lightroom *Caption*; ausgeblendet, wenn gleich dem Ordnernamen) · Bewertung („★ wichtig“, „★★ Lieblingsbild“, sonst Sterne) · Datei (Originaldatei in Lightroom, Feld `o`, erst nach dem nächsten Sync mit v0.6.35); **anfangs ausgeblendet**, Einstellung wird gemerkt (`fotoschatz.info`).
    - **Kein Vollbild per Fullscreen-API am Handy** (v0.6.1/0.6.2): Chrome blendet dabei jedes Mal „zum Beenden des Vollbildmodus …“ ein. Die installierte App läuft stattdessen komplett im Vollbild (Manifest). Knopf ⛶ bzw. Taste F nur noch am PC. Zurück-Taste schließt das Bild mit einem Druck (am Handy bestätigt).
    - Zurück-Taste, ✕, Wischen nach unten und Esc schließen den Betrachter (History-API); am PC Pfeiltasten und Pfeil-Schaltflächen.
    - Erst das Vorschaubild, dann das große Bild; Nachbarbilder werden vorgeladen.

@@ -345,9 +345,10 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
   font-size: .9rem;
   line-height: 1.45;
 }
-.v-info .when { font-weight: 600; }
-.v-info .line { opacity: .9; }
+.v-info .row { display: grid; grid-template-columns: 7.5em 1fr; gap: 8px; padding: 1px 0; }
 .v-info .label { opacity: .65; }
+.v-info .value { opacity: .95; overflow-wrap: anywhere; }
+.v-info .when .value { font-weight: 600; }
 .v-nav {
   position: absolute;
   top: 50%;

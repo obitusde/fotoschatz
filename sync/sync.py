@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.6.32"
+__version__ = "0.6.35"
 
 import argparse
 import csv
@@ -323,6 +323,8 @@ def build_index(files, analyses, ignore_keywords):
         for key in ("de", "sl", "ci", "st", "co", "la", "lo", "r", "fp"):
             if key in meta:
                 photo[key] = meta[key]
+        if meta.get("orig"):
+            photo["o"] = meta["orig"]      # Originaldatei in Lightroom (v0.6.35, fuer die Bild-Infos in der App)
         photos.append(photo)
 
         folder = folders.setdefault(a["online_folder"], {
@@ -733,11 +735,17 @@ def main():
     clean_dir(staging / "thumb", thumb_keep)
 
     index = build_index(new_files, analyses, cfg["ignore_keywords"])
+    index_changed = True     # Inhalt anders als beim letzten Mal (z. B. neues Feld) -> index.json neu hochladen
+    try:
+        old_index = json.loads((staging / "index.json").read_text(encoding="utf-8"))
+        index_changed = old_index.get("photos") != index["photos"] or old_index.get("folders") != index["folders"]
+    except (OSError, ValueError):
+        pass
     write_json_atomic(staging / "index.json", index, compact=True)
     index_kb = (staging / "index.json").stat().st_size / 1024
     log(f"    {bilder(index['count'])} in {num(len(index['folders']))} Ordnern · {index_kb:,.0f} KB".replace(",", "."))
 
-    changed = counts["neu"] or counts["ersetzt"] or removed or refreshed
+    changed = counts["neu"] or counts["ersetzt"] or removed or refreshed or index_changed
     state = {
         "tool_version": __version__,
         "files": new_files,

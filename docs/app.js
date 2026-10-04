@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.34";
+const APP_VERSION = "0.6.35";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -63,7 +63,6 @@ const fmtDay = new Intl.DateTimeFormat("de-DE", { day: "numeric", month: "long",
 const fmtFull = new Intl.DateTimeFormat("de-DE", {
   weekday: "short", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit",
 });
-const fmtMonth = new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" });
 
 function parseLocal(t) {
   const [d, time = "00:00:00"] = t.split("T");
@@ -165,7 +164,9 @@ function prepare(index) {
   }
   const photos = index.photos.slice().sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
   const byFolder = new Map();
+  const perYear = new Map();
   for (const p of photos) {
+    perYear.set(p.t.slice(0, 4), (perYear.get(p.t.slice(0, 4)) || 0) + 1);
     if (!byFolder.has(p.f)) byFolder.set(p.f, []);
     byFolder.get(p.f).push(p);
   }
@@ -173,6 +174,7 @@ function prepare(index) {
     index,
     photos,
     byFolder,
+    perYear,
     folderByName: new Map(index.folders.map((f) => [f.n, f])),
     allDesc: photos.slice().reverse(),
   };
@@ -537,17 +539,20 @@ const Viewer = {
     this.renderInfo(p);
   },
 
+  // Infos zum Bild, jede Zeile mit Bezeichnung (v0.6.35)
   renderInfo(p) {
     const folder = DATA.folderByName.get(p.f);
     const label = folder ? folderLabel(folder) : { name: p.f, date: "" };
     const place = placePath(p).reverse().join(", ");
-    const lines = [el("div", { class: "when", text: fmtFull.format(parseLocal(p.t)) })];
-    lines.push(el("div", { class: "line", text: label.date ? `${label.name} · ${label.date}` : label.name }));
-    if (p.p && p.p.length) lines.push(el("div", { class: "line" }, el("span", { class: "label", text: "Personen: " }), p.p.join(", ")));
-    if (place) lines.push(el("div", { class: "line" }, el("span", { class: "label", text: "Ort: " }), place));
-    if (p.de && p.de !== label.name && p.de !== p.f) lines.push(el("div", { class: "line", text: p.de }));
-    if (p.r) lines.push(el("div", { class: "line", text: "★".repeat(p.r) + "☆".repeat(Math.max(0, 5 - p.r)) }));
-    this.info.replaceChildren(...lines);
+    const rows = [["Aufnahme", fmtFull.format(parseLocal(p.t)), "when"]];
+    rows.push(["Ordner", p.f]);      // voller Name, wie in Lightroom (bei losen Bildern „JJJJ Weitere Bilder“)
+    if (p.p && p.p.length) rows.push(["Personen", p.p.join(", ")]);
+    if (place) rows.push(["Ort", place]);
+    if (p.de && p.de !== label.name && p.de !== p.f) rows.push(["Beschreibung", p.de]);
+    if (p.r) rows.push(["Bewertung", p.r === 1 ? "★ wichtig" : p.r === 2 ? "★★ Lieblingsbild" : "★".repeat(p.r)]);
+    if (p.o) rows.push(["Datei", p.o]);
+    this.info.replaceChildren(...rows.map(([name, value, cls]) => el("div", { class: "row" + (cls ? ` ${cls}` : "") },
+      el("span", { class: "label", text: name }), el("span", { class: "value", text: value }))));
   },
 
   go(delta) {
@@ -1213,9 +1218,10 @@ function mountView(state) {
     order.textContent = orderLabel();
     order.hidden = false;
     m.list = oldestFirst() ? DATA.photos : DATA.allDesc;
-    const monthOf = (p) => fmtMonth.format(parseLocal(p.t));
-    m.grid = new Grid(main, m.list, monthOf, (month) => {
-      $("#subtitle").textContent = month || countLabel(DATA.photos.length);
+    // nach Jahren gruppiert (v0.6.35); das Jahr oben im Bild steht im Untertitel
+    const yearOf = (p) => `${p.t.slice(0, 4)} · ${countLabel(DATA.perYear.get(p.t.slice(0, 4)))}`;
+    m.grid = new Grid(main, m.list, yearOf, (year) => {
+      $("#subtitle").textContent = year || countLabel(DATA.photos.length);
     });
   } else if (state.v === "search") {
     setHeader("Suche");
