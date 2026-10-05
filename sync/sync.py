@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.6.35"
+__version__ = "0.6.36"
 
 import argparse
 import csv
@@ -47,6 +47,7 @@ DEFAULTS = {
 CSV_FILE = SCRIPT_DIR / "korrekturen.csv"
 KEYWORD_FILE = SCRIPT_DIR / "stichwoerter.txt"
 PLACES_FILE = SCRIPT_DIR / "orte.txt"
+BIRTHDAY_FILE = SCRIPT_DIR / "geburtstage.txt"     # bleibt auf dem PC (nicht im Repo)
 LOG_FILE = SCRIPT_DIR / "letzter_lauf.txt"
 
 # Erhoehen, wenn extract_metadata neue Felder liefert -> Metadaten aller Bilder werden neu gelesen
@@ -285,7 +286,7 @@ def clean_dir(directory, keep):
 
 # ---------------------------------------------------------------- index.json
 
-def build_index(files, analyses, ignore_keywords):
+def build_index(files, analyses, ignore_keywords, birthdays=None):
     known_persons = {}
     for rec in files.values():
         for person in rec["meta"].get("p", []):
@@ -346,13 +347,24 @@ def build_index(files, analyses, ignore_keywords):
 
     photos.sort(key=lambda p: (p["t"], p["id"]))
     folder_list.sort(key=lambda f: (f["y"], f.get("x", 0), f["d"], f["n"]))
-    return {
+    index = {
         "v": 1,
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "count": len(photos),
         "folders": folder_list,
         "photos": photos,
     }
+    # Geburtsdaten (v0.6.36): einmal je Person, fuer das Alter in den Bild-Infos der App.
+    # Nur Personen, die auch auf Bildern vorkommen; Schluessel = Schreibweise wie in "p".
+    bd = {}
+    for photo in photos:
+        for person in photo.get("p", []):
+            date = (birthdays or {}).get(person.casefold())
+            if date:
+                bd[person] = date
+    if bd:
+        index["bd"] = dict(sorted(bd.items(), key=lambda x: x[0].casefold()))
+    return index
 
 
 # ---------------------------------------------------------------- Ausgabedateien
@@ -409,6 +421,106 @@ def write_places_file(records):
     if len(lines) == 4:
         lines.append("(keine Ortsangaben)")
     PLACES_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+BIRTHDAY_HEAD = [
+    "# Fotoschatz Geburtstage - für das Alter der Personen in den Bild-Infos der App",
+    "#",
+    "# Eine Zeile je Person:   Name ; Geburtsdatum",
+    "#   Datum als TT.MM.JJJJ (z. B. 12.03.1975) oder nur das Jahr (1975 -> App zeigt \"ca. 45\").",
+    "#   Unbekannt -> leer lassen, dann zeigt die App kein Alter.",
+    "#   Name genau wie in Lightroom (groß/klein egal). Alles hinter # ist nur Kommentar.",
+    "# Neue Personen hängt sync.bat unten an (häufigste zuerst, Anzahl Bilder als Kommentar).",
+    "# Nach dem Eintragen sync.bat starten - dann ist das Alter in der App zu sehen.",
+    "# Die Datei bleibt auf deinem PC. Online stehen die Daten nur im geschützten index.json.",
+    "",
+]
+
+
+def parse_birthday(text):
+    """'12.03.1975', '12.3.1975', '1975-03-12' -> '1975-03-12'; '1975' -> '1975'; leer -> None; sonst ValueError."""
+    text = text.strip()
+    if not text:
+        return None
+    m = re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", text)
+    if m:
+        day, month, year = int(m[1]), int(m[2]), int(m[3])
+    else:
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+        if m:
+            year, month, day = int(m[1]), int(m[2]), int(m[3])
+        elif re.fullmatch(r"\d{4}", text):
+            if not 1800 <= int(text) <= datetime.now().year:
+                raise ValueError(text)
+            return text
+        else:
+            raise ValueError(text)
+    born = datetime(year, month, day)       # ValueError bei z. B. 31.02.
+    if not 1800 <= year or born > datetime.now():
+        raise ValueError(text)
+    return born.strftime("%Y-%m-%d")
+
+
+def update_birthday_file(person_counts):
+    """geburtstage.txt lesen; fehlt sie, mit allen Personen anlegen, sonst neue Personen unten anhaengen.
+    person_counts: Name -> Anzahl Bilder. Gibt (Geburtsdaten casefold -> Datum, Meldungen fuers Protokoll) zurueck."""
+    notes = []
+    text, encoding = "", "utf-8"
+    created = not BIRTHDAY_FILE.exists()
+    if not created:
+        raw = BIRTHDAY_FILE.read_bytes()
+        try:
+            text, encoding = raw.decode("utf-8-sig"), "utf-8"
+        except UnicodeDecodeError:
+            text, encoding = raw.decode("cp1252"), "cp1252"      # mit dem Windows-Editor als ANSI gespeichert
+        text = text.replace("\r\n", "\n").replace("\r", "\n")    # write_text macht unter Windows wieder \r\n daraus
+
+    birthdays, listed, bad = {}, set(), []
+    for no, line in enumerate(text.splitlines(), 1):
+        content = line.split("#", 1)[0].strip()
+        if not content:
+            continue
+        name, _, date = content.partition(";")
+        name = " ".join(name.split())
+        if not name:
+            continue
+        key = name.casefold()
+        listed.add(key)
+        try:
+            value = parse_birthday(date)
+        except ValueError:
+            bad.append(f"Zeile {no}: '{date.strip()}'")      # ohne Namen, das Protokoll geht manchmal an Claude
+            continue
+        if value and key not in birthdays:
+            birthdays[key] = value
+
+    names = {}
+    for name, count in person_counts.items():
+        entry = names.setdefault(name.casefold(), [name, 0])
+        entry[1] += count
+    missing = sorted((v for k, v in names.items() if k not in listed), key=lambda x: (-x[1], x[0].casefold()))
+    if missing:
+        width = max(len(n) for n, _ in missing)
+        lines = [f"{n:<{width}} ;              # {num(c)} {'Bild' if c == 1 else 'Bilder'}" for n, c in missing]
+        if created:
+            new_text = "\n".join(BIRTHDAY_HEAD + lines) + "\n"
+        else:
+            new_text = text + ("" if not text or text.endswith("\n") else "\n")
+            new_text += f"\n# neu am {datetime.now():%d.%m.%Y} (sync.py)\n" + "\n".join(lines) + "\n"
+        BIRTHDAY_FILE.write_text(new_text, encoding=encoding, errors="replace")
+
+    with_date = sum(1 for k in names if k in birthdays)
+    if created and missing:
+        notes.append(f"    geburtstage.txt angelegt mit {num(len(missing))} Personen - Geburtsdaten eintragen,"
+                     " dann zeigt die App das Alter")
+    elif names:
+        notes.append(f"    geburtstage.txt: {num(with_date)} von {num(len(names))} Personen mit Geburtsdatum"
+                     " (für das Alter in der App)")
+        if missing:
+            notes.append(f"    {num(len(missing))} neue Personen unten angehängt - Geburtsdatum eintragen, wenn bekannt")
+    for b in bad:
+        notes.append(f"    geburtstage.txt {b} - Datum nicht verstanden (TT.MM.JJJJ oder JJJJ), wird ignoriert")
+    return birthdays, notes
 
 
 # ---------------------------------------------------------------- Upload
@@ -669,11 +781,12 @@ def main():
     # 4. Hinweise aus den Metadaten, neue Stichwoerter, Korrektur-Tabelle
     step(4, "Prüfliste schreiben: was in Lightroom zu verbessern ist")
     keyword_counter = Counter()
-    all_persons = set()
+    person_counter = Counter()
     for name, rec in new_files.items():
         analyses[name]["problems"] += regeln.metadata_problems(rec["meta"])
         keyword_counter.update(rec["meta"].get("kw", []))
-        all_persons.update(rec["meta"].get("p", []))
+        person_counter.update(rec["meta"].get("p", []))
+    all_persons = set(person_counter)
     known_kw = {k.casefold() for k in state.get("known_keywords", [])}
     ignore_keys = {k.casefold() for k in cfg["ignore_keywords"]}
     person_keys = {p.casefold() for p in all_persons}
@@ -703,6 +816,9 @@ def main():
     log(f"    korrekturen.csv: {bilder(severe_total)} schwer (nicht hochgeladen),"
         f" {num(hint_total)} mit Hinweis (trotzdem hochgeladen, z. B. ohne GPS)")
     log("    stichwoerter.txt und orte.txt aktualisiert")
+    birthdays, birthday_notes = update_birthday_file(person_counter)
+    for line in birthday_notes:
+        log(line)
 
     if dry:
         step(5, "Inhaltsverzeichnis für die App - im Probelauf übersprungen")
@@ -734,11 +850,12 @@ def main():
     clean_dir(staging / "img", img_keep)
     clean_dir(staging / "thumb", thumb_keep)
 
-    index = build_index(new_files, analyses, cfg["ignore_keywords"])
+    index = build_index(new_files, analyses, cfg["ignore_keywords"], birthdays)
     index_changed = True     # Inhalt anders als beim letzten Mal (z. B. neues Feld) -> index.json neu hochladen
     try:
         old_index = json.loads((staging / "index.json").read_text(encoding="utf-8"))
-        index_changed = old_index.get("photos") != index["photos"] or old_index.get("folders") != index["folders"]
+        index_changed = (old_index.get("photos") != index["photos"] or old_index.get("folders") != index["folders"]
+                         or old_index.get("bd") != index.get("bd"))
     except (OSError, ValueError):
         pass
     write_json_atomic(staging / "index.json", index, compact=True)

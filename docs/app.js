@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.35";
+const APP_VERSION = "0.6.36";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -175,9 +175,30 @@ function prepare(index) {
     photos,
     byFolder,
     perYear,
+    birthdays: index.bd || {},
     folderByName: new Map(index.folders.map((f) => [f.n, f])),
     allDesc: photos.slice().reverse(),
   };
+}
+
+// Alter einer Person bei der Aufnahme (v0.6.36), aus index.bd ("1975-03-12" oder nur "1975"):
+// ab 18 Monaten volle Jahre, darunter Monate, im ersten Monat Wochen. Vor der Geburt -> nichts.
+function ageAt(birth, taken) {
+  if (!birth) return "";
+  const ty = +taken.slice(0, 4), tm = +taken.slice(5, 7), td = +taken.slice(8, 10);
+  if (birth.length === 4) {
+    const years = ty - +birth;
+    return years >= 2 ? `ca. ${years}` : "";
+  }
+  const by = +birth.slice(0, 4), bm = +birth.slice(5, 7), bd = +birth.slice(8, 10);
+  const months = (ty - by) * 12 + (tm - bm) - (td < bd ? 1 : 0);
+  if (months < 0) return "";
+  if (months >= 18) return String(Math.floor(months / 12));
+  if (months >= 1) return months === 1 ? "1 Monat" : `${months} Monate`;
+  const days = Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(by, bm - 1, bd)) / 86400000);
+  if (days < 0) return "";
+  if (days < 7) return "neugeboren";
+  return days < 14 ? "1 Woche" : `${Math.floor(days / 7)} Wochen`;
 }
 
 /* ---------------------------------------------------------------- Kopfzeile & Leiste */
@@ -546,7 +567,12 @@ const Viewer = {
     const place = placePath(p).reverse().join(", ");
     const rows = [["Aufnahme", fmtFull.format(parseLocal(p.t)), "when"]];
     rows.push(["Ordner", p.f]);      // voller Name, wie in Lightroom (bei losen Bildern „JJJJ Weitere Bilder“)
-    if (p.p && p.p.length) rows.push(["Personen", p.p.join(", ")]);
+    if (p.p && p.p.length) {
+      rows.push(["Personen", p.p.map((n) => {
+        const age = ageAt(DATA.birthdays[n], p.t);
+        return age ? `${n} (${age})` : n;
+      }).join(", ")]);
+    }
     if (place) rows.push(["Ort", place]);
     if (p.de && p.de !== label.name && p.de !== p.f) rows.push(["Beschreibung", p.de]);
     if (p.r) rows.push(["Bewertung", p.r === 1 ? "★ wichtig" : p.r === 2 ? "★★ Lieblingsbild" : "★".repeat(p.r)]);
