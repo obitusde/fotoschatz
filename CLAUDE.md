@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.21 · 05.10.2026 (Alter der Personen in den Bild-Infos aus `geburtstage.txt`, v0.6.36; davor v0.6.35 Alle Bilder nach Jahren, Bild-Infos mit Bezeichnungen und Dateiname)
+**Dokumentversion:** v3.22 · 07.10.2026 (Suche: Orte ohne Bundesland, Jahrzehnte; Ordnerliste mit farbigen Jahren und Umschalter, Umschalter im Ordner, v0.6.37; davor v0.6.36 Alter der Personen)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -482,16 +482,16 @@ Ohne Datei gelten diese Standardwerte:
 - **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
 1. **Ordner** (Startansicht):
    - **Reine Textliste, keine Titelbilder** (bewusst so entschieden – nichts zu pflegen, nichts zufällig).
-   - Jahre absteigend (Überschrift mit Anzahl bleibt beim Scrollen oben), darunter die Ordner neueste zuerst: Name ohne Datumspräfix, darunter Datum · Anzahl; „Weitere Bilder" am Ende des Jahres.
+   - Jahre absteigend (Überschrift mit Anzahl bleibt beim Scrollen oben, **farbig hinterlegt** seit v0.6.37), darunter die Ordner neueste zuerst. **Umschalter** „⇅ neueste zuerst / älteste zuerst“ rechts in der Kopfzeile dreht Jahre und Ordner um (eigene Einstellung `fotoschatz.folder-order`, Standard neueste zuerst; Wunsch 07.10.2026). Je Ordner: Name ohne Datumspräfix, darunter Datum · Anzahl; „Weitere Bilder" am Ende des Jahres.
    - Fußzeile: Anzahl Bilder · Stand des Index · App-Version.
 2. **Alle Bilder:** Zeitleiste, **gruppiert nach Jahr** („2006 · 242 Bilder“, seit v0.6.35, vorher nach Monat); das aktuelle Jahr steht im Untertitel der Kopfzeile. **Seit v0.6.34 älteste zuerst** (Wunsch 04.10.2026), Umschalter „⇅ älteste zuerst / neueste zuerst“ klein rechts in der Kopfzeile (nur in dieser Ansicht); Umschalten beginnt oben. Rechts tippen im Betrachter = nächstes Bild im Raster.
-3. **Ordnerinhalt:** Raster nach Aufnahmezeit sortiert.
+3. **Ordnerinhalt:** Raster nach Aufnahmezeit, **älteste zuerst**; Umschalter in der Kopfzeile (seit v0.6.37) – dieselbe Einstellung wie Suche und Alle Bilder (`fotoschatz.order`). Gewollt (07.10.2026): neueste Ordner oben, im Ordner von alt nach neu, beides umdrehbar.
 4. **Suche** (v0.5.0, umgebaut v0.6.0):
    - **Zwei Modi:** *Auswahl* (Begriffe wählen, keine Bilder) und *Raster*. Unter dem Suchfeld steht immer die Zahl der passenden Bilder („40 Bilder passen“) und der Knopf **Anzeigen** (bzw. Enter). Anzeigen legt einen Verlaufseintrag an: Zurück-Taste / „Ändern“ führt vom Raster zur Auswahl. Suchfeld oder Chip im Raster antippen → zurück zur Auswahl (Chip wird dabei entfernt). Aus dem Betrachter zurück → Raster.
    - **Auswahl ohne Tippen** – alles gezählt innerhalb der schon gewählten Begriffe, Begriffe ohne Treffer fallen weg:
      - Personen: die 12 häufigsten, „alle … zeigen“ klappt die ganze Liste auf.
-     - **Orte als Baum** Land › Bundesland › Stadt › Ort (leere und doppelte Stufen wie Wien/Wien entfallen). Antippen klappt auf, erste Zeile „Ganz <Name>“ wählt den ganzen Zweig; Blätter werden direkt gewählt. Gewählte Orte sind aufgeklappt und blau.
-     - Jahre (Aufnahmejahr), Stichwörter (falls vorhanden).
+     - **Orte als Baum** Land › Stadt › Ort – **ohne Bundesland** seit v0.6.37 (Wunsch 07.10.2026, z. B. Deutschland › Neuenrade; Freitext findet das Bundesland weiter; in den Bild-Infos steht es weiter). Leere und doppelte Stufen wie Wien/Wien entfallen. Antippen klappt auf, erste Zeile „Ganz <Name>“ wählt den ganzen Zweig; Blätter werden direkt gewählt. Gewählte Orte sind aufgeklappt und blau.
+     - Jahre (Aufnahmejahr): das **aktuelle Jahrzehnt** direkt als Jahre, davor **aufklappbare Jahrzehnte** („2010er“ → 2019 … 2010, erste Zeile „Ganz 2010er (2010–2019)“ wählt das ganze Jahrzehnt als Chip; v0.6.37). Stichwörter (falls vorhanden).
    - **Beim Tippen:** Vorschläge gruppiert nach Personen, Orten (mit Lage, z. B. „Nürnberg – Bayern, Deutschland“), Ordnern (mit Datum), Jahren, Stichwörtern, jeweils mit Anzahl; Gruppe mit exaktem Treffer oben. Erste Zeile „Freitext … übernehmen“: alle Wörter müssen vorkommen in Beschreibung, Orten (deutsch **und** englisch), Ordnername, Personen, Stichwörtern.
    - Gewählte Begriffe werden zu Chips und mit **UND** verknüpft (z. B. Person + Land + Jahr).
    - Groß-/Kleinschreibung, Akzente und Satzzeichen ignorieren (é→e, ä→a, ß→ss, „ile de france“ findet „Île-de-France“).

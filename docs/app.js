@@ -1,12 +1,13 @@
 "use strict";
 
-const APP_VERSION = "0.6.36";
+const APP_VERSION = "0.6.37";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
 const INFO_KEY = "fotoschatz.info";
 const INSTALL_KEY = "fotoschatz.install-hidden";
-const ORDER_KEY = "fotoschatz.order";   // Suche und Alle Bilder: "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
+const ORDER_KEY = "fotoschatz.order";   // Bilder (Suche, Alle Bilder, im Ordner): "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
+const FOLDER_ORDER_KEY = "fotoschatz.folder-order";   // Ordnerliste: "desc" = neueste zuerst (Standard), "asc" = aelteste zuerst
 const HEADER_H = 44;
 const GAP = 2;
 const MAX_ZOOM = 4;
@@ -104,6 +105,7 @@ const COUNTRY_ALIASES = {
   "Burma": "MM", "Swaziland": "SZ", "Vatican City": "VA", "Kingdom of Denmark": "DK",
 };
 const PLACE_KEYS = ["co", "st", "ci", "sl"];
+const SEARCH_PLACE_KEYS = ["co", "ci", "sl"];   // Suche: Land › Stadt › Ort, ohne Bundesland (v0.6.37; Freitext findet es weiter)
 
 // Laender: aus dem Browser (Intl.DisplayNames). Bundeslaender, Staedte, Orte: Tabelle PLACE_DE (orte.js).
 function makePlaceTranslator() {
@@ -136,10 +138,10 @@ function makePlaceTranslator() {
 }
 
 // Land > Bundesland > Stadt > Ort ohne leere und doppelte Stufen (z. B. Wien/Wien)
-function placePath(p) {
+function placePath(p, keys = PLACE_KEYS) {
   const path = [];
   const seen = new Set();
-  for (const key of PLACE_KEYS) {
+  for (const key of keys) {
     const value = p[key];
     if (!value) continue;
     const norm = normText(value);
@@ -204,10 +206,23 @@ function ageAt(birth, taken) {
 /* ---------------------------------------------------------------- Kopfzeile & Leiste */
 
 const oldestFirst = () => readPref(ORDER_KEY) !== "desc";
-const orderLabel = () => (oldestFirst() ? "⇅ älteste zuerst" : "⇅ neueste zuerst");
+const foldersOldestFirst = () => readPref(FOLDER_ORDER_KEY) === "asc";
+const orderLabel = (asc = oldestFirst()) => (asc ? "⇅ älteste zuerst" : "⇅ neueste zuerst");
 
 function toggleOrder() {
   writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
+}
+
+function toggleFolderOrder() {
+  writePref(FOLDER_ORDER_KEY, foldersOldestFirst() ? "desc" : "asc");
+}
+
+// Kleiner Umschalter rechts in der Kopfzeile (Ordnerliste, Ordner, Alle Bilder) – je Ansicht eigene Aktion
+function showOrderButton(m, asc, toggle) {
+  const order = $("#order");
+  order.textContent = orderLabel(asc);
+  order.hidden = false;
+  m.toggleOrder = toggle;
 }
 
 function setHeader(title, subtitle = "", back = false) {
@@ -234,10 +249,12 @@ function folderListView() {
     if (!years.has(f.y)) years.set(f.y, []);
     years.get(f.y).push(f);
   }
-  for (const year of [...years.keys()].sort((a, b) => b - a)) {
+  // Standard neueste zuerst, umschaltbar (v0.6.37); "Weitere Bilder" immer am Ende des Jahres
+  const dir = foldersOldestFirst() ? 1 : -1;
+  for (const year of [...years.keys()].sort((a, b) => dir * (a - b))) {
     const folders = years.get(year).sort((a, b) => {
       if ((a.x || 0) !== (b.x || 0)) return (a.x || 0) - (b.x || 0);
-      return a.d < b.d ? 1 : a.d > b.d ? -1 : a.n.localeCompare(b.n, "de");
+      return a.d < b.d ? -dir : a.d > b.d ? dir : a.n.localeCompare(b.n, "de");
     });
     const total = folders.reduce((sum, f) => sum + f.c, 0);
     wrap.append(el("h2", { class: "year" }, String(year), el("small", { text: countLabel(total) })));
@@ -815,7 +832,7 @@ function buildSearch() {
     }
     let path = "";
     const labels = [];
-    for (const place of placePath(p)) {
+    for (const place of placePath(p, SEARCH_PLACE_KEYS)) {
       const norm = normText(place);
       const parent = path;
       path = path ? `${path}|${norm}` : norm;
@@ -831,6 +848,8 @@ function buildSearch() {
     add("f", `f:${p.f}`, i, { label: fi.name, sub: fi.sub, norm: normText(`${p.f} ${fi.name}`) });
     const year = p.t.slice(0, 4);
     mine.push(add("y", `y:${year}`, i, { label: year, sub: "", norm: year }).key);
+    const decade = `${year.slice(0, 3)}0er`;   // Jahrzehnt, z. B. "2010er" (v0.6.37)
+    mine.push(add("y", `y:${decade}`, i, { label: decade, sub: `${year.slice(0, 3)}0–${year.slice(0, 3)}9`, norm: decade, decade: true }).key);
     for (const k of p.kw || []) {
       const norm = normText(k);
       if (norm) mine.push(add("k", `k:${norm}`, i, { label: k, sub: "", norm }).key);
@@ -1081,6 +1100,48 @@ function mountSearch(main, state, m) {
     return rows;
   }
 
+  // Jahre (v0.6.37): aktuelles Jahrzehnt direkt, davor aufklappbare Jahrzehnte ("2010er" -> 2019 … 2010, "Ganz 2010er")
+  function yearNodes(counts) {
+    const current = `${String(new Date().getFullYear()).slice(0, 3)}0er`;
+    const yearKeys = [...counts.keys()].filter((k) => /^y:\d{4}$/.test(k)).sort().reverse();
+    const decadeOf = (k) => `y:${k.slice(2, 5)}0er`;
+    const picks = (keys) => keys.filter((k) => !s.keys.includes(k)).map((k) => pick(SEARCH.terms.get(k), counts.get(k)));
+    const nodes = [];
+    const recent = picks(yearKeys.filter((k) => decadeOf(k) === `y:${current}`));
+    if (recent.length) nodes.push(el("div", { class: "picks" }, ...recent));
+    const decades = [...new Set(yearKeys.map(decadeOf))].filter((d) => d !== `y:${current}`);
+    const rows = [];
+    for (const key of decades) {
+      const t = SEARCH.terms.get(key);
+      const n = counts.get(key);
+      const isChosen = s.keys.includes(key);
+      const inner = picks(yearKeys.filter((k) => decadeOf(k) === key));
+      const open = isChosen || s.open.has(key) || s.keys.some((k) => /^y:\d{4}$/.test(k) && decadeOf(k) === key);
+      rows.push(el("button", {
+        type: "button",
+        class: "tree-row" + (open ? " open" : "") + (isChosen ? " chosen" : ""),
+        "aria-expanded": String(open),
+        onclick: () => {
+          if (isChosen) return;
+          if (s.open.has(key)) s.open.delete(key);
+          else s.open.add(key);
+          renderFacets();
+        },
+      }, el("span", { class: "name", text: t.label }), el("span", { class: "meta", text: n.toLocaleString("de-DE") }),
+      svgNode(ICON_CHEVRON)));
+      if (!open) continue;
+      if (!isChosen) {
+        rows.push(el("button", {
+          type: "button", class: "tree-row tree-all", style: "padding-left:36px", onclick: () => addKey(key),
+        }, el("span", { class: "name", text: `Ganz ${t.label} (${t.sub})` }), el("span", { class: "meta", text: n.toLocaleString("de-DE") }),
+        el("span", { class: "chev-space" })));
+      }
+      if (inner.length) rows.push(el("div", { class: "picks tree-picks" }, ...inner));
+    }
+    if (rows.length) nodes.push(el("div", { class: "tree" }, ...rows));
+    return nodes;
+  }
+
   function renderFacets() {
     const counts = termCounts(searchPositions(s.keys, s.text));
     const ofType = (type) => [...counts.keys()].filter((k) => k.startsWith(`${type}:`) && !s.keys.includes(k))
@@ -1102,8 +1163,8 @@ function mountSearch(main, state, m) {
     }
     const places = placeRows(counts);
     if (places.length) nodes.push(el("div", { class: "sg-head", text: "Orte" }), el("div", { class: "tree" }, ...places));
-    const years = ofType("y").sort((a, b) => (a.label < b.label ? 1 : -1));
-    if (years.length) nodes.push(el("div", { class: "sg-head", text: "Jahre" }), el("div", { class: "picks" }, ...years.map((t) => pick(t, counts.get(t.key)))));
+    const years = yearNodes(counts);
+    if (years.length) nodes.push(el("div", { class: "sg-head", text: "Jahre" }), ...years);
     const keywords = ofType("k").sort(byCount).slice(0, 30);
     if (keywords.length) nodes.push(el("div", { class: "sg-head", text: "Stichwörter" }), el("div", { class: "picks" }, ...keywords.map((t) => pick(t, counts.get(t.key)))));
     if (!nodes.length) nodes.push(el("p", { class: "center muted", text: "Nichts weiter einzugrenzen." }));
@@ -1213,8 +1274,14 @@ function mountSearch(main, state, m) {
 let mounted = null;
 const scrollMemory = new Map();
 
-// Alle Bilder: je Reihenfolge eigene Scroll-Position (sonst passt sie nach dem Umschalten nicht)
-const viewKey = (s) => (s.v === "folder" ? `folder:${s.f}` : s.v === "all" ? `all:${oldestFirst() ? "asc" : "desc"}` : s.v);
+// Je Reihenfolge eigene Ansicht und Scroll-Position (sonst passt sie nach dem Umschalten nicht)
+function viewKey(s) {
+  const dir = (asc) => (asc ? "asc" : "desc");
+  if (s.v === "folder") return `folder:${dir(oldestFirst())}:${s.f}`;
+  if (s.v === "all") return `all:${dir(oldestFirst())}`;
+  if (s.v === "search") return "search";
+  return `folders:${dir(foldersOldestFirst())}`;
+}
 
 function mountView(state) {
   const key = viewKey(state);
@@ -1236,13 +1303,14 @@ function mountView(state) {
     }
     const label = folderLabel(f);
     setHeader(label.name, label.date ? `${label.date} · ${countLabel(f.c)}` : `${f.y} · ${countLabel(f.c)}`, true);
+    // im Ordner: Standard aelteste zuerst, umschaltbar (gemeinsam mit Suche und Alle Bilder)
+    showOrderButton(m, oldestFirst(), toggleOrder);
     m.list = DATA.byFolder.get(f.n) || [];
+    if (!oldestFirst()) m.list = m.list.slice().reverse();
     m.grid = new Grid(main, m.list);
   } else if (state.v === "all") {
     setHeader("Alle Bilder", countLabel(DATA.photos.length));
-    const order = $("#order");
-    order.textContent = orderLabel();
-    order.hidden = false;
+    showOrderButton(m, oldestFirst(), toggleOrder);
     m.list = oldestFirst() ? DATA.photos : DATA.allDesc;
     // nach Jahren gruppiert (v0.6.35); das Jahr oben im Bild steht im Untertitel
     const yearOf = (p) => `${p.t.slice(0, 4)} · ${countLabel(DATA.perYear.get(p.t.slice(0, 4)))}`;
@@ -1255,6 +1323,7 @@ function mountView(state) {
     return;
   } else {
     setHeader("Fotoschatz");
+    showOrderButton(m, foldersOldestFirst(), toggleFolderOrder);
     main.append(folderListView());
     renderInstallBanner();
   }
@@ -1375,14 +1444,13 @@ async function start() {
   registerServiceWorker();
   Viewer.init();
   $("#back").addEventListener("click", () => history.back());
-  // Umschalter in der Kopfzeile von Alle Bilder: Reihenfolge umdrehen, oben neu beginnen
+  // Umschalter in der Kopfzeile (Ordnerliste, Ordner, Alle Bilder): Reihenfolge umdrehen, oben neu beginnen
   $("#order").addEventListener("click", () => {
-    toggleOrder();
-    if (!mounted || !mounted.key.startsWith("all:")) return;
-    if (mounted.grid) mounted.grid.destroy();
-    mounted = null;
-    scrollMemory.delete(viewKey({ v: "all" }));
-    mountView({ v: "all" });
+    if (!mounted || !mounted.toggleOrder) return;
+    mounted.toggleOrder();
+    const state = history.state || { v: "folders" };
+    scrollMemory.delete(viewKey(state));
+    render(state);
   });
   for (const btn of document.querySelectorAll("#nav button")) {
     btn.addEventListener("click", () => switchTab(btn.dataset.view));

@@ -8,6 +8,8 @@
   --accent: #2f6fdb;
   --tile: #e3e6eb;
   --on-accent: #ffffff;
+  --year-bg: #e2ebfb;
+  --year-text: #1d4fae;
   --top-h: 56px;
   --nav-h: 60px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -25,6 +27,8 @@
     --accent: #8ab4f8;
     --tile: #1f232a;
     --on-accent: #0f1115;
+    --year-bg: #1b2738;
+    --year-text: #9cc0fa;
   }
 }
 
@@ -99,15 +103,17 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
   top: var(--sticky-top);
   z-index: 5;
   margin: 0;
-  padding: 14px 16px 6px;
-  background: var(--bg);
+  padding: 10px 16px 8px;
+  background: var(--year-bg);
+  color: var(--year-text);
+  border-bottom: 1px solid var(--line);
   font-size: 1.3rem;
   font-weight: 700;
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
-.year small { font-size: .8rem; font-weight: 400; color: var(--muted); }
+.year small { font-size: .8rem; font-weight: 500; color: var(--year-text); opacity: .8; }
 .folder-row {
   display: block;
   width: 100%;
@@ -298,6 +304,7 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 .tree-row.chosen > .name { color: var(--accent); }
 .tree-all .name { color: var(--accent); }
 .chev-space { width: 18px; flex: none; }
+.tree-picks { padding: 8px 16px 10px 36px; border-bottom: 1px solid var(--line); }
 .search-results { padding-top: 2px; }
 
 /* ---------- Vollbild ---------- */
