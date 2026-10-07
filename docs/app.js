@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.3";
+const APP_VERSION = "0.7.4";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -1646,6 +1646,7 @@ function focusMapAt(at) {
 // "Wann war ich wo?": Laender aus dem Lightroom-Feld Land (auch Bilder ohne GPS), Jahre aus der Aufnahmezeit.
 // Ohne Kartenbilder – nur Laenderumrisse (Natural Earth, gemeinfrei, docs/vendor/natural-earth/laender.json).
 const WORLD_FILE = "vendor/natural-earth/laender.json";
+const WORLD_SINCE = "1978-04-06";   // nur Bilder ab meiner Geburt (Wunsch 07.10.2026, v0.7.4)
 let WORLD = null;
 let countryCodes = null;
 // alte bzw. Sammel-Codes, die der Browser auch kennt (DD = DDR heisst auf Deutsch auch "Deutschland")
@@ -1706,7 +1707,7 @@ function worldCountries() {
   if (WORLD && WORLD.countries) return WORLD.countries;
   const byKey = new Map();
   for (const p of DATA.photos) {
-    if (!p.co) continue;
+    if (!p.co || p.t < WORLD_SINCE) continue;
     const code = countryCodeOf(p.co);
     const key = code || `?${normText(p.co)}`;
     let c = byKey.get(key);
@@ -1932,7 +1933,7 @@ function mountView(state) {
     return;
   } else if (state.v === "countries") {
     const W = worldView();
-    setHeader("Länder", `${W.countries.length} · nach erstem Besuch`, true);
+    setHeader("Länder", `${W.countries.length} · nach erstem Besuch · ab 6.4.1978`, true);
     main.append(countryListView());
   } else if (state.v === "mapgrid") {
     if (!MAP || !MAP.shown) {
