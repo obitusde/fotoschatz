@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.0";
+const APP_VERSION = "0.7.1";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -1380,7 +1380,7 @@ function findPlaces(query) {
 function pinIcon(p, count) {
   const style = focusStyle(p);
   const img = `<img src="${thumbUrl(p)}" alt="" loading="lazy" decoding="async"${style ? ` style="${style}"` : ""}>`;
-  const size = count ? 52 : 44;
+  const size = count ? 42 : 36;
   return L.divIcon({
     html: count ? `${img}<span>${count.toLocaleString("de-DE")}</span>` : img,
     className: count ? "map-pin map-group" : "map-pin",
@@ -1472,14 +1472,31 @@ function initMap() {
   const M = MAP;
   const map = L.map(M.canvas, { zoomControl: false, preferCanvas: true, worldCopyJump: true, maxZoom: 18 });
   map.attributionControl.setPrefix(false);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
-    referrerPolicy: "strict-origin-when-cross-origin",   // OpenStreetMap verlangt einen Referer; das Geheimnis steht im Hash und wird nie gesendet
-  }).addTo(map);
+  // Kartenstil CARTO (OpenStreetMap-Daten, v0.7.1): scharf am Handy ({r} = @2x), Ortsnamen als eigene
+  // Ebene ueber den Vorschaubildern, im Dunkelmodus dunkel. Ohne Anmeldung; CARTO sieht nur den Ausschnitt.
+  map.createPane("labels");
+  map.getPane("labels").style.zIndex = 650;            // ueber den Markern (600)
+  map.getPane("labels").style.pointerEvents = "none";
+  const tiles = (style, pane) => L.tileLayer(`https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`, {
+    subdomains: "abcd", maxZoom: 20, pane,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
+      + ' © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>',
+    referrerPolicy: "strict-origin-when-cross-origin",   // das Geheimnis steht im Hash und wird nie gesendet
+  });
+  const dark = window.matchMedia("(prefers-color-scheme: dark)");
+  let layers = [];
+  const setStyle = () => {
+    for (const layer of layers) layer.remove();
+    layers = dark.matches
+      ? [tiles("dark_nolabels", "tilePane"), tiles("dark_only_labels", "labels")]
+      : [tiles("rastertiles/voyager_nolabels", "tilePane"), tiles("rastertiles/voyager_only_labels", "labels")];
+    for (const layer of layers) layer.addTo(map);
+  };
+  setStyle();
+  dark.addEventListener("change", setStyle);
   const cluster = L.markerClusterGroup({
     chunkedLoading: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, spiderfyOnMaxZoom: false,
-    maxClusterRadius: 64, iconCreateFunction: (c) => pinIcon(groupPhoto(c), c.getChildCount()),
+    maxClusterRadius: 80, iconCreateFunction: (c) => pinIcon(groupPhoto(c), c.getChildCount()),
   });
   cluster.addLayers(M.points.map((p) => {
     const marker = L.marker([p.la, p.lo], { icon: pinIcon(p, 0), keyboard: false });
