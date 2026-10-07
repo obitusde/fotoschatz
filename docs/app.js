@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.1";
+const APP_VERSION = "0.7.2";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -1472,28 +1472,12 @@ function initMap() {
   const M = MAP;
   const map = L.map(M.canvas, { zoomControl: false, preferCanvas: true, worldCopyJump: true, maxZoom: 18 });
   map.attributionControl.setPrefix(false);
-  // Kartenstil CARTO (OpenStreetMap-Daten, v0.7.1): scharf am Handy ({r} = @2x), Ortsnamen als eigene
-  // Ebene ueber den Vorschaubildern, im Dunkelmodus dunkel. Ohne Anmeldung; CARTO sieht nur den Ausschnitt.
-  map.createPane("labels");
-  map.getPane("labels").style.zIndex = 650;            // ueber den Markern (600)
-  map.getPane("labels").style.pointerEvents = "none";
-  const tiles = (style, pane) => L.tileLayer(`https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`, {
-    subdomains: "abcd", maxZoom: 20, pane,
-    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
-      + ' © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>',
-    referrerPolicy: "strict-origin-when-cross-origin",   // das Geheimnis steht im Hash und wird nie gesendet
-  });
-  const dark = window.matchMedia("(prefers-color-scheme: dark)");
-  let layers = [];
-  const setStyle = () => {
-    for (const layer of layers) layer.remove();
-    layers = dark.matches
-      ? [tiles("dark_nolabels", "tilePane"), tiles("dark_only_labels", "labels")]
-      : [tiles("rastertiles/voyager_nolabels", "tilePane"), tiles("rastertiles/voyager_only_labels", "labels")];
-    for (const layer of layers) layer.addTo(map);
-  };
-  setStyle();
-  dark.addEventListener("change", setStyle);
+  // Kartenbilder von OpenStreetMap (v0.7.2 wieder, CARTO verlangte am Handy einen API-Schluessel)
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+    referrerPolicy: "strict-origin-when-cross-origin",   // OSM verlangt einen Referer; das Geheimnis steht im Hash und wird nie gesendet
+  }).addTo(map);
   const cluster = L.markerClusterGroup({
     chunkedLoading: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, spiderfyOnMaxZoom: false,
     maxClusterRadius: 80, iconCreateFunction: (c) => pinIcon(groupPhoto(c), c.getChildCount()),

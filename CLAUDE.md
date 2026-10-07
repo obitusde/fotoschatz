@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.25 · 07.10.2026 (Karte: Stil CARTO mit Ortsnamen über den Bildern, kleinere Bilder, v0.7.1; davor v0.7.0 Karte mit Ortssuche und Umkreis)
+**Dokumentversion:** v3.26 · 07.10.2026 (Karte wieder mit OpenStreetMap – CARTO verlangte einen API-Schlüssel, v0.7.2; davor v0.7.1 kleinere Bilder)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -503,13 +503,13 @@ Ohne Datei gelten diese Standardwerte:
      - Bundesländer, Städte, Orte über die Tabelle `docs/orte.js` (`PLACE_DE`), gepflegt von Claude. **Nur allgemein bekannte Namen** (Bavaria → Bayern, Munich → München …) – das Repo ist öffentlich, kleine/private Orte bleiben englisch.
      - Nicht übersetzte Namen erscheinen so, wie Lightroom sie schreibt. Neue Orte kommen automatisch mit dem nächsten Sync in die App.
 5. **Karte** (v0.7.0, Wunsch 07.10.2026: „soll mir helfen, Bilder zu finden“; Reiter „Karte“ unten, rein über die Karte – keine Verbindung zur Suche, kein Zeitraum-Filter):
-   - Leaflet + markercluster. Kartenbilder seit **v0.7.1 von CARTO** (OpenStreetMap-Daten; Rückmeldung am Handy 07.10.2026: OSM-Ortsnamen schlecht lesbar und von Bildern verdeckt): hell `rastertiles/voyager_nolabels` + `voyager_only_labels`, dunkel `dark_nolabels` + `dark_only_labels` (folgt `prefers-color-scheme`), scharfe Fassung `@2x`; die **Ortsnamen liegen als eigene Ebene über den Vorschaubildern** (Pane `labels`, z-index 650). Namensnennung „© OpenStreetMap © CARTO“ unten rechts. CARTO ohne Anmeldung, sieht nur den Kartenausschnitt (so entschieden). `referrerPolicy: strict-origin-when-cross-origin` – das Geheimnis steht im Hash und wird nie gesendet. ⚠ CARTO in der Cloud gesperrt → Aussehen am Handy prüfen. v0.7.0 nutzte `tile.openstreetmap.org`. Ohne Netz keine Karte (so entschieden). Kreis per Canvas (`preferCanvas`), weil die globale `svg`-Regel der App Leaflets SVG-Ebene verbiegen würde.
+   - Leaflet + markercluster. Kartenbilder von **OpenStreetMap** (`tile.openstreetmap.org`, Namensnennung unten rechts, `referrerPolicy: strict-origin-when-cross-origin`, weil OSM einen Referer verlangt – das Geheimnis steht im Hash und wird nie gesendet). **v0.7.1 hatte CARTO** (Ortsnamen als eigene Ebene über den Bildern, @2x, dunkel) – am Handy kam „API key required“ (07.10.2026) → v0.7.2 zurück zu OSM. OSM hat keine getrennte Ortsnamen-Ebene und keine hochauflösende Fassung; Ortsnamen sind dort kleiner und können von Bildern verdeckt werden. Ohne Netz keine Karte (so entschieden). Kreis per Canvas (`preferCanvas`), weil die globale `svg`-Regel der App Leaflets SVG-Ebene verbiegen würde.
    - Untertitel „x Bilder mit Ort · y ohne“. Alle Bilder mit GPS (`la`/`lo`, nicht 0/0) als **Vorschaubild-Kacheln** (seit v0.7.1 36 px, Gruppen 42 px, Gruppierungs-Radius 80 px); Gruppen mit Anzahl, Titelbild der Gruppe = ★★ vor ★ vor neuestem. Gruppe antippen = hineinzoomen; liegen alle an einer Stelle → gleich Raster. Einzelbild antippen → Betrachter mit den Bildern im Ausschnitt/Umkreis.
    - Leiste unten „123 Bilder hier ›“ (sichtbarer Ausschnitt) bzw. „87 Bilder im Umkreis von 5 km um Neuenrade ›“ → Raster mit Jahresüberschriften, Reihenfolge-Umschalter wie Alle Bilder, Zurück → Karte.
    - **Ort suchen** (Entscheidung 07.10.2026: nur eigene Orte, nichts geht nach außen): Vorschläge aus Land/Stadt/Ort der eigenen Bilder (wie die Suche, ohne Bundesland), Mitte = Median der GPS-Punkte; Land → Karte auf das Land (2–98 %-Bereich der Punkte), sonst Kreis. **Umkreis** 1 · 5 · 20 · 50 km (Standard 5), ✕ = Umkreis aus. **Lange drücken** auf die Karte setzt den Mittelpunkt dort. **◎** = eigener Standort (Browser fragt einmal).
    - Bild-Infos: Zeile „Ort“ hat den Link „auf Karte“ (springt auf Zoom 17 an diese Stelle).
    - Letzte Kartenansicht wird gemerkt (`fotoschatz.map`). In der Cloud im Browser getestet (368 Testbilder mit GPS: Vorschläge, Umkreise 1/5/20 km, Raster, Betrachter, „auf Karte“ und zurück, Standort, langes Drücken, Gruppe antippen, Tab-Wechsel, Neuladen; hell/dunkel); Kartenbilder selbst konnten in der Cloud nicht geladen werden (gesperrt) → ⚠ am Handy prüfen.
-   - Als Nächstes (v0.7.2, freigegeben): Weltkarte „Wann war ich wo?“ – Länder eingefärbt, Antippen zeigt Jahre (z. B. 1997–1999, 2006) und Anzahl, Jahr antippen → diese Bilder; dazu Länderliste nach erstem Besuch.
+   - Als Nächstes (v0.7.3, freigegeben): Weltkarte „Wann war ich wo?“ – Länder eingefärbt, Antippen zeigt Jahre (z. B. 1997–1999, 2006) und Anzahl, Jahr antippen → diese Bilder; dazu Länderliste nach erstem Besuch.
 6. **Vollbild-Betrachter:**
    - Wischen links/rechts, Nachbarbilder vorladen.
    - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter (sofort), Mitte = Bedienelemente aus/ein (mit ≈ 0,3 s Verzögerung wegen Doppeltippen). Wischen links/rechts blättert.
@@ -592,7 +592,7 @@ Ohne Datei gelten diese Standardwerte:
    - Gibt es am Tag nichts, ±3 Tage.
    - Bevorzugt ★★ Lieblingsbilder, dann ★ wichtige.
 2. **„Überrasch mich":** zufällige Auswahl (bevorzugt gut bewertet) oder zufälliger Ordner.
-3. **Karte:** ✅ v0.7.0 (siehe Abschnitt 8, Ansicht 5). Offen: Weltkarte Länder/Jahre (v0.7.2).
+3. **Karte:** ✅ v0.7.0 (siehe Abschnitt 8, Ansicht 5). Offen: Weltkarte Länder/Jahre (v0.7.3).
 4. **Umkreissuche:** ✅ v0.7.0 (Ort suchen oder lange drücken + 1/5/20/50 km, „In meiner Nähe“).
 5. **Personen-Seite:** alle Personen mit Anzahl; pro Person chronologisch („durch die Jahre").
 6. **Best-of-Filter** nach Bewertung (★★ Lieblingsbilder, ★ wichtig – Entscheidung 03.10.2026), kombinierbar mit Suche/Ordner. ✅ Einfache Form seit v0.6.38 (Sterne an/aus); getrennt nach ★/★★ noch offen, falls gewünscht.
