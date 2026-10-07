@@ -1,12 +1,13 @@
 "use strict";
 
-const APP_VERSION = "0.6.37";
+const APP_VERSION = "0.6.38";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
 const INFO_KEY = "fotoschatz.info";
 const INSTALL_KEY = "fotoschatz.install-hidden";
 const ORDER_KEY = "fotoschatz.order";   // Bilder (Suche, Alle Bilder, im Ordner): "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
+const STARS_KEY = "fotoschatz.stars";   // "1" = nur Bilder mit Sternen (Ordner, Alle Bilder, Suche; v0.6.38)
 const FOLDER_ORDER_KEY = "fotoschatz.folder-order";   // Ordnerliste: "desc" = neueste zuerst (Standard), "asc" = aelteste zuerst
 const HEADER_H = 44;
 const GAP = 2;
@@ -213,6 +214,24 @@ function toggleOrder() {
   writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
 }
 
+// Sternefilter (v0.6.38): nur Bilder mit ★ oder ★★ (Feld r aus Lightroom)
+const starsOnly = () => readPref(STARS_KEY) === "1";
+const withStars = (list) => (starsOnly() ? list.filter((p) => p.r) : list);
+
+function toggleStars() {
+  writePref(STARS_KEY, starsOnly() ? "0" : "1");
+}
+
+function showStarButton() {
+  const btn = $("#stars");
+  const on = starsOnly();
+  btn.textContent = on ? "★" : "☆";
+  btn.classList.toggle("on", on);
+  btn.setAttribute("aria-pressed", String(on));
+  btn.title = on ? "Nur Bilder mit Sternen – antippen für alle" : "Alle Bilder – antippen für nur Bilder mit Sternen";
+  btn.hidden = false;
+}
+
 function toggleFolderOrder() {
   writePref(FOLDER_ORDER_KEY, foldersOldestFirst() ? "desc" : "asc");
 }
@@ -228,6 +247,8 @@ function showOrderButton(m, asc, toggle) {
 function setHeader(title, subtitle = "", back = false) {
   const order = $("#order");
   if (order) order.hidden = true;
+  const stars = $("#stars");
+  if (stars) stars.hidden = true;
   $("#title").textContent = title;
   $("#subtitle").textContent = subtitle;
   $("#back").hidden = !back;
@@ -824,6 +845,7 @@ function buildSearch() {
   }
   const text = new Array(list.length);
   const photoTerms = new Array(list.length);
+  const starred = [];
   list.forEach((p, i) => {
     const mine = [];
     for (const name of p.p || []) {
@@ -855,10 +877,11 @@ function buildSearch() {
       if (norm) mine.push(add("k", `k:${norm}`, i, { label: k, sub: "", norm }).key);
     }
     photoTerms[i] = mine;
+    if (p.r) starred.push(i);
     const parts = [p.de, p.sl, p.ci, p.st, p.co, p.f, ...(p.p || []), ...(p.kw || []), ...(p._en || [])];
     text[i] = ` ${normText(parts.filter(Boolean).join(" "))} `;
   });
-  return { terms, children, text, photoTerms };
+  return { terms, children, text, photoTerms, starred };
 }
 
 // Gewaehlte Begriffe (UND) plus Freitext (alle Woerter muessen vorkommen). null = keine Suche.
@@ -872,6 +895,7 @@ function searchPositions(keys, freeText) {
       pos = pos.filter((i) => set.has(i));
     }
   }
+  if (starsOnly()) pos = pos ? pos.filter((i) => DATA.allDesc[i].r) : SEARCH.starred;
   const w = words(freeText);
   if (w.length) {
     const base = pos || DATA.allDesc.map((_, i) => i);
@@ -959,7 +983,7 @@ function mountSearch(main, state, m) {
   const results = el("div", { class: "search-results" });
   main.append(bar, body, results);
 
-  const hasFilter = () => s.keys.length > 0 || words(s.text).length > 0;
+  const hasFilter = () => s.keys.length > 0 || words(s.text).length > 0 || starsOnly();
 
   // Kleiner Umschalter im Raster: aelteste / neueste zuerst (gemerkt, gilt auch fuer Alle Bilder)
   function renderOrder() {
@@ -1172,7 +1196,7 @@ function mountSearch(main, state, m) {
   }
 
   function renderResults() {
-    const signature = JSON.stringify([s.keys, words(s.text), oldestFirst()]);
+    const signature = JSON.stringify([s.keys, words(s.text), oldestFirst(), starsOnly()]);
     if (signature === s.shown) {
       if (m.grid) {
         m.grid.render();
@@ -1266,6 +1290,11 @@ function mountSearch(main, state, m) {
   }));
 
   m.search = { apply };
+  m.toggleStars = () => {
+    toggleStars();
+    showStarButton();
+    apply(history.state || { v: "search" });
+  };
   apply(state);
 }
 
@@ -1277,8 +1306,9 @@ const scrollMemory = new Map();
 // Je Reihenfolge eigene Ansicht und Scroll-Position (sonst passt sie nach dem Umschalten nicht)
 function viewKey(s) {
   const dir = (asc) => (asc ? "asc" : "desc");
-  if (s.v === "folder") return `folder:${dir(oldestFirst())}:${s.f}`;
-  if (s.v === "all") return `all:${dir(oldestFirst())}`;
+  const star = starsOnly() ? ":stars" : "";
+  if (s.v === "folder") return `folder:${dir(oldestFirst())}${star}:${s.f}`;
+  if (s.v === "all") return `all:${dir(oldestFirst())}${star}`;
   if (s.v === "search") return "search";
   return `folders:${dir(foldersOldestFirst())}`;
 }
@@ -1305,20 +1335,34 @@ function mountView(state) {
     setHeader(label.name, label.date ? `${label.date} · ${countLabel(f.c)}` : `${f.y} · ${countLabel(f.c)}`, true);
     // im Ordner: Standard aelteste zuerst, umschaltbar (gemeinsam mit Suche und Alle Bilder)
     showOrderButton(m, oldestFirst(), toggleOrder);
-    m.list = DATA.byFolder.get(f.n) || [];
+    showStarButton();
+    m.toggleStars = toggleStars;
+    m.list = withStars(DATA.byFolder.get(f.n) || []);
     if (!oldestFirst()) m.list = m.list.slice().reverse();
-    m.grid = new Grid(main, m.list);
+    if (starsOnly()) $("#subtitle").textContent = `${countLabel(m.list.length)} mit Sternen · von ${f.c}`;
+    if (m.list.length) m.grid = new Grid(main, m.list);
+    else main.append(el("p", { class: "center muted", text: "Keine Bilder mit Sternen in diesem Ordner." }));
   } else if (state.v === "all") {
-    setHeader("Alle Bilder", countLabel(DATA.photos.length));
+    m.list = withStars(oldestFirst() ? DATA.photos : DATA.allDesc);
+    const total = starsOnly() ? `${countLabel(m.list.length)} mit Sternen` : countLabel(m.list.length);
+    setHeader("Alle Bilder", total);
     showOrderButton(m, oldestFirst(), toggleOrder);
-    m.list = oldestFirst() ? DATA.photos : DATA.allDesc;
+    showStarButton();
+    m.toggleStars = toggleStars;
     // nach Jahren gruppiert (v0.6.35); das Jahr oben im Bild steht im Untertitel
-    const yearOf = (p) => `${p.t.slice(0, 4)} · ${countLabel(DATA.perYear.get(p.t.slice(0, 4)))}`;
-    m.grid = new Grid(main, m.list, yearOf, (year) => {
-      $("#subtitle").textContent = year || countLabel(DATA.photos.length);
-    });
+    const perYear = starsOnly() ? new Map() : DATA.perYear;
+    if (starsOnly()) for (const p of m.list) perYear.set(p.t.slice(0, 4), (perYear.get(p.t.slice(0, 4)) || 0) + 1);
+    const yearOf = (p) => `${p.t.slice(0, 4)} · ${countLabel(perYear.get(p.t.slice(0, 4)))}`;
+    if (m.list.length) {
+      m.grid = new Grid(main, m.list, yearOf, (year) => {
+        $("#subtitle").textContent = year || total;
+      });
+    } else {
+      main.append(el("p", { class: "center muted", text: "Noch keine Bilder mit Sternen – in Lightroom ★ oder ★★ setzen, neu exportieren, sync.bat." }));
+    }
   } else if (state.v === "search") {
     setHeader("Suche");
+    showStarButton();
     mountSearch(main, state, m);
     return;
   } else {
@@ -1449,6 +1493,15 @@ async function start() {
     if (!mounted || !mounted.toggleOrder) return;
     mounted.toggleOrder();
     const state = history.state || { v: "folders" };
+    scrollMemory.delete(viewKey(state));
+    render(state);
+  });
+  // Sternefilter in der Kopfzeile (Ordner, Alle Bilder, Suche); Suche zaehlt selbst neu, sonst neu aufbauen
+  $("#stars").addEventListener("click", () => {
+    if (!mounted || !mounted.toggleStars) return;
+    const state = history.state || { v: "folders" };
+    mounted.toggleStars();
+    if (state.v === "search") return;
     scrollMemory.delete(viewKey(state));
     render(state);
   });

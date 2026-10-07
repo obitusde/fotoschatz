@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.22 · 07.10.2026 (Suche: Orte ohne Bundesland, Jahrzehnte; Ordnerliste mit farbigen Jahren und Umschalter, Umschalter im Ordner, v0.6.37; davor v0.6.36 Alter der Personen)
+**Dokumentversion:** v3.23 · 07.10.2026 (Sternefilter ☆/★ in der Kopfzeile, v0.6.38; davor v0.6.37 Suche: Orte ohne Bundesland, Jahrzehnte; Ordnerliste mit farbigen Jahren und Umschaltern)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -480,6 +480,7 @@ Ohne Datei gelten diese Standardwerte:
 
 ### MVP-Ansichten
 - **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
+- **Sternefilter** (v0.6.38, Wunsch 07.10.2026: „nur Sterne an/aus, klein“): Knopf ☆/★ rechts in der Kopfzeile in Ordner (Bilder), Alle Bilder und Suche. ★ (blau) = nur Bilder mit ★ oder ★★ (Feld `r` aus `XMP-xmp:Rating`), ☆ = alle. Eine gemeinsame Einstellung (`fotoschatz.stars`), wird gemerkt. Untertitel zeigt „x Bilder mit Sternen“; in der Suche zählen Trefferzahlen, Personen, Orte und Jahre nur Bilder mit Sternen, und „Anzeigen“ geht auch ohne Begriff (= alle Bilder mit Sternen). Nicht in der Ordnerliste. Sterne kommen nur über Lightroom: setzen → neu exportieren → `sync.bat`.
 1. **Ordner** (Startansicht):
    - **Reine Textliste, keine Titelbilder** (bewusst so entschieden – nichts zu pflegen, nichts zufällig).
    - Jahre absteigend (Überschrift mit Anzahl bleibt beim Scrollen oben, **farbig hinterlegt** seit v0.6.37), darunter die Ordner neueste zuerst. **Umschalter** „⇅ neueste zuerst / älteste zuerst“ rechts in der Kopfzeile dreht Jahre und Ordner um (eigene Einstellung `fotoschatz.folder-order`, Standard neueste zuerst; Wunsch 07.10.2026). Je Ordner: Name ohne Datumspräfix, darunter Datum · Anzahl; „Weitere Bilder" am Ende des Jahres.
@@ -588,7 +589,7 @@ Ohne Datei gelten diese Standardwerte:
    - Antippen → Bilder an diesem Ort.
 4. **Umkreissuche:** Punkt auf der Karte wählen + Radius (1 / 5 / 20 / 50 km) → Entfernungsberechnung im Browser → Raster. Zusätzlich „In meiner Nähe" über den Standort des Handys.
 5. **Personen-Seite:** alle Personen mit Anzahl; pro Person chronologisch („durch die Jahre").
-6. **Best-of-Filter** nach Bewertung (★★ Lieblingsbilder, ★ wichtig – Entscheidung 03.10.2026), kombinierbar mit Suche/Ordner.
+6. **Best-of-Filter** nach Bewertung (★★ Lieblingsbilder, ★ wichtig – Entscheidung 03.10.2026), kombinierbar mit Suche/Ordner. ✅ Einfache Form seit v0.6.38 (Sterne an/aus); getrennt nach ★/★★ noch offen, falls gewünscht.
 7. **Diashow:** Vollbild mit automatischem Weiterblättern, einstellbares Intervall, optional zufällig.
 8. **Teilen:** Einzelbild über das Android-Teilen-Menü (Web Share API mit Datei), z. B. an WhatsApp.
 9. **Deep-Links** auf Ordner (und ggf. einzelne Bilder).
