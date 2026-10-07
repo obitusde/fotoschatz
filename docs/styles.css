@@ -10,6 +10,7 @@
   --on-accent: #ffffff;
   --year-bg: #e2ebfb;
   --year-text: #1d4fae;
+  --world-land: #dde1e7;
   --top-h: 56px;
   --nav-h: 60px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -29,6 +30,7 @@
     --on-accent: #0f1115;
     --year-bg: #1b2738;
     --year-text: #9cc0fa;
+    --world-land: #2b3039;
   }
 }
 
@@ -397,6 +399,28 @@ body.map-mode { overflow: hidden; }
   text-align: center;
 }
 .leaflet-container .leaflet-control-attribution { font-size: 10px; }
+/* ---------- Weltkarte (v0.7.3) ---------- */
+.world-canvas { position: absolute; inset: 0; background: var(--bg); font: inherit; }
+.world-canvas.leaflet-container { background: var(--bg); }
+.world-card {
+  position: absolute;
+  left: 10px; right: 10px;
+  bottom: 84px;
+  z-index: 1000;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 12px 44px 12px 16px;
+  background: var(--surface);
+  border-radius: 14px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .3);
+}
+.world-card-name { font-size: 1.15rem; font-weight: 700; }
+.world-card-years { margin-top: 4px; font-weight: 600; color: var(--accent); overflow-wrap: anywhere; }
+.world-card-meta { margin-top: 2px; font-size: .85rem; color: var(--muted); }
+.world-card-close { position: absolute; top: 4px; right: 4px; width: 36px; height: 36px; }
+.world-card-close svg { width: 18px; height: 18px; }
+.country-list { max-width: 760px; margin: 0 auto; }
+.country-row .meta { overflow-wrap: anywhere; }
 .v-maplink { color: var(--accent); text-decoration: underline; padding: 0; }
 .tree-picks { padding: 8px 16px 10px 36px; border-bottom: 1px solid var(--line); }
 .search-results { padding-top: 2px; }

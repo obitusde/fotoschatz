@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.26 · 07.10.2026 (Karte wieder mit OpenStreetMap – CARTO verlangte einen API-Schlüssel, v0.7.2; davor v0.7.1 kleinere Bilder)
+**Dokumentversion:** v3.27 · 07.10.2026 (Weltkarte „Wo war ich wann?“ mit Länderliste, v0.7.3; davor v0.7.2 Karte wieder mit OpenStreetMap)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -509,7 +509,10 @@ Ohne Datei gelten diese Standardwerte:
    - **Ort suchen** (Entscheidung 07.10.2026: nur eigene Orte, nichts geht nach außen): Vorschläge aus Land/Stadt/Ort der eigenen Bilder (wie die Suche, ohne Bundesland), Mitte = Median der GPS-Punkte; Land → Karte auf das Land (2–98 %-Bereich der Punkte), sonst Kreis. **Umkreis** 1 · 5 · 20 · 50 km (Standard 5), ✕ = Umkreis aus. **Lange drücken** auf die Karte setzt den Mittelpunkt dort. **◎** = eigener Standort (Browser fragt einmal).
    - Bild-Infos: Zeile „Ort“ hat den Link „auf Karte“ (springt auf Zoom 17 an diese Stelle).
    - Letzte Kartenansicht wird gemerkt (`fotoschatz.map`). In der Cloud im Browser getestet (368 Testbilder mit GPS: Vorschläge, Umkreise 1/5/20 km, Raster, Betrachter, „auf Karte“ und zurück, Standort, langes Drücken, Gruppe antippen, Tab-Wechsel, Neuladen; hell/dunkel); Kartenbilder selbst konnten in der Cloud nicht geladen werden (gesperrt) → ⚠ am Handy prüfen.
-   - Als Nächstes (v0.7.3, freigegeben): Weltkarte „Wann war ich wo?“ – Länder eingefärbt, Antippen zeigt Jahre (z. B. 1997–1999, 2006) und Anzahl, Jahr antippen → diese Bilder; dazu Länderliste nach erstem Besuch.
+   - **Weltkarte „Wo war ich wann?“** (v0.7.3; Ziel laut mir: sehen, wo ich wann war – **keine Bilder/Vorschauen** auf der Weltkarte): Knopf „🌍 Länder“ rechts in der Kopfzeile der Karte. Nur Länderumrisse ohne Kartenbilder (kein OSM-Abruf): besuchte Länder in der App-Farbe, übrige grau, hell/dunkel. Land antippen → Karte unten mit Name, **Jahren** (aufeinanderfolgende zusammengefasst: „1997–1999 · 2006 · 2024“) und „612 Bilder · 5 Jahre“; unbesuchte: „Hier gibt es noch keine Bilder.“ Leiste „Liste aller Länder ›“ → Liste nach erstem Besuch (Name, Jahre, Anzahl); Antippen → zurück zur Weltkarte auf dieses Land. Untertitel „7 Länder · 2006–2024“.
+   - Daten: Land = Lightroom-Feld „Land“ (`co`, also **auch Bilder ohne GPS**), Jahr = Aufnahmezeit. Zuordnung Name → ISO-Code über `Intl.DisplayNames` (englisch + deutsch, `&`→and/und, „St.“→Saint) + `COUNTRY_ALIASES` + England/Schottland/Wales/Nordirland → GB; alte bzw. Sammel-Codes ausgeschlossen (`OLD_REGION_CODES`, z. B. DD hieß auf Deutsch auch „Deutschland“, FX „France“, VD „Vietnam“). In der Cloud geprüft: alle 237 Umrisse passen zu ihrem englischen und deutschen Namen. Länder ohne passenden Code stehen in der Liste mit „Land unbekannt“.
+   - Umrisse: `docs/vendor/natural-earth/laender.json` (Natural Earth 1:50m, gemeinfrei, inkl. kleiner Länder wie Monaco/Liechtenstein; verkleinert auf ISO-Code + vereinfachte Linien, 621 KB, gezippt ≈ 195 KB; wird erst beim Öffnen der Weltkarte geladen; `LIESMICH.txt` daneben). Frankreich schließt Übersee-Gebiete mit ein (werden mit eingefärbt).
+   - In der Cloud im Browser getestet (hell/dunkel, Land antippen, unbesuchtes Land, Liste, aus der Liste zurück, Zurück zur Karte).
 6. **Vollbild-Betrachter:**
    - Wischen links/rechts, Nachbarbilder vorladen.
    - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter (sofort), Mitte = Bedienelemente aus/ein (mit ≈ 0,3 s Verzögerung wegen Doppeltippen). Wischen links/rechts blättert.
@@ -592,7 +595,7 @@ Ohne Datei gelten diese Standardwerte:
    - Gibt es am Tag nichts, ±3 Tage.
    - Bevorzugt ★★ Lieblingsbilder, dann ★ wichtige.
 2. **„Überrasch mich":** zufällige Auswahl (bevorzugt gut bewertet) oder zufälliger Ordner.
-3. **Karte:** ✅ v0.7.0 (siehe Abschnitt 8, Ansicht 5). Offen: Weltkarte Länder/Jahre (v0.7.3).
+3. **Karte:** ✅ v0.7.0 (siehe Abschnitt 8, Ansicht 5), Weltkarte Länder/Jahre ✅ v0.7.3.
 4. **Umkreissuche:** ✅ v0.7.0 (Ort suchen oder lange drücken + 1/5/20/50 km, „In meiner Nähe“).
 5. **Personen-Seite:** alle Personen mit Anzahl; pro Person chronologisch („durch die Jahre").
 6. **Best-of-Filter** nach Bewertung (★★ Lieblingsbilder, ★ wichtig – Entscheidung 03.10.2026), kombinierbar mit Suche/Ordner. ✅ Einfache Form seit v0.6.38 (Sterne an/aus); getrennt nach ★/★★ noch offen, falls gewünscht.

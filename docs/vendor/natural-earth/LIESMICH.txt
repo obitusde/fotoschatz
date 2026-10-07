@@ -1,0 +1,4 @@
+laender.json – Ländergrenzen für die Weltkarte der App (v0.7.3).
+Quelle: Natural Earth, Admin 0 Countries, 1:50m (https://www.naturalearthdata.com/), gemeinfrei (public domain).
+Verkleinert: nur ISO-Code (Feld "c", ISO_A2_EH; Nordzypern -> CY, Somaliland -> SO, Siachen ausgelassen),
+Linien vereinfacht (Douglas-Peucker 0,03°) und auf 2 Nachkommastellen gerundet.

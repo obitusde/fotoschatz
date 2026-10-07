@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.2";
+const APP_VERSION = "0.7.3";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -236,6 +236,14 @@ function toggleFolderOrder() {
   writePref(FOLDER_ORDER_KEY, foldersOldestFirst() ? "desc" : "asc");
 }
 
+// Knopf rechts in der Kopfzeile fuer eine eigene Aktion (z. B. Karte -> Laender)
+function showHeaderAction(m, label, action) {
+  const btn = $("#order");
+  btn.textContent = label;
+  btn.hidden = false;
+  m.headerAction = action;
+}
+
 // Kleiner Umschalter rechts in der Kopfzeile (Ordnerliste, Ordner, Alle Bilder) – je Ansicht eigene Aktion
 function showOrderButton(m, asc, toggle) {
   const order = $("#order");
@@ -255,7 +263,7 @@ function setHeader(title, subtitle = "", back = false) {
 }
 
 function updateNav(view) {
-  const active = view === "folder" ? "folders" : view === "mapgrid" ? "map" : view;
+  const active = view === "folder" ? "folders" : ["mapgrid", "world", "countries"].includes(view) ? "map" : view;
   for (const btn of document.querySelectorAll("#nav button")) {
     btn.classList.toggle("active", btn.dataset.view === active);
   }
@@ -1633,6 +1641,194 @@ function focusMapAt(at) {
   MAP.map.setView(at, 17);
 }
 
+/* ---------------------------------------------------------------- Weltkarte (v0.7.3) */
+
+// "Wann war ich wo?": Laender aus dem Lightroom-Feld Land (auch Bilder ohne GPS), Jahre aus der Aufnahmezeit.
+// Ohne Kartenbilder – nur Laenderumrisse (Natural Earth, gemeinfrei, docs/vendor/natural-earth/laender.json).
+const WORLD_FILE = "vendor/natural-earth/laender.json";
+let WORLD = null;
+let countryCodes = null;
+// alte bzw. Sammel-Codes, die der Browser auch kennt (DD = DDR heisst auf Deutsch auch "Deutschland")
+const OLD_REGION_CODES = new Set(["DD", "FX", "YU", "CS", "SU", "ZR", "TP", "BU", "NT", "VD", "YD", "AN", "NH", "RH", "BU", "DY", "HV", "EU", "EZ", "UN", "QO", "ZZ", "XA", "XB"]);
+const UK_PARTS = { "England": "GB", "Scotland": "GB", "Wales": "GB", "Northern Ireland": "GB", "Schottland": "GB" };
+
+// Laendername (englisch wie in Lightroom oder schon deutsch) -> ISO-Code
+function countryCodeOf(name) {
+  if (!countryCodes) {
+    countryCodes = new Map();
+    try {
+      const en = new Intl.DisplayNames(["en"], { type: "region", fallback: "none" });
+      const de = new Intl.DisplayNames(["de"], { type: "region", fallback: "none" });
+      for (let a = 65; a <= 90; a++) {
+        for (let b = 65; b <= 90; b++) {
+          const code = String.fromCharCode(a, b);
+          if (OLD_REGION_CODES.has(code)) continue;
+          for (const names of [en, de]) {
+            let n;
+            try { n = names.of(code); } catch (e) { continue; }
+            // erster Code gewinnt: "France" ist FR, nicht FX (Metropolitan France)
+            if (!n || n === code) continue;
+            for (const variant of [n, n.replace(/&/g, "and"), n.replace(/&/g, "und"), n.replace(/^St\. /, "Saint ")]) {
+              if (!countryCodes.has(normText(variant))) countryCodes.set(normText(variant), code);
+            }
+          }
+        }
+      }
+    } catch (e) { /* alter Browser: Laender ohne Umriss */ }
+    for (const [n, code] of Object.entries({ ...COUNTRY_ALIASES, ...UK_PARTS })) countryCodes.set(normText(n), code);
+  }
+  return countryCodes.get(normText(name)) || null;
+}
+
+function countryName(code) {
+  try {
+    return new Intl.DisplayNames(["de"], { type: "region", fallback: "none" }).of(code) || code;
+  } catch (e) {
+    return code;
+  }
+}
+
+// [1997, 1998, 1999, 2006] -> "1997–1999 · 2006"
+function yearRanges(years) {
+  const sorted = [...years].sort((a, b) => a - b);
+  const parts = [];
+  for (let i = 0; i < sorted.length; i++) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+    parts.push(j > i ? `${sorted[i]}–${sorted[j]}` : String(sorted[i]));
+    i = j;
+  }
+  return parts.join(" · ");
+}
+
+// je Land: Name, Code, Jahre, Anzahl Bilder; sortiert nach erstem Besuch
+function worldCountries() {
+  if (WORLD && WORLD.countries) return WORLD.countries;
+  const byKey = new Map();
+  for (const p of DATA.photos) {
+    if (!p.co) continue;
+    const code = countryCodeOf(p.co);
+    const key = code || `?${normText(p.co)}`;
+    let c = byKey.get(key);
+    if (!c) {
+      c = { key, code, name: p.co, years: new Set(), n: 0 };
+      byKey.set(key, c);
+    }
+    c.years.add(+p.t.slice(0, 4));
+    c.n++;
+  }
+  const list = [...byKey.values()].map((c) => ({
+    ...c, first: Math.min(...c.years), last: Math.max(...c.years), ranges: yearRanges(c.years),
+  }));
+  list.sort((a, b) => a.first - b.first || a.name.localeCompare(b.name, "de"));
+  return list;
+}
+
+function worldView() {
+  if (WORLD) return WORLD;
+  const canvas = el("div", { class: "world-canvas" });
+  const card = el("div", { class: "world-card", hidden: true });
+  const bar = el("button", { type: "button", class: "map-bar", text: "Liste aller Länder ›", onclick: () => navigate({ v: "countries" }) });
+  WORLD = { wrap: el("div", { class: "map-wrap" }, canvas, card, bar), canvas, card, bar, map: null, layer: null, countries: null, focus: null };
+  WORLD.countries = worldCountries();
+  WORLD.byCode = new Map(WORLD.countries.filter((c) => c.code).map((c) => [c.code, c]));
+  return WORLD;
+}
+
+function worldColors() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name) => css.getPropertyValue(name).trim();
+  return { visited: v("--accent"), land: v("--world-land"), line: v("--bg") };
+}
+
+function worldStyle(feature) {
+  const c = worldColors();
+  const visited = WORLD.byCode.has(feature.properties.c);
+  const chosen = WORLD.chosen === feature.properties.c;
+  return {
+    fillColor: visited ? c.visited : c.land, fillOpacity: visited ? (chosen ? 1 : 0.75) : 1,
+    color: chosen ? c.visited : c.line, weight: chosen ? 2.5 : 0.6,
+  };
+}
+
+function showCountry(code) {
+  const W = WORLD;
+  W.chosen = code;
+  if (W.layer) W.layer.setStyle(worldStyle);
+  const c = W.byCode.get(code);
+  W.card.hidden = false;
+  W.card.replaceChildren(...[
+    el("div", { class: "world-card-name", text: c ? c.name : countryName(code) }),
+    c ? el("div", { class: "world-card-years", text: c.ranges })
+      : el("div", { class: "world-card-meta", text: "Hier gibt es noch keine Bilder." }),
+    c ? el("div", { class: "world-card-meta", text: `${countLabel(c.n)} · ${c.years.size === 1 ? "1 Jahr" : `${c.years.size} Jahre`}` }) : null,
+    el("button", { type: "button", class: "icon-btn world-card-close", "aria-label": "Schließen", onclick: hideCountry }, svgNode(ICON_X)),
+  ].filter(Boolean));
+}
+
+function hideCountry() {
+  WORLD.chosen = null;
+  WORLD.card.hidden = true;
+  if (WORLD.layer) WORLD.layer.setStyle(worldStyle);
+}
+
+async function initWorld() {
+  const W = WORLD;
+  const res = await fetch(WORLD_FILE);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const shapes = await res.json();
+  const map = L.map(W.canvas, {
+    zoomControl: false, preferCanvas: true, minZoom: 1, maxZoom: 6, zoomSnap: 0.25,
+    worldCopyJump: false, maxBounds: [[-80, -200], [88, 200]], maxBoundsViscosity: 0.8,
+  });
+  map.attributionControl.setPrefix(false);
+  map.attributionControl.addAttribution('Grenzen: <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener">Natural Earth</a>');
+  W.layer = L.geoJSON(shapes, {
+    style: worldStyle,
+    onEachFeature: (feature, layer) => layer.on("click", (e) => {
+      L.DomEvent.stopPropagation(e);
+      showCountry(feature.properties.c);
+    }),
+  }).addTo(map);
+  map.on("click", hideCountry);
+  W.map = map;
+  W.shapes = new Map();
+  W.layer.eachLayer((layer) => W.shapes.set(layer.feature.properties.c, layer));
+  // Start: alle besuchten Laender im Blick
+  let bounds = null;
+  for (const code of W.byCode.keys()) {
+    const layer = W.shapes.get(code);
+    if (layer) bounds = bounds ? bounds.extend(layer.getBounds()) : L.latLngBounds(layer.getBounds().getSouthWest(), layer.getBounds().getNorthEast());
+  }
+  if (bounds) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 4 });
+  else map.setView([30, 10], 1);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => W.layer.setStyle(worldStyle));
+}
+
+function focusCountry(code) {
+  const layer = WORLD.shapes && WORLD.shapes.get(code);
+  if (layer) WORLD.map.fitBounds(layer.getBounds(), { padding: [40, 40], maxZoom: 5 });
+  showCountry(code);
+}
+
+function countryListView() {
+  const list = worldCountries();
+  const wrap = el("div", { class: "country-list" });
+  for (const c of list) {
+    wrap.append(el("button", {
+      type: "button", class: "folder-row country-row",
+      onclick: () => {
+        if (!c.code) return;
+        WORLD.focus = c.code;
+        history.back();
+      },
+    }, el("div", { class: "name", text: c.name }),
+    el("div", { class: "meta", text: `${c.ranges} · ${countLabel(c.n)}${c.code && !(WORLD.shapes && WORLD.shapes.has(c.code)) && WORLD.shapes ? " · nicht auf der Karte" : c.code ? "" : " · Land unbekannt"}` })));
+  }
+  if (!list.length) wrap.append(el("p", { class: "center muted", text: "Noch keine Bilder mit Land." }));
+  return wrap;
+}
+
 /* ---------------------------------------------------------------- Ansichten & Verlauf */
 
 let mounted = null;
@@ -1646,6 +1842,8 @@ function viewKey(s) {
   if (s.v === "all") return `all:${dir(oldestFirst())}${star}`;
   if (s.v === "search") return "search";
   if (s.v === "map") return "map";
+  if (s.v === "world") return "world";
+  if (s.v === "countries") return "countries";
   if (s.v === "mapgrid") return `mapgrid:${dir(oldestFirst())}`;
   return `folders:${dir(foldersOldestFirst())}`;
 }
@@ -1658,7 +1856,7 @@ function mountView(state) {
   }
   const main = $("#main");
   main.replaceChildren();
-  document.body.classList.toggle("map-mode", state.v === "map");
+  document.body.classList.toggle("map-mode", state.v === "map" || state.v === "world");
   const m = { key, grid: null, list: null };
   mounted = m;
 
@@ -1702,6 +1900,7 @@ function mountView(state) {
     const M = mapView();
     const without = DATA.photos.length - M.points.length;
     setHeader("Karte", `${countLabel(M.points.length)} mit Ort${without ? ` · ${without.toLocaleString("de-DE")} ohne` : ""}`);
+    showHeaderAction(m, "🌍 Länder", () => navigate({ v: "world" }));
     main.append(M.wrap);
     m.list = M.result;
     m.apply = (st) => { if (st.at) focusMapAt(st.at); };
@@ -1715,6 +1914,26 @@ function mountView(state) {
       M.bar.textContent = "Karte konnte nicht geladen werden – Verbindung prüfen.";
     });
     return;
+  } else if (state.v === "world") {
+    const W = worldView();
+    const years = W.countries.length ? `${Math.min(...W.countries.map((c) => c.first))}–${Math.max(...W.countries.map((c) => c.last))}` : "";
+    setHeader("Wo war ich wann?", W.countries.length ? `${W.countries.length} ${W.countries.length === 1 ? "Land" : "Länder"} · ${years}` : "", true);
+    main.append(W.wrap);
+    const ready = () => {
+      if (W.focus) focusCountry(W.focus);
+      W.focus = null;
+    };
+    m.apply = ready;
+    loadLeaflet().then(() => (W.map ? W.map.invalidateSize() : initWorld())).then(() => {
+      if (mounted === m) ready();
+    }).catch(() => {
+      W.bar.textContent = "Weltkarte konnte nicht geladen werden – Verbindung prüfen.";
+    });
+    return;
+  } else if (state.v === "countries") {
+    const W = worldView();
+    setHeader("Länder", `${W.countries.length} · nach erstem Besuch`, true);
+    main.append(countryListView());
   } else if (state.v === "mapgrid") {
     if (!MAP || !MAP.shown) {
       mounted = null;
@@ -1861,6 +2080,10 @@ async function start() {
   $("#back").addEventListener("click", () => history.back());
   // Umschalter in der Kopfzeile (Ordnerliste, Ordner, Alle Bilder): Reihenfolge umdrehen, oben neu beginnen
   $("#order").addEventListener("click", () => {
+    if (mounted && mounted.headerAction) {
+      mounted.headerAction();
+      return;
+    }
     if (!mounted || !mounted.toggleOrder) return;
     mounted.toggleOrder();
     const state = history.state || { v: "folders" };

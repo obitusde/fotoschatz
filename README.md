@@ -72,5 +72,4 @@ Die `.py`-Dateien gehören zu den `.bat`-Dateien (`regeln.py` und `katalog.py` s
 - [ ] GPS nachtragen, wo es geht: mit `gps_test`, von Hand auf die Karte ziehen, oder `ort-egal` vergeben.
 - [ ] **Erstbefüllung:** alle Ordner exportieren und mit `sync.bat` hochladen. Danach Größe und Tempo am Handy prüfen.
 - [ ] Link an die Familie schicken.
-- [ ] Karte: Weltkarte „Wann war ich wo?“ (v0.7.3). Die Karte selbst mit Ortssuche und Umkreis gibt es seit v0.7.0.
 - [ ] Später in der App: Chromecast, „Heute vor X Jahren“, Personen-Seite, Diashow, Teilen (Liste in `CLAUDE.md`, Abschnitt 10).
