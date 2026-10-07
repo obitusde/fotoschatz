@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.6.38";
+const APP_VERSION = "0.7.0";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
@@ -255,7 +255,7 @@ function setHeader(title, subtitle = "", back = false) {
 }
 
 function updateNav(view) {
-  const active = view === "folder" ? "folders" : view;
+  const active = view === "folder" ? "folders" : view === "mapgrid" ? "map" : view;
   for (const btn of document.querySelectorAll("#nav button")) {
     btn.classList.toggle("active", btn.dataset.view === active);
   }
@@ -611,12 +611,17 @@ const Viewer = {
         return age ? `${n} (${age})` : n;
       }).join(", ")]);
     }
-    if (place) rows.push(["Ort", place]);
+    // Ort mit Link zur Karte (v0.7.0)
+    const mapLink = hasGps(p) ? el("button", {
+      type: "button", class: "v-maplink", text: "auf Karte",
+      onclick: () => navigate({ v: "map", at: [p.la, p.lo] }),
+    }) : null;
+    if (place || mapLink) rows.push(["Ort", [place, place && mapLink ? " · " : "", mapLink]]);
     if (p.de && p.de !== label.name && p.de !== p.f) rows.push(["Beschreibung", p.de]);
     if (p.r) rows.push(["Bewertung", p.r === 1 ? "★ wichtig" : p.r === 2 ? "★★ Lieblingsbild" : "★".repeat(p.r)]);
     if (p.o) rows.push(["Datei", p.o]);
     this.info.replaceChildren(...rows.map(([name, value, cls]) => el("div", { class: "row" + (cls ? ` ${cls}` : "") },
-      el("span", { class: "label", text: name }), el("span", { class: "value", text: value }))));
+      el("span", { class: "label", text: name }), el("span", { class: "value" }, ...[].concat(value)))));
   },
 
   go(delta) {
@@ -1298,6 +1303,335 @@ function mountSearch(main, state, m) {
   apply(state);
 }
 
+/* ---------------------------------------------------------------- Karte (v0.7.0) */
+
+// Leaflet + Gruppierung liegen fest versioniert unter docs/vendor/ und werden erst beim Oeffnen der Karte geladen.
+const LEAFLET_DIR = "vendor/leaflet-1.9.4";
+const CLUSTER_DIR = "vendor/leaflet.markercluster-1.5.3";
+const MAP_VIEW_KEY = "fotoschatz.map";   // letzte Kartenansicht "lat,lng,zoom"
+const RADII = [1, 5, 20, 50];            // Umkreis in km
+const ICON_LOCATE = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>';
+
+let MAP = null;
+let leafletLoading = null;
+
+const hasGps = (p) => typeof p.la === "number" && typeof p.lo === "number" && !(p.la === 0 && p.lo === 0);
+
+function quantile(values, q) {
+  const sorted = values.slice().sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+}
+
+function distanceKm(a, b, c, d) {
+  const rad = Math.PI / 180;
+  const x = Math.sin((c - a) * rad / 2) ** 2 + Math.cos(a * rad) * Math.cos(c * rad) * Math.sin((d - b) * rad / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(Math.min(1, x)));
+}
+
+function loadLeaflet() {
+  if (!leafletLoading) {
+    const script = (src) => new Promise((resolve, reject) => {
+      document.head.append(el("script", { src, onload: resolve, onerror: () => reject(new Error(src)) }));
+    });
+    document.head.append(el("link", { rel: "stylesheet", href: `${LEAFLET_DIR}/leaflet.css` }),
+      el("link", { rel: "stylesheet", href: `${CLUSTER_DIR}/MarkerCluster.css` }));
+    leafletLoading = script(`${LEAFLET_DIR}/leaflet.js`).then(() => script(`${CLUSTER_DIR}/leaflet.markercluster.js`));
+    leafletLoading.catch(() => { leafletLoading = null; });
+  }
+  return leafletLoading;
+}
+
+// Orte aus den eigenen Bildern (Land › Stadt › Ort, wie in der Suche); Mitte = Median der GPS-Punkte
+function mapPlaces() {
+  if (MAP.places) return MAP.places;
+  const byKey = new Map();
+  for (const p of MAP.points) {
+    const path = placePath(p, SEARCH_PLACE_KEYS);
+    let key = "";
+    path.forEach((name, depth) => {
+      key += `|${normText(name)}`;
+      let e = byKey.get(key);
+      if (!e) {
+        e = { label: name, sub: path.slice(0, depth).reverse().join(", "), norm: normText(name), country: depth === 0, la: [], lo: [] };
+        byKey.set(key, e);
+      }
+      e.la.push(p.la);
+      e.lo.push(p.lo);
+    });
+  }
+  MAP.places = [...byKey.values()].map((e) => ({
+    label: e.label, sub: e.sub, norm: e.norm, country: e.country, n: e.la.length,
+    center: [quantile(e.la, 0.5), quantile(e.lo, 0.5)],
+    bounds: [[quantile(e.la, 0.02), quantile(e.lo, 0.02)], [quantile(e.la, 0.98), quantile(e.lo, 0.98)]],
+  }));
+  return MAP.places;
+}
+
+function findPlaces(query) {
+  const w = words(query);
+  if (!w.length) return [];
+  return mapPlaces().filter((pl) => w.every((x) => pl.norm.includes(x)))
+    .map((pl) => ({ pl, starts: pl.norm.startsWith(w[0]) ? 0 : 1 }))
+    .sort((a, b) => a.starts - b.starts || b.pl.n - a.pl.n)
+    .slice(0, 8).map((x) => x.pl);
+}
+
+// Kachel auf der Karte: Vorschaubild, bei Gruppen mit Anzahl
+function pinIcon(p, count) {
+  const style = focusStyle(p);
+  const img = `<img src="${thumbUrl(p)}" alt="" loading="lazy" decoding="async"${style ? ` style="${style}"` : ""}>`;
+  const size = count ? 52 : 44;
+  return L.divIcon({
+    html: count ? `${img}<span>${count.toLocaleString("de-DE")}</span>` : img,
+    className: count ? "map-pin map-group" : "map-pin",
+    iconSize: [size, size],
+  });
+}
+
+// Titelbild einer Gruppe: am liebsten ★★, dann ★, dann das neueste
+function groupPhoto(cluster) {
+  if (cluster.fsPhoto) return cluster.fsPhoto;
+  let best = null;
+  if (cluster.getChildCount() <= 300) {
+    for (const marker of cluster.getAllChildMarkers()) {
+      const p = marker.photo;
+      if (!best || (p.r || 0) > (best.r || 0) || ((p.r || 0) === (best.r || 0) && p.t > best.t)) best = p;
+    }
+  } else {
+    let c = cluster;
+    while (!c._markers.length && c._childClusters.length) c = c._childClusters[0];
+    best = (c._markers[0] || cluster.getAllChildMarkers()[0]).photo;
+  }
+  cluster.fsPhoto = best;
+  return best;
+}
+
+function mapView() {
+  if (MAP) return MAP;
+  const input = el("input", {
+    type: "search", placeholder: "Ort suchen …", enterkeyhint: "search",
+    autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Ort suchen",
+  });
+  const clear = el("button", { type: "button", class: "icon-btn search-clear", "aria-label": "Eingabe löschen", hidden: true }, svgNode(ICON_X));
+  const suggest = el("div", { class: "map-suggest", hidden: true });
+  const radius = el("div", { class: "map-radius", hidden: true });
+  const canvas = el("div", { class: "map-canvas" });
+  const locate = el("button", { type: "button", class: "map-locate", title: "In meiner Nähe", "aria-label": "In meiner Nähe" }, svgNode(ICON_LOCATE));
+  const bar = el("button", { type: "button", class: "map-bar", disabled: true, text: "Karte wird geladen …" });
+  const wrap = el("div", { class: "map-wrap" }, canvas,
+    el("div", { class: "map-top" }, el("div", { class: "search-field map-field" }, svgNode(ICON_SEARCH), input, clear), suggest, radius),
+    locate, bar);
+  MAP = {
+    wrap, canvas, input, clear, suggest, radius, locate, bar,
+    map: null, cluster: null, circle: null,
+    points: DATA.photos.filter(hasGps), places: null,
+    center: null, label: "", km: 5, result: [], shown: null,
+  };
+
+  const showSuggest = () => {
+    const found = findPlaces(input.value);
+    clear.hidden = !input.value;
+    suggest.hidden = !found.length && !words(input.value).length;
+    suggest.replaceChildren(...(found.length ? found.map((pl) => el("button", {
+      type: "button", class: "sg-row", onclick: () => choosePlace(pl),
+    }, el("span", { class: "name", text: pl.label }),
+    el("span", { class: "meta", text: pl.sub ? `${pl.sub} · ${countLabel(pl.n)}` : countLabel(pl.n) })))
+      : [el("p", { class: "sg-empty", text: "Kein Ort mit Bildern gefunden – oder lange auf die Karte drücken." })]));
+  };
+  input.addEventListener("input", showSuggest);
+  input.addEventListener("focus", () => { if (input.value) showSuggest(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const first = findPlaces(input.value)[0];
+    if (first) choosePlace(first);
+  });
+  clear.addEventListener("click", () => {
+    input.value = "";
+    clear.hidden = true;
+    suggest.hidden = true;
+    clearCenter();
+  });
+  locate.addEventListener("click", () => {
+    if (!navigator.geolocation) return flashBar("Standort ist hier nicht verfügbar.");
+    bar.textContent = "Standort wird gesucht …";
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setCenter([pos.coords.latitude, pos.coords.longitude], "deinen Standort"),
+      () => flashBar("Standort nicht verfügbar – Erlaubnis im Browser prüfen."),
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
+  });
+  bar.addEventListener("click", () => {
+    if (!MAP.result.length) return;
+    MAP.shown = { list: MAP.result, sub: barText() };
+    navigate({ v: "mapgrid" });
+  });
+  return MAP;
+}
+
+function initMap() {
+  const M = MAP;
+  const map = L.map(M.canvas, { zoomControl: false, preferCanvas: true, worldCopyJump: true, maxZoom: 18 });
+  map.attributionControl.setPrefix(false);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+    referrerPolicy: "strict-origin-when-cross-origin",   // OpenStreetMap verlangt einen Referer; das Geheimnis steht im Hash und wird nie gesendet
+  }).addTo(map);
+  const cluster = L.markerClusterGroup({
+    chunkedLoading: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, spiderfyOnMaxZoom: false,
+    maxClusterRadius: 64, iconCreateFunction: (c) => pinIcon(groupPhoto(c), c.getChildCount()),
+  });
+  cluster.addLayers(M.points.map((p) => {
+    const marker = L.marker([p.la, p.lo], { icon: pinIcon(p, 0), keyboard: false });
+    marker.photo = p;
+    return marker;
+  }));
+  // Gruppe antippen: hineinzoomen; liegen alle Bilder an einer Stelle, gleich als Raster zeigen
+  cluster.on("clusterclick", (e) => {
+    const c = e.layer;
+    const b = c.getBounds();
+    if (map.getZoom() >= map.getMaxZoom() || b.getNorthEast().equals(b.getSouthWest(), 0.0002)) {
+      const list = c.getAllChildMarkers().map((mk) => mk.photo).sort((x, y) => (x.t < y.t ? -1 : 1));
+      MAP.shown = { list, sub: `${countLabel(list.length)} an dieser Stelle` };
+      navigate({ v: "mapgrid" });
+    } else {
+      c.zoomToBounds({ padding: [48, 48] });
+    }
+  });
+  cluster.on("click", (e) => openMapPhoto(e.layer.photo));
+  map.addLayer(cluster);
+  map.on("moveend", () => {
+    const c = map.getCenter();
+    writePref(MAP_VIEW_KEY, `${c.lat.toFixed(5)},${c.lng.toFixed(5)},${map.getZoom()}`);
+    updateBar();
+  });
+  map.on("contextmenu", (e) => setCenter([e.latlng.lat, e.latlng.lng], "den markierten Punkt", false));
+  map.on("click", () => { M.suggest.hidden = true; M.input.blur(); });
+  M.map = map;
+  M.cluster = cluster;
+
+  const saved = (readPref(MAP_VIEW_KEY) || "").split(",").map(Number);
+  if (saved.length === 3 && saved.every(Number.isFinite)) map.setView([saved[0], saved[1]], saved[2]);
+  else if (M.points.length) {
+    const la = M.points.map((p) => p.la);
+    const lo = M.points.map((p) => p.lo);
+    map.fitBounds([[quantile(la, 0.01), quantile(lo, 0.01)], [quantile(la, 0.99), quantile(lo, 0.99)]], { padding: [40, 40] });
+  } else map.setView([30, 10], 2);
+}
+
+function accentColor() {
+  return getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#2f6fdb";
+}
+
+function setCenter(center, label, fit = true) {
+  const M = MAP;
+  M.center = center;
+  M.label = label;
+  if (!M.circle) {
+    M.circle = L.circle(center, { radius: M.km * 1000, color: accentColor(), weight: 2, fillOpacity: 0.08, interactive: false }).addTo(M.map);
+  } else {
+    M.circle.setLatLng(center);
+    M.circle.setRadius(M.km * 1000);
+  }
+  renderRadius();
+  if (fit) M.map.fitBounds(M.circle.getBounds(), { padding: [24, 24] });
+  updateBar();
+}
+
+function clearCenter() {
+  const M = MAP;
+  if (M.circle) M.circle.remove();
+  M.circle = null;
+  M.center = null;
+  renderRadius();
+  updateBar();
+}
+
+function choosePlace(pl) {
+  const M = MAP;
+  M.input.value = pl.label;
+  M.clear.hidden = false;
+  M.suggest.hidden = true;
+  M.input.blur();
+  if (pl.country) {
+    clearCenter();
+    M.map.fitBounds(pl.bounds, { padding: [32, 32], maxZoom: 12 });
+  } else {
+    setCenter(pl.center, pl.label);
+  }
+}
+
+function renderRadius() {
+  const M = MAP;
+  M.radius.hidden = !M.center;
+  if (!M.center) return;
+  M.radius.replaceChildren(
+    el("span", { class: "map-radius-label", text: "Umkreis" }),
+    ...RADII.map((km) => el("button", {
+      type: "button", class: "r" + (km === M.km ? " on" : ""), text: `${km} km`,
+      onclick: () => {
+        M.km = km;
+        setCenter(M.center, M.label);
+      },
+    })),
+    el("button", { type: "button", class: "icon-btn r-off", "aria-label": "Umkreis aus", onclick: clearCenter }, svgNode(ICON_X)));
+}
+
+// Bilder im Umkreis (wenn gesetzt) bzw. im sichtbaren Kartenausschnitt, aelteste zuerst
+function mapResult() {
+  const M = MAP;
+  if (M.center) {
+    const [a, b] = M.center;
+    return M.points.filter((p) => distanceKm(a, b, p.la, p.lo) <= M.km);
+  }
+  const bounds = M.map.getBounds();
+  const west = bounds.getWest();
+  const east = bounds.getEast();
+  if (east - west >= 360) return M.points.filter((p) => p.la >= bounds.getSouth() && p.la <= bounds.getNorth());
+  const shift = (lo) => (lo < west ? lo + 360 : lo > east ? lo - 360 : lo);
+  return M.points.filter((p) => p.la >= bounds.getSouth() && p.la <= bounds.getNorth()
+    && shift(p.lo) >= west && shift(p.lo) <= east);
+}
+
+function barText() {
+  const M = MAP;
+  const n = M.result.length;
+  if (M.center) return `${countLabel(n)} im Umkreis von ${M.km} km um ${M.label}`;
+  return n ? `${countLabel(n)} hier` : "Keine Bilder in diesem Ausschnitt";
+}
+
+function updateBar() {
+  const M = MAP;
+  if (!M || !M.map) return;
+  M.result = mapResult();
+  if (mounted && mounted.key === "map") mounted.list = M.result;
+  M.bar.disabled = !M.result.length;
+  M.bar.textContent = M.result.length ? `${barText()} ›` : barText();
+}
+
+function flashBar(text) {
+  MAP.bar.textContent = text;
+  setTimeout(updateBar, 3000);
+}
+
+// Einzelnes Bild antippen: Betrachter mit den Bildern im Umkreis bzw. Ausschnitt (zum Weiterblättern)
+function openMapPhoto(p) {
+  updateBar();
+  let i = MAP.result.indexOf(p);
+  if (i < 0) {
+    MAP.result = [p];
+    i = 0;
+  }
+  mounted.list = MAP.result;
+  openViewer(i);
+}
+
+function focusMapAt(at) {
+  if (!MAP || !MAP.map) return;
+  clearCenter();
+  MAP.map.setView(at, 17);
+}
+
 /* ---------------------------------------------------------------- Ansichten & Verlauf */
 
 let mounted = null;
@@ -1310,6 +1644,8 @@ function viewKey(s) {
   if (s.v === "folder") return `folder:${dir(oldestFirst())}${star}:${s.f}`;
   if (s.v === "all") return `all:${dir(oldestFirst())}${star}`;
   if (s.v === "search") return "search";
+  if (s.v === "map") return "map";
+  if (s.v === "mapgrid") return `mapgrid:${dir(oldestFirst())}`;
   return `folders:${dir(foldersOldestFirst())}`;
 }
 
@@ -1321,6 +1657,7 @@ function mountView(state) {
   }
   const main = $("#main");
   main.replaceChildren();
+  document.body.classList.toggle("map-mode", state.v === "map");
   const m = { key, grid: null, list: null };
   mounted = m;
 
@@ -1360,6 +1697,38 @@ function mountView(state) {
     } else {
       main.append(el("p", { class: "center muted", text: "Noch keine Bilder mit Sternen – in Lightroom ★ oder ★★ setzen, neu exportieren, sync.bat." }));
     }
+  } else if (state.v === "map") {
+    const M = mapView();
+    const without = DATA.photos.length - M.points.length;
+    setHeader("Karte", `${countLabel(M.points.length)} mit Ort${without ? ` · ${without.toLocaleString("de-DE")} ohne` : ""}`);
+    main.append(M.wrap);
+    m.list = M.result;
+    m.apply = (st) => { if (st.at) focusMapAt(st.at); };
+    loadLeaflet().then(() => {
+      if (mounted !== m) return;
+      if (!M.map) initMap();
+      else M.map.invalidateSize();
+      if (state.at) focusMapAt(state.at);
+      updateBar();
+    }).catch(() => {
+      M.bar.textContent = "Karte konnte nicht geladen werden – Verbindung prüfen.";
+    });
+    return;
+  } else if (state.v === "mapgrid") {
+    if (!MAP || !MAP.shown) {
+      mounted = null;
+      navigate({ v: "map" }, true);
+      return;
+    }
+    setHeader("Karte", MAP.shown.sub, true);
+    showOrderButton(m, oldestFirst(), toggleOrder);
+    m.list = oldestFirst() ? MAP.shown.list : MAP.shown.list.slice().reverse();
+    const perYear = new Map();
+    for (const p of m.list) perYear.set(p.t.slice(0, 4), (perYear.get(p.t.slice(0, 4)) || 0) + 1);
+    const yearOf = (p) => `${p.t.slice(0, 4)} · ${countLabel(perYear.get(p.t.slice(0, 4)))}`;
+    m.grid = new Grid(main, m.list, yearOf, (year) => {
+      $("#subtitle").textContent = year ? `${year} · ${MAP.shown.sub}` : MAP.shown.sub;
+    });
   } else if (state.v === "search") {
     setHeader("Suche");
     showStarButton();
@@ -1379,6 +1748,7 @@ function mountView(state) {
 function render(state) {
   if (!mounted || mounted.key !== viewKey(state)) mountView(state);
   else if (mounted.search) mounted.search.apply(state);
+  else if (mounted.apply) mounted.apply(state);
   if (!mounted) return;
   updateNav(state.v);
   if (state.viewer && mounted.list && mounted.list.length) Viewer.show(mounted.list, state.viewer.i);

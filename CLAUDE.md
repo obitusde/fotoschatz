@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.23 · 07.10.2026 (Sternefilter ☆/★ in der Kopfzeile, v0.6.38; davor v0.6.37 Suche: Orte ohne Bundesland, Jahrzehnte; Ordnerliste mit farbigen Jahren und Umschaltern)
+**Dokumentversion:** v3.24 · 07.10.2026 (Karte mit Ortssuche und Umkreis, v0.7.0; davor v0.6.38 Sternefilter)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -456,7 +456,7 @@ Ohne Datei gelten diese Standardwerte:
 
 ### Technik
 - Statisch, **kein Build-Schritt**: `index.html`, `app.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, `icons/`.
-- Vanilla JavaScript. Externe Bibliotheken (z. B. Leaflet für die Karte) nur mit **fest angegebener Version** über cdnjs, niemals „latest".
+- Vanilla JavaScript. Externe Bibliotheken nur mit **fest angegebener Version**, niemals „latest". **Seit v0.7.0 liegen sie im Repo** (`docs/vendor/leaflet-1.9.4/`, `docs/vendor/leaflet.markercluster-1.5.3/`, aus npm, mit Lizenzdatei) statt auf cdnjs: keine Abhängigkeit von einem fremden Server, und in der Cloud-Sitzung sind die CDNs gesperrt (nur npm erreichbar) – so lässt sich alles testen. Geladen werden sie erst beim Öffnen der Karte.
 - `<meta name="robots" content="noindex, nofollow">`, kein Tracking/Analytics.
 - Hell/Dunkel folgt der Einstellung des Handys/PCs (`prefers-color-scheme`).
 
@@ -502,7 +502,15 @@ Ohne Datei gelten diese Standardwerte:
      - Länder automatisch über den Browser (`Intl.DisplayNames`, englisch → deutsch, plus einige Schreibvarianten wie „USA“, „Czech Republic“); nur auf das Feld Land angewendet.
      - Bundesländer, Städte, Orte über die Tabelle `docs/orte.js` (`PLACE_DE`), gepflegt von Claude. **Nur allgemein bekannte Namen** (Bavaria → Bayern, Munich → München …) – das Repo ist öffentlich, kleine/private Orte bleiben englisch.
      - Nicht übersetzte Namen erscheinen so, wie Lightroom sie schreibt. Neue Orte kommen automatisch mit dem nächsten Sync in die App.
-5. **Vollbild-Betrachter:**
+5. **Karte** (v0.7.0, Wunsch 07.10.2026: „soll mir helfen, Bilder zu finden“; Reiter „Karte“ unten, rein über die Karte – keine Verbindung zur Suche, kein Zeitraum-Filter):
+   - Leaflet + markercluster, Kartenbilder von OpenStreetMap (`tile.openstreetmap.org`, Namensnennung unten rechts, `referrerPolicy: strict-origin-when-cross-origin`, weil OSM einen Referer verlangt – das Geheimnis steht im Hash und wird nie gesendet). Ohne Netz keine Karte (so entschieden). Kreis per Canvas (`preferCanvas`), weil die globale `svg`-Regel der App Leaflets SVG-Ebene verbiegen würde.
+   - Untertitel „x Bilder mit Ort · y ohne“. Alle Bilder mit GPS (`la`/`lo`, nicht 0/0) als **Vorschaubild-Kacheln**; Gruppen mit Anzahl, Titelbild der Gruppe = ★★ vor ★ vor neuestem. Gruppe antippen = hineinzoomen; liegen alle an einer Stelle → gleich Raster. Einzelbild antippen → Betrachter mit den Bildern im Ausschnitt/Umkreis.
+   - Leiste unten „123 Bilder hier ›“ (sichtbarer Ausschnitt) bzw. „87 Bilder im Umkreis von 5 km um Neuenrade ›“ → Raster mit Jahresüberschriften, Reihenfolge-Umschalter wie Alle Bilder, Zurück → Karte.
+   - **Ort suchen** (Entscheidung 07.10.2026: nur eigene Orte, nichts geht nach außen): Vorschläge aus Land/Stadt/Ort der eigenen Bilder (wie die Suche, ohne Bundesland), Mitte = Median der GPS-Punkte; Land → Karte auf das Land (2–98 %-Bereich der Punkte), sonst Kreis. **Umkreis** 1 · 5 · 20 · 50 km (Standard 5), ✕ = Umkreis aus. **Lange drücken** auf die Karte setzt den Mittelpunkt dort. **◎** = eigener Standort (Browser fragt einmal).
+   - Bild-Infos: Zeile „Ort“ hat den Link „auf Karte“ (springt auf Zoom 17 an diese Stelle).
+   - Letzte Kartenansicht wird gemerkt (`fotoschatz.map`). In der Cloud im Browser getestet (368 Testbilder mit GPS: Vorschläge, Umkreise 1/5/20 km, Raster, Betrachter, „auf Karte“ und zurück, Standort, langes Drücken, Gruppe antippen, Tab-Wechsel, Neuladen; hell/dunkel); Kartenbilder selbst konnten in der Cloud nicht geladen werden (gesperrt) → ⚠ am Handy prüfen.
+   - Als Nächstes (v0.7.1, freigegeben): Weltkarte „Wann war ich wo?“ – Länder eingefärbt, Antippen zeigt Jahre (z. B. 1997–1999, 2006) und Anzahl, Jahr antippen → diese Bilder; dazu Länderliste nach erstem Besuch.
+6. **Vollbild-Betrachter:**
    - Wischen links/rechts, Nachbarbilder vorladen.
    - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter (sofort), Mitte = Bedienelemente aus/ein (mit ≈ 0,3 s Verzögerung wegen Doppeltippen). Wischen links/rechts blättert.
    - **Zoom** (v0.5.0): zwei Finger auf-/zuziehen (bis 4-fach); Doppeltippen in der Mitte bzw. Doppelklick = 2,5-fach an dieser Stelle, nochmal = zurück; am PC Mausrad. Vergrößert: ein Finger/Maus verschiebt den Ausschnitt (nicht über den Bildrand hinaus), Tippen = Bedienelemente, Blättern per Wischen ist aus. Blättern (Taste, Knopf) oder Drehen setzt den Zoom zurück.
@@ -584,10 +592,8 @@ Ohne Datei gelten diese Standardwerte:
    - Gibt es am Tag nichts, ±3 Tage.
    - Bevorzugt ★★ Lieblingsbilder, dann ★ wichtige.
 2. **„Überrasch mich":** zufällige Auswahl (bevorzugt gut bewertet) oder zufälliger Ordner.
-3. **Karte:**
-   - Leaflet + OpenStreetMap (Namensnennung und Nutzungsregeln der Kacheln beachten), Cluster mit Anzahl.
-   - Antippen → Bilder an diesem Ort.
-4. **Umkreissuche:** Punkt auf der Karte wählen + Radius (1 / 5 / 20 / 50 km) → Entfernungsberechnung im Browser → Raster. Zusätzlich „In meiner Nähe" über den Standort des Handys.
+3. **Karte:** ✅ v0.7.0 (siehe Abschnitt 8, Ansicht 5). Offen: Weltkarte Länder/Jahre (v0.7.1).
+4. **Umkreissuche:** ✅ v0.7.0 (Ort suchen oder lange drücken + 1/5/20/50 km, „In meiner Nähe“).
 5. **Personen-Seite:** alle Personen mit Anzahl; pro Person chronologisch („durch die Jahre").
 6. **Best-of-Filter** nach Bewertung (★★ Lieblingsbilder, ★ wichtig – Entscheidung 03.10.2026), kombinierbar mit Suche/Ordner. ✅ Einfache Form seit v0.6.38 (Sterne an/aus); getrennt nach ★/★★ noch offen, falls gewünscht.
 7. **Diashow:** Vollbild mit automatischem Weiterblättern, einstellbares Intervall, optional zufällig.
