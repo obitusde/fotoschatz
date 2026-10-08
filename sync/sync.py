@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.6.36"
+__version__ = "0.7.5"
 
 import argparse
 import csv
@@ -612,9 +612,37 @@ def upload(cfg, prefix, staging):
                         "--header-upload", CACHE_NO_CACHE, "--ignore-times"], "index.json", "index", prefix)
     log("    c) Alte Dateien online löschen (Bilder, die nicht mehr im Export-Ordner sind, und alte Fassungen)")
     for sub in ("img", "thumb"):
+        # Alte Fassungen neu exportierter Bilder (gleiche id, anderer Inhalt) sind keine echten Loeschungen
+        # und zaehlen nicht zur Schutzgrenze (v0.7.5; vorher brach rclone bei 369 neu exportierten Bildern ab).
+        online = list_online(rclone, f"{remote}/{sub}", prefix)
+        staged = {f.name for f in (staging / sub).iterdir() if f.is_file()}
+        staged_ids = {name.split(".")[0] for name in staged}
+        gone = [name for name in online if name not in staged]
+        old_versions = sum(1 for name in gone if name.split(".")[0] in staged_ids)
+        others = len(gone) - old_versions
+        if others > cfg["max_delete"]:
+            fail(f"Online würden {bilder(others)} gelöscht, die nicht mehr im Export-Ordner sind "
+                 f"(Schutzgrenze max_delete = {cfg['max_delete']}). Es wurde nichts gelöscht. "
+                 "Export-Ordner prüfen und sync.bat erneut starten - dann wird nachgefragt.")
+        if old_versions:
+            log(f"    {names[sub]}: {num(old_versions)} alte Fassungen neu exportierter Bilder werden gelöscht")
         run_rclone(rclone, ["sync", str(staging / sub), f"{remote}/{sub}",
                             "--header-upload", CACHE_IMMUTABLE,
-                            "--max-delete", str(cfg["max_delete"])] + common, names[sub], "sync", prefix)
+                            "--max-delete", str(cfg["max_delete"] + old_versions)] + common, names[sub], "sync", prefix)
+
+
+def list_online(rclone, target, prefix):
+    """Dateinamen in einem Online-Ordner (rclone lsf). Fehlt der Ordner noch, ist die Liste leer."""
+    result = subprocess.run([rclone, "lsf", target, "--files-only"], capture_output=True,
+                            encoding="utf-8", errors="replace")
+    if result.returncode != 0:
+        if "directory not found" in result.stderr.lower():
+            return []
+        for msg in result.stderr.strip().splitlines()[-5:]:
+            log(f"    rclone meldet: {msg.replace(prefix, '<Praefix>')}")
+        fail(f"rclone konnte die Online-Dateien nicht auflisten (Code {result.returncode}). "
+             "Nichts ist verloren - beim nächsten Lauf wird der Upload wiederholt.")
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def confirm_deletions(removed, limit, dry):

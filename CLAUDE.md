@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.28 · 07.10.2026 (Weltkarte zählt nur Bilder ab 6.4.1978, v0.7.4; davor v0.7.3 Weltkarte „Wo war ich wann?“)
+**Dokumentversion:** v3.29 · 08.10.2026 (Sync: alte Fassungen neu exportierter Bilder zählen nicht zur Lösch-Schutzgrenze, sync.py 0.7.5; davor v0.7.4 Weltkarte ab 6.4.1978)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -278,7 +278,7 @@ Ohne Datei gelten diese Standardwerte:
 10. **Upload per rclone** nach `<remote>/<Präfix>/` in dieser Reihenfolge (die App sieht nie fehlende Bilder):
     1. `rclone copy` neue `img/` und `thumb/` (Header `Cache-Control: public, max-age=31536000, immutable`, `--size-only`, 8 parallel)
     2. `rclone copyto` `index.json` (Header `Cache-Control: no-cache`)
-    3. `rclone sync` `img/` und `thumb/` → löscht Veraltetes (`--max-delete` als zweite Sicherung)
+    3. `rclone sync` `img/` und `thumb/` → löscht Veraltetes (`--max-delete` als zweite Sicherung). **Seit sync.py 0.7.5** listet Sync vorher die Online-Dateien (`rclone lsf`) und trennt: **alte Fassungen** neu exportierter Bilder (gleiche id, anderer Hash) zählen nicht zur Schutzgrenze (`--max-delete` = `max_delete` + Anzahl alter Fassungen); echte Löschungen über `max_delete` → Abbruch vor dem Löschen. Anlass 08.10.2026: 369 neu exportierte Bilder (Sterne gesetzt) → rclone brach bei 100 Löschungen ab (Code 7); Bilder und index.json waren schon oben, nur die alten Fassungen blieben liegen – der nächste Lauf räumt sie auf. In der Cloud nachgestellt (alte Fassung bricht ab, neue räumt auf; echte Löschungen weiter geschützt).
     - Nur wenn sich etwas geändert hat oder ein früherer Upload fehlschlug (`upload_pending`). Bei rclone-Fehler Abbruch; der nächste Lauf wiederholt den Upload.
     - Andere Pfade unter dem Präfix (z. B. `test/`) werden nicht angefasst.
 11. **Zusammenfassung ausgeben:** neu / ersetzt / gelöscht / unverändert / schwere Fehler / Hinweise / Laufzeit / Tool-Version; Pfad zur Korrektur-Tabelle.
