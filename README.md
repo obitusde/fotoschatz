@@ -54,7 +54,7 @@ Die `.py`-Dateien gehören zu den `.bat`-Dateien (`regeln.py` und `katalog.py` s
 ## Wo du aufpassen musst
 
 - **`D:\Bilder - Raw` (Originale):** Kein Skript schreibt dort etwas, sie lesen nur Dateinamen. Auch du änderst dort nichts außerhalb von Lightroom.
-- **Lightroom-Katalog:** wird nur kopiert und die Kopie gelesen, nie geändert. Vor `lightroom_pruefen` und `gps_test` muss Lightroom geschlossen sein.
+- **Lightroom-Katalog:** wird nur kopiert und die Kopie gelesen, nie geändert. Vor `lightroom_pruefen` und `gps_test` muss Lightroom geschlossen sein. Läuft Lightroom nach dem Schließen noch im Hintergrund, warten die Skripte selbst (höchstens 5 Minuten) – du kannst sie also direkt nach dem Schließen starten.
 - **`D:\Fotoschatz`** ist nur der Export. Er darf neu exportiert werden – aber dort müssen **alle** Exporte liegen bleiben: Was im Ordner fehlt, löscht `sync.bat` auch online (kommt beim nächsten Export + Sync wieder).
 - **Stapel:** Nur das oberste Bild eines Stapels kommt in die Galerie. Vor dem Export *Collapse All Stacks*. Vor *Edit Capture Time* oder GPS-Zuordnung dagegen *Expand All Stacks*, sonst bleiben versteckte Fotos falsch.
 - **Aufnahmezeit ändern = neuer Exportname.** Danach exportieren, `sync.bat`, `aufraeumen.bat`.

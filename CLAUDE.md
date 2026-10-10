@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.29 · 08.10.2026 (Sync: alte Fassungen neu exportierter Bilder zählen nicht zur Lösch-Schutzgrenze, sync.py 0.7.5; davor v0.7.4 Weltkarte ab 6.4.1978)
+**Dokumentversion:** v3.30 · 10.10.2026 (Katalog-Skripte warten, bis Lightroom ganz beendet ist, katalog.py 0.7.6; davor sync.py 0.7.5 alte Fassungen neu exportierter Bilder zählen nicht zur Lösch-Schutzgrenze)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -311,7 +311,8 @@ Ohne Datei gelten diese Standardwerte:
 ### Lightroom-Katalog (v0.6.11, Diagnose)
 - Katalog: `C:\Daten\Lightroom Catalog` (Ordner mit der `.lrcat`-Datei; Einstellung `catalog` in `config.local.json`, erlaubt Ordner, Datei oder Name ohne Endung). Im Ordner liegen mehrere Kataloge (`Lightroom Catalog-v13-3.lrcat`, `…-v13.lrcat`, alte nach Lightroom-Updates, werden von mir gelöscht) → **benutzt wird immer der zuletzt geänderte** (Entscheidung 29.09.2026, v0.6.12); die Diagnose zeigt, welcher benutzt wurde und welche übergangen. Die `.lrcat` ist eine SQLite-Datenbank, Aufbau von Adobe nicht dokumentiert (Quellen: `hfiguiere/lrcat-extractor` `doc/lrcat_format.md`, `camerahacks/lightroom-database`).
 - **Original-Katalog wird nur gelesen** (Freigabe 29.09.2026: „Kopie OK, Original nicht zum Schreiben anfassen“): `katalog.py` kopiert ihn nach `_sync\katalog\` und öffnet nur die Kopie (Sperre im Code: nur Pfade unter `_sync\katalog`). Das Original wird nie mit SQLite geöffnet (SQLite legt sonst Hilfsdateien daneben an). Ein vorhandenes `-wal` (nach Absturz) wird mitkopiert.
-- Abbruch, wenn Lightroom offen ist (`<Katalog>.lrcat.lock` vorhanden oder `Lightroom.exe` läuft) oder sich der Katalog beim Kopieren ändert.
+- **Warten auf Lightroom** (seit katalog.py 0.7.6, Wunsch 10.10.2026: Lightroom läuft nach dem Schließen oft noch eine Weile im Hintergrund): Solange `Lightroom.exe` läuft oder `<Katalog>.lrcat.lock` daneben liegt, wartet das Skript (alle 5 s nachsehen, Anzeige „Warte, bis Lightroom ganz beendet ist … 0:35“), danach noch 5 s, dann Kopie. Nach 5 min Abbruch ohne Änderung; liegt nur noch die Sperrdatei da (Absturz), Hinweis „Lightroom einmal öffnen und wieder schließen“. Gilt für alle Skripte, die `katalog.py` nutzen. In der Cloud mit nachgebauter Sperrdatei getestet (verschwindet nach 7 s → weiter; bleibt → Abbruch; keine → sofort). Vorher (bis 0.6.29) sofortiger Abbruch.
+- Abbruch, wenn sich der Katalog beim Kopieren ändert.
 - `katalog_diagnose.py`: gibt Tabellen, Spalten und Anzahlen aus, dazu gezielte Prüfungen (Version, Wurzelordner, Bilder/virtuelle Kopien/Stapel, Katalog ↔ Platte nur über Dateinamen, Stichwörter inkl. „nicht beim Export“ und fast gleiche Namen, Gesichter benannt/Vorschlag/ohne Namen je Ordner, GPS/Stadt/Beschreibung, Sammlungen) → `katalog_diagnose.txt` an Claude schicken. In der Cloud mit einem nachgebauten Katalog getestet; ⚠ am echten Katalog prüfen, welche Tabellen/Spalten es gibt.
 
 ### Zwei getrennte Tools (Entscheidung 29.09.2026)

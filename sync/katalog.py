@@ -9,18 +9,25 @@ Aenderungen.
 Wird von katalog_diagnose.py (und spaeter von der Lightroom-Pruefung) benutzt.
 """
 
-__version__ = "0.6.29"
+__version__ = "0.7.6"
 
 import os
 import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 COPY_DIR = SCRIPT_DIR / "katalog"
 DEFAULT_CATALOG = r"C:\Daten\Lightroom Catalog"
+
+# Nach dem Schliessen laeuft Lightroom oft noch eine Weile im Hintergrund weiter (schreibt den Katalog,
+# raeumt Vorschaubilder auf, Sicherung). So lange wird gewartet (v0.7.6, Wunsch 10.10.2026).
+WAIT_LIMIT = 300    # Sekunden, danach Abbruch
+WAIT_STEP = 5       # alle 5 s nachsehen
+WAIT_SETTLE = 5     # nach dem Ende noch kurz warten, bis alles geschrieben ist
 
 
 # Merker-Stichwoerter (Entscheidung 03.10.2026): "bewusst ohne ..., schon entschieden" - die Pruef-Tools melden
@@ -85,13 +92,45 @@ def lightroom_running():
     return '"lightroom.exe"' in out
 
 
+def wait_for_lightroom(catalog, limit=WAIT_LIMIT, step=WAIT_STEP, settle=WAIT_SETTLE):
+    """Wartet, bis Lightroom ganz beendet ist (Prozess weg und keine Sperrdatei mehr neben dem Katalog).
+    Abbruch nach `limit` Sekunden."""
+    lock = catalog.with_name(catalog.name + ".lock")
+    console = sys.stdout.isatty()
+    start = time.monotonic()
+    waited = False
+    while True:
+        running = lightroom_running()
+        if not running and not lock.exists():
+            break
+        elapsed = int(time.monotonic() - start)
+        if elapsed >= limit:
+            if waited and console:
+                print()
+            if running:
+                raise CatalogError(f"Lightroom laeuft nach {limit // 60} Minuten immer noch. "
+                                   "Bitte Lightroom schliessen und dann nochmal starten.")
+            raise CatalogError(f"Lightroom ist beendet, aber die Sperrdatei {lock.name} liegt noch neben dem "
+                               "Katalog (evtl. nach einem Absturz). Lightroom einmal oeffnen und wieder "
+                               "schliessen, dann nochmal starten.")
+        text = (f"Warte, bis Lightroom ganz beendet ist ... {elapsed // 60}:{elapsed % 60:02d} "
+                f"(hoechstens {limit // 60} min)")
+        if console:
+            print("\r" + text, end="", flush=True)
+        elif not waited:
+            print(text, flush=True)
+        waited = True
+        time.sleep(step)
+    if waited:
+        time.sleep(settle)
+        print(("\r" if console else "") + "Lightroom ist beendet." + " " * 40, flush=True)
+
+
 def copy_catalog(catalog, protected=()):
     """Kopiert den Katalog nach _sync\\katalog\\ und gibt den Pfad der Kopie zurueck.
-    Abbruch, wenn Lightroom offen ist. `protected`: Ordner, in die nie geschrieben werden darf."""
+    Wartet vorher, bis Lightroom ganz beendet ist. `protected`: Ordner, in die nie geschrieben werden darf."""
     catalog = Path(catalog)
-    lock = catalog.with_name(catalog.name + ".lock")
-    if lock.exists() or lightroom_running():
-        raise CatalogError("Lightroom ist noch offen. Bitte Lightroom schliessen und dann nochmal starten.")
+    wait_for_lightroom(catalog)
     for folder in [catalog.parent, *protected]:
         if inside(COPY_DIR, folder):
             raise CatalogError(f"Die Kopie laege in {folder} - dort wird nichts geschrieben. Abbruch.")
