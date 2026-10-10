@@ -72,7 +72,8 @@ Die `.py`-Dateien gehören zu den `.bat`-Dateien (`regeln.py` und `katalog.py` s
 
 - [ ] Lightroom aufräumen mit `lightroom_pruefen`: Zeiten, Stapel, offene Namensvorschläge bestätigen.
 - [ ] GPS nachtragen, wo es geht: mit `gps_test`, von Hand auf die Karte ziehen, oder `ort-egal` vergeben.
-- [ ] **Erstbefüllung:** Published Smart Folder bis 2012 veröffentlichen (läuft), dann `sync.bat` (fragt einmal wegen der Löschungen online → „j“). Danach Größe und Tempo am Handy prüfen.
+- [x] **Erstbefüllung bis 2012** (10.10.2026): 7.205 Bilder online. Noch offen: Größe und Tempo am Handy prüfen.
+- [ ] Im Publish Service muss bei *Metadata* „Remove Person Info“ und „Remove Location Info“ **aus** sein – sonst fehlen GPS und Personen (passiert beim ersten Publish).
 - [ ] Warnung „x Bilder warten noch auf Publish“ in `sync.bat` – dafür `katalog_diagnose.txt` nach dem großen Publish an Claude (Abschnitt 12).
 - [ ] Link an die Familie schicken.
 - [ ] Später in der App: Chromecast, „Heute vor X Jahren“, Personen-Seite, Diashow, Teilen (Liste in `CLAUDE.md`, Abschnitt 10).

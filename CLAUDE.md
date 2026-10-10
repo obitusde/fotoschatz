@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.31 · 10.10.2026 (Lightroom Publish: Published Smart Folder, sync liest Unterordner und lässt Stapel-unten/Rejected/_-Ordner weg, sync.py 0.7.7; davor 0.7.6 Katalog-Skripte warten auf Lightroom)
+**Dokumentversion:** v3.32 · 10.10.2026 (Lightroom Publish am PC bestätigt: 7.205 Bilder bis 2012 online, 117 Stapel-unten offline; davor sync.py 0.7.7 Publish-Unterordner + Galerie-Abgleich)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -170,6 +170,8 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - Katalog (Diagnose 10.10.2026): veröffentlichte Bilder stehen in `AgRemotePhoto` (10 Testbilder), Smart-Folder-Regeln in `AgLibraryPublishedCollectionContent`, `AgLibraryPublishedCollectionImage` bleibt beim Smart Folder leer (Mitglieder werden berechnet). ⚠ Wie „geändert, muss neu veröffentlicht werden“ gespeichert ist, zeigt erst `katalog_diagnose` Abschnitt 12 (v0.7.7) – Grundlage für eine spätere Warnung in sync.
 - ⚠ Ungeprüft: was Publish bei geändertem Dateinamen (Aufnahmezeit/Ordner umbenannt) mit der alten Datei macht.
 - „Mark as Up-to-Date“ gibt es für neue Bilder im Hard-Drive-Publish nicht (am PC gesehen) – alles wird einmal veröffentlicht.
+- **Am PC bestätigt (10.10.2026, sync 0.7.7):** Smart Folder 7.322 Bilder → 117 unten im Stapel offline, **7.205 Bilder in 176 Ordnern online** (4,6 GB, Sync ≈ 22 min: Infos lesen 2 min, Vorschaubilder 6 min, Upload 11 min). Erster Lauf: 454 online gelöscht (Ordner nach 2012 inkl. Japan; dazu Paare aus derselben Sekunde, bei denen Lightroom `-2` anders verteilt hat), Rückfrage mit „j“ beantwortet.
+- **Fehler beim ersten Publish:** Beim Neu-Anlegen des Publish Service war im Abschnitt *Metadata* „Remove Location Info“ (und vermutlich „Remove Person Info“) angehakt → alle 7.205 Bilder ohne GPS/Ort/Personen („7.205 mit Hinweis“, `index.json` nur 1.135 KB). Korrigiert, alles neu veröffentlicht → 277 Hinweise, `index.json` 1.844 KB, Personen da (geburtstage.txt: 13 von 21 mit Datum). **Merke:** Hinweis-Zahl ≈ Bildzahl = Metadaten fehlen → Publish-Einstellungen prüfen.
 
 ---
 
