@@ -160,6 +160,37 @@ def open_copy(path):
     return db
 
 
+def gallery_lookup(db):
+    """Fuer sync.py (v0.7.7): welche Bilder gehoeren in die Galerie?
+    Schluessel (eigener Ordnername, Dateiname mit Endung), beides klein geschrieben -> Grund, warum NICHT,
+    oder None (= gehoert in die Galerie). Gruende: "_-Ordner", "Stapel", "Rejected".
+    Zwei Bilder mit gleichem Schluessel (Ordnername doppelt) -> "mehrdeutig" (Sync laedt dann hoch)."""
+    rows = db.execute("""
+        SELECT f.baseName AS base, f.extension AS ext, fo.pathFromRoot AS path, r.name AS rootName,
+               i.pick AS pick, s.position AS position
+        FROM Adobe_images i
+        JOIN AgLibraryFile f ON f.id_local = i.rootFile
+        JOIN AgLibraryFolder fo ON fo.id_local = f.folder
+        JOIN AgLibraryRootFolder r ON r.id_local = fo.rootFolder
+        LEFT JOIN AgLibraryFolderStackImage s ON s.image = i.id_local""").fetchall()
+    result = {}
+    for r in rows:
+        parts = [p for p in (r["path"] or "").split("/") if p]
+        own = parts[-1] if parts else (r["rootName"] or "")
+        name = (r["base"] or "") + (f".{r['ext']}" if r["ext"] else "")
+        key = (own.casefold(), name.casefold())
+        if any(p.startswith("_") for p in parts):
+            reason = "_-Ordner"
+        elif (r["position"] or 1) > 1:
+            reason = "Stapel"
+        elif (r["pick"] or 0) < 0:
+            reason = "Rejected"
+        else:
+            reason = None
+        result[key] = "mehrdeutig" if key in result else reason
+    return result
+
+
 def prepare(setting, protected=()):
     """Katalog finden, kopieren, Kopie oeffnen. Gibt (Original-Pfad, Kopie-Pfad, Verbindung) zurueck."""
     catalog = find_catalog(setting)

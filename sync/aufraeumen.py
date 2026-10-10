@@ -12,7 +12,7 @@ Der Originalordner (D:\\Bilder - Raw) wird nur gelesen - dort wird nie etwas ver
 Aufruf: aufraeumen.bat (Doppelklick) oder python aufraeumen.py
 """
 
-__version__ = "0.6.8"
+__version__ = "0.7.7"
 
 import shutil
 from datetime import datetime
@@ -50,6 +50,12 @@ def main():
     originals, export_dir = U.check_paths(cfg)
     if U.inside(TRASH_DIR, originals):
         U.fail("Der Ablage-Ordner laege im Originalordner - Abbruch.")
+    # Seit Lightroom Publish (v0.7.7) verwaltet Lightroom die Exporte in Unterordnern selbst. Dateien dort
+    # wegzuschieben wuerde Lightroom durcheinanderbringen -> nicht anfassen.
+    if any(p.parent != export_dir for p in U.regeln.find_exports(export_dir)[0]):
+        U.fail("Die Exporte liegen in Unterordnern (Lightroom Publish). Die verwaltet Lightroom selbst - "
+               "aufraeumen.bat wird nicht mehr gebraucht. Bilder entfernen: in Lightroom aus dem Published "
+               "Folder nehmen oder Rejected setzen, dann Publish und sync.bat.")
     r = U.analyze(cfg)
     groups = [
         ("Exporte ohne passendes Original (Ordner/Datei in Lightroom umbenannt oder geloescht)", r["orphans"]),

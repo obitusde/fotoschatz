@@ -10,6 +10,7 @@ import re
 import subprocess
 import tempfile
 from datetime import datetime
+from pathlib import Path
 from shutil import which
 
 SCHWER = "SCHWER"
@@ -66,6 +67,24 @@ EXIF_BATCH = 500
 
 def is_jpg(path):
     return path.is_file() and path.suffix.lower() in (".jpg", ".jpeg")
+
+
+def find_exports(export_dir):
+    """Alle JPGs im Export-Ordner UND in seinen Unterordnern (v0.7.7: Lightroom Publish legt je Published Folder
+    einen Unterordner an). Ordner, die mit _ beginnen (_sync u. a.), werden uebergangen.
+    Gibt (Pfade sortiert nach Dateiname, doppelte Dateinamen [(name, verworfener Pfad)]) zurueck."""
+    found, doubles = {}, []
+    for folder, dirs, files in os.walk(export_dir):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("_"))
+        for name in sorted(files):
+            path = Path(folder) / name
+            if not is_jpg(path):
+                continue
+            if name in found:
+                doubles.append((name, path))
+                continue
+            found[name] = path
+    return [found[n] for n in sorted(found)], doubles
 
 
 def as_list(value):

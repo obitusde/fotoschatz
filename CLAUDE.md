@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.30 · 10.10.2026 (Katalog-Skripte warten, bis Lightroom ganz beendet ist, katalog.py 0.7.6; davor sync.py 0.7.5 alte Fassungen neu exportierter Bilder zählen nicht zur Lösch-Schutzgrenze)
+**Dokumentversion:** v3.31 · 10.10.2026 (Lightroom Publish: Published Smart Folder, sync liest Unterordner und lässt Stapel-unten/Rejected/_-Ordner weg, sync.py 0.7.7; davor 0.7.6 Katalog-Skripte warten auf Lightroom)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -73,7 +73,7 @@
 - Online zählt immer nur der **eigene** Ordnername (nicht der Pfad) → Ordnernamen müssen eindeutig sein (Übersicht prüft das).
 
 ### Export
-- Alle JPGs landen in **einem flachen Export-Ordner**: `D:\Fotoschatz`.
+- **Seit 10.10.2026 über Lightroom Publish** (siehe Abschnitt 5a). Die JPGs liegen in `D:\Fotoschatz\Published Smart Folder\` (Lightroom legt je Published Folder einen Unterordner an); bis dahin flach in `D:\Fotoschatz` (am 10.10.2026 von mir geleert, online wird alles neu aufgebaut).
 - Der Lightroom-Ordnername und der Aufnahmezeitpunkt stehen im Dateinamen (siehe Abschnitt 5).
 - Workflow: Ein Ereignisordner ist fertig bearbeitet → exportieren → Sync starten.
 - Neu bearbeitete oder korrigierte Bilder werden neu exportiert und **überschreiben** die alte Datei → der Sync ersetzt sie online.
@@ -101,6 +101,7 @@
 | Bildgröße | **2048 px** lange Kante, JPEG-Qualität **70** (≈ 0,5–1,2 MB je Bild; Handy + PC) |
 | Vorschaubilder | vom Sync-Tool erzeugt (WebP, ca. 400 px) |
 | Upload | rclone, gesteuert durch Python-Skript, Start per `sync.bat` |
+| Export (10.10.2026) | **Lightroom Publish** statt Export-Preset (Grund: bei einem Neu-Export ganzer Ordner wurden alle Bilder ersetzt, weil Lightroom-Exporte nie byte-gleich sind; ich will mir nicht merken, was ich geändert habe). Ein **Published Smart Folder** mit Regeln (nicht `_Import`, Aufnahme vor einem Stichtag) statt einzelner Collections – ich will keine Bilder von Hand zuordnen. Stapel/Rejected filtert `sync.py` über die Katalog-Kopie |
 | Prüfung vor Upload | Sync-Tool prüft jedes Bild; schwere Fehler → Bild wird nicht hochgeladen; Hinweise → Upload trotzdem; Korrektur-Tabelle (CSV) zum Nachbessern in Lightroom |
 | Zugriffsschutz | öffentlich, aber mit langem geheimem Link (Geheimnis im URL-Hash) |
 | GPS | bleibt in den Bildern (für Karte/Umkreissuche) |
@@ -159,6 +160,16 @@ sync-Tool (Python, D:\Fotoschatz\_sync)            │
 - **Stapel:** Nur das oberste Bild eines Stapels soll in die Galerie. Vor dem Export `Photo › Stacking › Collapse All Stacks`, dann Strg+A – im Filmstreifen (F6) steht z. B. „146 of 163 photos / 146 selected“ = nur die obersten sind markiert (am PC bestätigt 29.09.2026).
 - Virtuelle Kopien, die **nicht** mit ihrem Original gestapelt sind, erscheinen als eigene Kachel und werden mit exportiert → Übersicht meldet sie als Aufgabe „2 Fassungen“ (stapeln, gewünschte Fassung nach oben).
 - Stichwörter mit der Option „nicht beim Export einbeziehen" landen nicht im JPG.
+
+## 5a. Lightroom Publish (seit 10.10.2026)
+
+- **Publish Service** *Hard Drive*, Beschreibung „Fotoschatz“, Einstellungen wie das Export-Preset oben (Ordner `D:\Fotoschatz`, *Put in Subfolder* aus, Dateiname `{Folder Name»}_{Date (YYYY)»}-…`, JPEG Q70 sRGB, 2048 px lange Kante, Screen/High, alle Metadaten ohne Personen-/Ortsinfo zu entfernen, keine Videos). Bei Hard Drive heißen Collections „Published Folder“; Lightroom legt **je Published Folder einen Unterordner** an (am PC bestätigt: `D:\Fotoschatz\Published Smart Folder\`, Name ließ sich im Dialog nicht ändern – egal, sync liest alle Unterordner).
+- **Ein Published Smart Folder** mit *Match all*: `Folder doesn't contain _Import` und `Capture Date is before 2013-01-01` (fertig bearbeitet bis 2012; ist ein Jahr fertig, Datum weiterstellen). Neue Bilder in alten Ordnern kommen automatisch dazu. Japan 2026 ist bewusst nicht drin (Wunsch 10.10.2026: „kann online weg“). Nested Rules (Alt + „+“) wären für Ausnahmen möglich.
+- **Stapel:** Smart Folder kennen keine Stapel → auch untere Stapelbilder werden veröffentlicht (Test: `…_12-25-43` und `…_12-25-43-2`). `sync.py` lässt sie weg (siehe Abschnitt 7, Schritt 1/3).
+- **Alltag:** Ende der Sitzung *Publish* → Lightroom schließen → `sync.bat`. Lightroom exportiert nur neue/geänderte Bilder und überschreibt die Datei; entfernte/gelöschte Bilder löscht es aus dem Ordner.
+- Katalog (Diagnose 10.10.2026): veröffentlichte Bilder stehen in `AgRemotePhoto` (10 Testbilder), Smart-Folder-Regeln in `AgLibraryPublishedCollectionContent`, `AgLibraryPublishedCollectionImage` bleibt beim Smart Folder leer (Mitglieder werden berechnet). ⚠ Wie „geändert, muss neu veröffentlicht werden“ gespeichert ist, zeigt erst `katalog_diagnose` Abschnitt 12 (v0.7.7) – Grundlage für eine spätere Warnung in sync.
+- ⚠ Ungeprüft: was Publish bei geändertem Dateinamen (Aufnahmezeit/Ordner umbenannt) mit der alten Datei macht.
+- „Mark as Up-to-Date“ gibt es für neue Bilder im Hard-Drive-Publish nicht (am PC gesehen) – alles wird einmal veröffentlicht.
 
 ---
 
@@ -252,7 +263,8 @@ Ohne Datei gelten diese Standardwerte:
 - `sync/diagnose.py` enthält dieselben Regeln und dient zum Prüfen ohne Upload.
 
 ### Ablauf pro Lauf
-1. **Scannen:** alle `*.jpg` im Export-Ordner (nicht rekursiv).
+0. **Lightroom-Katalog lesen (seit 0.7.7, Schritt [1/7]):** Kopie über `katalog.py` (wartet, bis Lightroom beendet ist), `katalog.gallery_lookup`: je (eigener Ordnername, Dateiname mit Endung) → Galerie ja/nein. **Nicht in die Galerie:** Pfad mit `_`-Ordner, Stapel-Position > 1, `pick = -1` (Rejected). Zuordnung Export → Katalog über Ordnername aus dem Dateinamen + `XMP-crs:RawFileName` (eindeutig, weil keine virtuellen Kopien und Ordnernamen eindeutig). Nicht gefunden / Ordnername doppelt / Originaldatei unbekannt → **trotzdem hochladen** mit Hinweis. Aussortierte Exporte stehen in `state.json` unter `skipped` (Größe, Zeit, Originaldatei, Grund) → beim nächsten Lauf ohne exiftool neu bewertet; wird eines später Galerie-Bild (Stapel umgedreht), wird es normal verarbeitet. Waren sie online, werden sie gelöscht. Katalog nicht lesbar → Abbruch ohne Änderung. In der Cloud getestet (nachgebauter Katalog: Stapel unten/oben, umgedreht, Rejected aufgehoben, `_Import\2006 Handy\`, nicht im Katalog, Datei direkt im Exportordner, `_alt\` übergangen; Probelauf; wiederholter Lauf ohne Änderung).
+1. **Scannen:** alle `*.jpg` im Export-Ordner **und seinen Unterordnern** (seit 0.7.7, `regeln.find_exports`; Ordner mit `_` am Anfang wie `_sync` werden übergangen; gleicher Dateiname zweimal → der erste zählt, Hinweis).
 2. **Dateinamen parsen und prüfen** (siehe oben).
 3. **Änderungen erkennen:** über `state.json` (Größe, Änderungszeit, SHA-1 des Inhalts).
    - neu → verarbeiten
@@ -387,7 +399,7 @@ Ohne Datei gelten diese Standardwerte:
 - **Ordner:** „Ordner mit Personen“ (≥ 20 % der Bilder mit Person – dort fehlen Namen am ehesten), sortiert nach Anzahl ohne Person; „Ordner mit wenig Personen“ (Landschaft/Street) zugeklappt. Je Ordner Tabelle Datei (Kopieren ohne Endung) · Aufnahme · Sterne · Grund · Erkannt; Knopf „alle Dateinamen kopieren“ (mit Leerzeichen, für *Filename › Contains* – ⚠ am PC prüfen, ob Lightroom dann alle zeigt). Filter „ab ★…★★★★“ (Bewertungen sind laut mir bisher kaum gepflegt – Pflege ist noch offen).
 - In der Cloud mit nachgebautem Katalog getestet (alle Fälle richtig zugeordnet, Kopieren und Sterne-Filter im Browser geprüft, Katalog unverändert, Syntax für Python 3.8).
 
-### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen)
+### Aufräumen `aufraeumen.py` (v0.6.6, v0.6.8: Gruppe „RAW und JPG beide exportiert“, virtuelle Kopien ausgenommen; **seit 0.7.7 außer Betrieb**: bricht ab, sobald Exporte in Unterordnern liegen – den Ordner verwaltet Lightroom Publish; `uebersicht` zeigt dann „Aufräumen nicht nötig“ und zählt aussortierte Exporte aus `skipped` als erledigt)
 - Nutzt dieselbe Auswertung wie die Übersicht. Zeigt je Gruppe (ohne Original / doppelt / nicht verwendbar) die Dateien und fragt „j/n“; bei „doppelt“ Warnung wegen gewollter virtueller Kopien.
 - **Verschiebt** nach `_sync\geloescht\<Datum-Uhrzeit>\` (nicht endgültig löschen; rückgängig = zurückschieben), Protokoll in `_sync\aufraeumen_protokoll.txt`. Beim nächsten Sync verschwinden die Bilder online; warnt, wenn das mehr als `max_delete` wären.
 - Sicherheit: bewegt nur `.jpg` direkt in `D:\Fotoschatz`; Abbruch bei allem unter `D:\Bilder - Raw`, bei Unterordnern oder Nicht-JPGs (in der Cloud geprüft, Originalordner unverändert).

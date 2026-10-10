@@ -10,7 +10,7 @@ Aufruf: katalog_diagnose.bat (Doppelklick) oder python katalog_diagnose.py
 Optional in config.local.json: "catalog": "C:\\\\Daten\\\\Lightroom Catalog"
 """
 
-__version__ = "0.6.12"
+__version__ = "0.7.7"
 
 import json
 import os
@@ -33,7 +33,7 @@ DETAIL_TABLES = ["Adobe_images", "AgLibraryFile", "AgLibraryFolder", "AgLibraryR
                  "AgLibraryKeywordImage", "AgHarvestedExifMetadata", "AgHarvestedIptcMetadata", "AgLibraryIPTC",
                  "AgLibraryFolderStack", "AgLibraryFolderStackImage", "AgLibraryFolderStackData",
                  "AgLibraryCollection", "Adobe_AdditionalMetadata", "Adobe_imageProperties", "Adobe_variablesTable"]
-DETAIL_WORDS = ("face", "keyword", "stack", "iptc", "location", "interned")
+DETAIL_WORDS = ("face", "keyword", "stack", "iptc", "location", "interned", "publish", "remote")
 
 lines = []
 
@@ -372,6 +372,28 @@ def check_collections(db):
         out(f"  Sammlungen nach Art: {dict(Counter(r[0] for r in q(db, 'SELECT creationId FROM AgLibraryCollection')))}")
 
 
+def check_publish(db):
+    """Lightroom Publish (v0.7.7): wo merkt sich Lightroom, was veroeffentlicht ist und was neu muss?
+    Zeigt die Zeilen der Publish-Tabellen (gekuerzt) - fuer die Warnung "x Bilder warten auf Publish"."""
+    names = [t for t in tables(db) if "publish" in t.lower() or "remote" in t.lower()]
+    for t in names:
+        total = one(db, f'SELECT COUNT(*) FROM "{t}"')
+        out(f"\n  [{t}] {total} Zeilen – Beispiele:")
+        cols = [c for c, _ in columns(db, t)]
+        for row in q(db, f'SELECT * FROM "{t}" LIMIT 6'):
+            out("    " + " | ".join(f"{c}={short(v, 120)}" for c, v in zip(cols, row)))
+    if has(db, "AgRemotePhoto", "collection"):
+        out("\n  Veröffentlichte Bilder je Published Folder:")
+        for row in q(db, """SELECT r.collection, c.name, COUNT(*) FROM AgRemotePhoto r
+                            LEFT JOIN AgLibraryCollection c ON c.id_local = r.collection GROUP BY r.collection"""):
+            out(f"    Folder {row[0]} ({row[1]}): {row[2]} Bilder")
+    flags = [c for c, _ in columns(db, "AgRemotePhoto")] if has(db, "AgRemotePhoto") else []
+    for col in flags:
+        if any(w in col.lower() for w in ("need", "update", "dirty", "modified", "digest", "count")):
+            vals = q(db, f'SELECT "{col}", COUNT(*) FROM AgRemotePhoto GROUP BY "{col}" ORDER BY COUNT(*) DESC LIMIT 8')
+            out(f"  AgRemotePhoto.{col}: " + ", ".join(f"{short(v, 40)}={n}" for v, n in vals))
+
+
 def main():
     started = time.time()
     cfg = load_config()
@@ -405,6 +427,7 @@ def main():
     section("9. Orte, GPS, Beschreibung", check_places, db, rows)
     section("10. Sammlungen", check_collections, db)
     section("11. Aufbau der wichtigen Tabellen", show_structure, db)
+    section("12. Lightroom Publish (Published Folder, veröffentlichte Bilder)", check_publish, db)
     db.close()
     out(f"\nFertig in {time.time() - started:.0f} s. Bitte diese Datei an Claude schicken: {OUT_FILE}")
     OUT_FILE.write_text("\n".join(lines), encoding="utf-8")

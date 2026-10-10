@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.7.5"
+__version__ = "0.7.7"
 
 import argparse
 import csv
@@ -28,6 +28,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+import katalog
 import regeln
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -42,7 +43,12 @@ DEFAULTS = {
     "max_delete": 100,
     "transfers": 8,
     "ignore_keywords": ["google-fotos-uploaded", "Person", "Persons", "location-ok", "ort-egal", "personen-egal"],
+    "catalog": katalog.DEFAULT_CATALOG,
+    "originals_dir": r"D:\Bilder - Raw",
 }
+
+# Warum ein Export nicht in die Galerie kommt (Abgleich mit dem Lightroom-Katalog, v0.7.7)
+SKIP_TEXT = {"Stapel": "unten im Stapel", "Rejected": "Rejected (X)", "_-Ordner": "in einem _-Ordner"}
 
 CSV_FILE = SCRIPT_DIR / "korrekturen.csv"
 KEYWORD_FILE = SCRIPT_DIR / "stichwoerter.txt"
@@ -76,10 +82,13 @@ def write_log():
     LOG_FILE.write_text("\n".join(_log_lines) + "\n", encoding="utf-8")
 
 
+STEPS = 7
+
+
 def step(no, text):
     """Ueberschrift eines Arbeitsschritts mit kurzer Erklaerung (v0.6.32)."""
     log("")
-    log(f"[{no}/6] {text}")
+    log(f"[{no}/{STEPS}] {text}")
 
 
 # ---------------------------------------------------------------- Fortschritt (v0.6.32)
@@ -650,7 +659,7 @@ def confirm_deletions(removed, limit, dry):
     Schutz vor einem leeren oder falschen Export-Ordner bleibt: ohne "j" wird nichts geaendert."""
     log("")
     log(f"    ACHTUNG: {bilder(len(removed))} würden online gelöscht (Schutzgrenze max_delete = {limit}).")
-    log("    Sie waren beim letzten Sync dabei und fehlen jetzt im Export-Ordner, z. B.:")
+    log("    Sie waren beim letzten Sync dabei und fehlen jetzt im Export-Ordner (oder gehören nicht mehr in die Galerie), z. B.:")
     for name in removed[:10]:
         log(f"      - {name}")
     if len(removed) > 10:
@@ -684,6 +693,8 @@ def main():
     log(f"Bringt die Exporte aus {export_dir} in die Online-Galerie.")
     log("Online ist danach genau das, was im Export-Ordner liegt: Neues kommt dazu,")
     log("Geändertes wird ersetzt, was im Ordner fehlt, wird online gelöscht.")
+    log("Bilder, die unten im Stapel liegen, Rejected sind oder in einem _-Ordner liegen, bleiben offline")
+    log("(geprüft an einer Kopie des Lightroom-Katalogs - Lightroom muss dafür beendet sein).")
 
     prefix = load_prefix(cfg["secrets_file"])
     work_dir = Path(cfg["work_dir"])
@@ -693,21 +704,48 @@ def main():
 
     if not export_dir.is_dir():
         fail(f"Export-Ordner nicht gefunden: {export_dir}")
-    jpgs = sorted((p for p in export_dir.iterdir() if regeln.is_jpg(p)), key=lambda p: p.name)
+    jpgs, doubles = regeln.find_exports(export_dir)
     if not jpgs:
         fail("Im Export-Ordner liegen keine JPGs. Zum Schutz vor dem Leeren des Buckets wird abgebrochen.")
+    paths = {p.name: p for p in jpgs}
     exiftool = regeln.find_exiftool()
     state = load_state(state_file)
     old_files = state["files"]
+    old_skipped = state.get("skipped", {})
     first_run = not old_files
 
-    # 1. Dateinamen pruefen und Aenderungen erkennen
-    step(1, "Exporte prüfen: Dateinamen lesen und mit dem letzten Lauf vergleichen")
+    # 1. Lightroom-Katalog (Kopie) lesen: welche Bilder gehoeren in die Galerie? (v0.7.7)
+    step(1, "Lightroom-Katalog lesen: welche Bilder gehören in die Galerie (im Stapel oben, nicht Rejected, nicht _-Ordner)")
+    try:
+        catalog, _copy, db = katalog.prepare(cfg["catalog"], protected=[cfg["originals_dir"]])
+        lookup = katalog.gallery_lookup(db)
+        db.close()
+    except katalog.CatalogError as err:
+        fail(str(err))
+    log(f"    Katalog {catalog.name}: {bilder(len(lookup))} (gelesen aus einer Kopie, Lightroom bleibt unverändert)")
+
+    # 2. Dateinamen pruefen und Aenderungen erkennen
+    step(2, "Exporte prüfen: Dateinamen lesen und mit dem letzten Lauf vergleichen")
     analyses = {p.name: regeln.analyze_name(p.name, now) for p in jpgs}
     ok_paths = [p for p in jpgs if not regeln.is_severe(analyses[p.name]["problems"])]
     severe_paths = [p for p in jpgs if regeln.is_severe(analyses[p.name]["problems"])]
 
+    def verdict(name, orig):
+        """None = in die Galerie; sonst Grund aus SKIP_TEXT. Unbekannt -> hochladen (mit Hinweis)."""
+        if not orig:
+            analyses[name]["problems"].append((regeln.HINWEIS, "Originaldatei unbekannt - Lightroom-Abgleich nicht möglich"))
+            return None
+        reason = lookup.get((analyses[name]["lr_folder"].casefold(), orig.casefold()), "fehlt")
+        if reason == "fehlt":
+            analyses[name]["problems"].append((regeln.HINWEIS, "im Lightroom-Katalog nicht gefunden - trotzdem hochgeladen"))
+            return None
+        if reason == "mehrdeutig":
+            analyses[name]["problems"].append((regeln.HINWEIS, "Ordnername in Lightroom doppelt - trotzdem hochgeladen"))
+            return None
+        return reason
+
     new_files = {}
+    skipped = {}            # nicht fuer die Galerie: Name -> Groesse, Zeit, Originaldatei, Grund
     to_process = []
     to_refresh = []
     counts = Counter()
@@ -717,37 +755,41 @@ def main():
         stat = path.stat()
         prev = old_files.get(path.name)
         unchanged = prev and prev["size"] == stat.st_size and prev["mtime_ns"] == stat.st_mtime_ns
-        if not unchanged:
+        sha = None
+        if prev and not unchanged:
             sha = sha1_file(path)
-            if prev and prev["sha1"] == sha:
+            if prev["sha1"] == sha:
                 prev = dict(prev, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
                 unchanged = True
         if unchanged:
+            reason = verdict(path.name, prev["meta"].get("orig"))
+            if reason:
+                skipped[path.name] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+                                      "orig": prev["meta"].get("orig"), "why": reason}
+                continue
             new_files[path.name] = prev
             counts["unveraendert"] += 1
             if prev.get("mv") != META_VERSION:
                 to_refresh.append(path)
             continue
-        to_process.append((path, sha, stat, "ersetzt" if prev else "neu"))
+        known = old_skipped.get(path.name)
+        if known and known["size"] == stat.st_size and known["mtime_ns"] == stat.st_mtime_ns:
+            reason = verdict(path.name, known.get("orig"))   # schon bekannt: ohne exiftool entscheiden
+            if reason:
+                skipped[path.name] = dict(known, why=reason)
+                continue
+        to_process.append((path, sha or sha1_file(path), stat, "ersetzt" if prev else "neu"))
     progress.close()
-    removed = sorted(name for name in old_files if name not in {p.name for p in ok_paths})
-    n_new = sum(1 for t in to_process if t[3] == "neu")
-    n_repl = len(to_process) - n_new
 
-    log(f"    {num(len(jpgs))} Exporte im Ordner")
-    log(f"    {num(n_new)} neu · {num(n_repl)} geändert (werden ersetzt) · {num(counts['unveraendert'])} unverändert"
-        f" · {num(len(removed))} nicht mehr im Ordner (werden online gelöscht)")
+    in_sub = sum(1 for p in jpgs if p.parent != export_dir)
+    log(f"    {num(len(jpgs))} Exporte im Ordner" + (f" (davon {num(in_sub)} in Unterordnern)" if in_sub else ""))
+    for name, path in doubles[:5]:
+        log(f"    Hinweis: {name} liegt doppelt vor - benutzt wird {paths[name].parent.name}\\, nicht {path.parent.name}\\")
     if severe_paths:
         log(f"    {num(len(severe_paths))} mit unbrauchbarem Dateinamen - werden nicht hochgeladen (siehe korrekturen.csv)")
-    if to_refresh:
-        log(f"    {num(len(to_refresh))} unveränderte Bilder: Infos werden neu gelesen (neues Format, kein neuer Bild-Upload)")
 
-    if len(removed) > cfg["max_delete"]:
-        confirm_deletions(removed, cfg["max_delete"], dry)
-        cfg["max_delete"] = len(removed)      # nur fuer diesen Lauf (auch fuer rclone --max-delete)
-
-    # 2. Metadaten der neuen/geaenderten (und der SCHWER-Bilder fuer die Tabelle)
-    step(2, "Infos aus den Bildern lesen (Personen, Ort, GPS, Beschreibung) - nur neue und geänderte")
+    # 3. Metadaten der neuen/geaenderten (und der SCHWER-Bilder fuer die Tabelle), dann Galerie-Abgleich
+    step(3, "Infos aus den Bildern lesen (Personen, Ort, GPS, Beschreibung) - nur neue und geänderte")
     exif_paths = [t[0] for t in to_process] + to_refresh + severe_paths
     exif = {}
     if exif_paths:
@@ -756,6 +798,17 @@ def main():
         progress.finish()
     else:
         log("    nichts zu tun")
+    kept = []
+    for t in to_process:
+        path, stat = t[0], t[2]
+        entry = exif.get(path.name)
+        orig = regeln.extract_metadata(entry).get("orig") if entry else None
+        reason = verdict(path.name, orig)
+        if reason:
+            skipped[path.name] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "orig": orig, "why": reason}
+        else:
+            kept.append(t)
+    to_process = kept
     refreshed = 0
     for path in to_refresh:
         entry = exif.get(path.name)
@@ -763,8 +816,24 @@ def main():
             new_files[path.name] = dict(new_files[path.name], meta=regeln.extract_metadata(entry), mv=META_VERSION)
             refreshed += 1
 
-    # 3. Verarbeiten
-    step(3, "Vorschaubilder erstellen (kleine Bilder fürs Raster in der App), große Bilder bereitlegen")
+    why = Counter(v["why"] for v in skipped.values())
+    if skipped:
+        log(f"    Nicht für die Galerie (bleiben offline): {bilder(len(skipped))} - "
+            + " · ".join(f"{num(n)} {SKIP_TEXT.get(k, k)}" for k, n in why.most_common()))
+    keep_names = set(new_files) | {t[0].name for t in to_process}
+    removed = sorted(name for name in old_files if name not in keep_names)
+    n_new = sum(1 for t in to_process if t[3] == "neu")
+    n_repl = len(to_process) - n_new
+    log(f"    Für die Galerie: {num(n_new)} neu · {num(n_repl)} geändert (werden ersetzt) · {num(counts['unveraendert'])} unverändert"
+        f" · {num(len(removed))} nicht mehr dabei (werden online gelöscht)")
+    if to_refresh:
+        log(f"    {num(len(to_refresh))} unveränderte Bilder: Infos neu gelesen (neues Format, kein neuer Bild-Upload)")
+    if len(removed) > cfg["max_delete"]:
+        confirm_deletions(removed, cfg["max_delete"], dry)
+        cfg["max_delete"] = len(removed)      # nur fuer diesen Lauf (auch fuer rclone --max-delete)
+
+    # 4. Verarbeiten
+    step(4, "Vorschaubilder erstellen (kleine Bilder fürs Raster in der App), große Bilder bereitlegen")
     if not dry:
         for sub in ("img", "thumb"):
             (staging / sub).mkdir(parents=True, exist_ok=True)
@@ -806,8 +875,8 @@ def main():
     counts["neu"] = sum(1 for t in to_process if t[3] == "neu" and t[0].name not in unreadable)
     counts["ersetzt"] = sum(1 for t in to_process if t[3] == "ersetzt" and t[0].name not in unreadable)
 
-    # 4. Hinweise aus den Metadaten, neue Stichwoerter, Korrektur-Tabelle
-    step(4, "Prüfliste schreiben: was in Lightroom zu verbessern ist")
+    # 5. Hinweise aus den Metadaten, neue Stichwoerter, Korrektur-Tabelle
+    step(5, "Prüfliste schreiben: was in Lightroom zu verbessern ist")
     keyword_counter = Counter()
     person_counter = Counter()
     for name, rec in new_files.items():
@@ -828,6 +897,8 @@ def main():
 
     rows = []
     for path in jpgs:
+        if path.name in skipped:
+            continue
         a = analyses[path.name]
         rec = new_files.get(path.name)
         meta = rec["meta"] if rec else (regeln.extract_metadata(exif[path.name]) if path.name in exif else {})
@@ -839,7 +910,7 @@ def main():
     write_keyword_file(keyword_counter, all_persons, cfg["ignore_keywords"])
     write_places_file(new_files.values())
     severe_total = sum(1 for p in jpgs if regeln.is_severe(analyses[p.name]["problems"]))
-    hint_total = sum(1 for p in jpgs if analyses[p.name]["problems"]
+    hint_total = sum(1 for p in jpgs if p.name not in skipped and analyses[p.name]["problems"]
                      and not regeln.is_severe(analyses[p.name]["problems"]))
     log(f"    korrekturen.csv: {bilder(severe_total)} schwer (nicht hochgeladen),"
         f" {num(hint_total)} mit Hinweis (trotzdem hochgeladen, z. B. ohne GPS)")
@@ -849,22 +920,22 @@ def main():
         log(line)
 
     if dry:
-        step(5, "Inhaltsverzeichnis für die App - im Probelauf übersprungen")
-        step(6, "Hochladen - im Probelauf übersprungen")
+        step(6, "Inhaltsverzeichnis für die App - im Probelauf übersprungen")
+        step(7, "Hochladen - im Probelauf übersprungen")
         if removed:
             log("    Würde online entfernen:")
             for name in removed[:20]:
                 log(f"      - {name}")
             if len(removed) > 20:
                 log(f"      ... und {num(len(removed) - 20)} weitere")
-        summary(counts, removed, severe_total, hint_total, rows, started, dry=True)
+        summary(counts, removed, severe_total, hint_total, rows, started, dry=True, skipped=len(skipped))
         return
 
     for name in unreadable:
         new_files.pop(name, None)
 
     # 5. Staging aufraeumen und vervollstaendigen, index.json
-    step(5, "Inhaltsverzeichnis für die App bauen (index.json: alle Bilder mit Datum, Ort, Personen)")
+    step(6, "Inhaltsverzeichnis für die App bauen (index.json: alle Bilder mit Datum, Ort, Personen)")
     img_keep, thumb_keep = set(), set()
     for name, rec in new_files.items():
         base = f"{rec['id']}.{rec['hash']}"
@@ -872,9 +943,9 @@ def main():
         thumb_keep.add(f"{base}.webp")
         img, thumb = staging / "img" / f"{base}.jpg", staging / "thumb" / f"{base}.webp"
         if not img.exists():
-            link_or_copy(export_dir / name, img)
+            link_or_copy(paths[name], img)
         if not thumb.exists():
-            make_thumb(export_dir / name, thumb, cfg["thumb_long_edge"], cfg["thumb_quality"])
+            make_thumb(paths[name], thumb, cfg["thumb_long_edge"], cfg["thumb_quality"])
     clean_dir(staging / "img", img_keep)
     clean_dir(staging / "thumb", thumb_keep)
 
@@ -894,6 +965,7 @@ def main():
     state = {
         "tool_version": __version__,
         "files": new_files,
+        "skipped": skipped,
         "known_keywords": sorted(set(state.get("known_keywords", [])) | set(keyword_counter)),
         "upload_pending": bool(state.get("upload_pending") or changed or first_run),
     }
@@ -902,18 +974,18 @@ def main():
     # 6. Upload
     uploaded = False
     if state["upload_pending"]:
-        step(6, "Hochladen zu Cloudflare R2 (Online-Speicher der Galerie)")
+        step(7, "Hochladen zu Cloudflare R2 (Online-Speicher der Galerie)")
         upload(cfg, prefix, staging)
         state["upload_pending"] = False
         write_json_atomic(state_file, state)
         uploaded = True
     else:
-        step(6, "Hochladen - nicht nötig, online ist schon alles aktuell")
+        step(7, "Hochladen - nicht nötig, online ist schon alles aktuell")
 
-    summary(counts, removed, severe_total, hint_total, rows, started, uploaded=uploaded, index=index)
+    summary(counts, removed, severe_total, hint_total, rows, started, uploaded=uploaded, index=index, skipped=len(skipped))
 
 
-def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=False, dry=False, index=None):
+def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=False, dry=False, index=None, skipped=0):
     log("")
     took = clock(time.time() - started)
     if dry:
@@ -927,6 +999,7 @@ def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=F
                 + ("" if uploaded else " (unverändert)"))
         log(f"Dieser Lauf: {num(counts['neu'])} neu · {num(counts['ersetzt'])} ersetzt"
             f" · {num(len(removed))} gelöscht · {num(counts['unveraendert'])} unverändert")
+    log(f"Bewusst offline (Stapel unten, Rejected, _-Ordner): {num(skipped)}")
     log(f"Nicht hochgeladen (Dateiname oder Bild unbrauchbar): {num(severe_total)}")
     log(f"Mit Hinweis (trotzdem hochgeladen): {num(hint_total)}")
     if rows:

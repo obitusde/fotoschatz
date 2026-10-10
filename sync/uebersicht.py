@@ -14,7 +14,7 @@ Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.6.13"
+__version__ = "0.7.7"
 
 import html
 import json
@@ -189,11 +189,14 @@ def scan_exports(export_dir, state):
     now = datetime.now()
     exports = []
     need_exif = []
-    for path in sorted(p for p in Path(export_dir).iterdir() if regeln.is_jpg(p)):
+    for path in regeln.find_exports(export_dir)[0]:     # auch Unterordner (Lightroom Publish, v0.7.7)
         a = regeln.analyze_name(path.name, now)
         stat = path.stat()
         rec = files.get(path.name)
         synced = bool(rec and rec.get("size") == stat.st_size and rec.get("mtime_ns") == stat.st_mtime_ns)
+        skip = state.get("skipped", {}).get(path.name)      # v0.7.7: bewusst offline (Stapel unten, Rejected)
+        if not synced and skip and skip.get("size") == stat.st_size and skip.get("mtime_ns") == stat.st_mtime_ns:
+            synced, rec = True, {"meta": {"orig": skip.get("orig")}}
         e = {
             "file": path.name,
             "folder": a["lr_folder"],
@@ -522,6 +525,10 @@ def build_page(cfg, r, started):
     no_gps_folders = sum(1 for st in exported_folders if st["gps"] == st["n"])
     no_person_folders = sum(1 for st in exported_folders if st["p"] == st["n"])
     cleanup = r["orphans"] + r["dups"] + r["pair_exports"] + r["unusable"]
+    # Lightroom Publish (v0.7.7): Exporte liegen in Unterordnern und werden von Lightroom verwaltet
+    publish = any(p.parent != Path(cfg["export_dir"]) for p in regeln.find_exports(cfg["export_dir"])[0])
+    if publish:
+        cleanup = []
 
     out = []
     w = out.append
@@ -564,7 +571,9 @@ def build_page(cfg, r, started):
 
     # ---- Aufraeumen
     w("<h2>Aufräumen in D:\\Fotoschatz</h2>")
-    if not cleanup:
+    if publish:
+        w("<div class='none'>Nicht nötig: Mit Lightroom Publish räumt Lightroom den Ordner selbst auf.</div>")
+    elif not cleanup:
         w("<div class='none'>Keine überflüssigen Exporte.</div>")
     else:
         w("<div class='todo'><b>Was tun:</b> <b style='color:inherit'>aufraeumen.bat</b> doppelklicken – es fragt je Gruppe "
@@ -580,7 +589,7 @@ def build_page(cfg, r, started):
         ("Nicht verwendbare Exporte", r["unusable"], "Werden nie hochgeladen (Dateiname oder Ordner passt nicht). "
          "Ursache in Lightroom beheben (siehe Grund), dann neu exportieren."),
     ]:
-        if not items:
+        if not items or publish:
             continue
         w(f"<details><summary><span class='t'>{esc(title)} ({fmt(len(items))})</span></summary><div class='inner'>"
           f"<div class='small muted'>{esc(note)}</div><table>"
