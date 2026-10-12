@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.7.7"
+__version__ = "0.7.9"
 
 import argparse
 import csv
@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -928,7 +928,8 @@ def main():
                 log(f"      - {name}")
             if len(removed) > 20:
                 log(f"      ... und {num(len(removed) - 20)} weitere")
-        summary(counts, removed, severe_total, hint_total, rows, started, dry=True, skipped=len(skipped))
+        summary(counts, removed, severe_total, hint_total, rows, started, dry=True, skipped=len(skipped),
+                per_folder=folder_changes(to_process, unreadable, removed, analyses, now))
         return
 
     for name in unreadable:
@@ -982,16 +983,50 @@ def main():
     else:
         step(7, "Hochladen - nicht nötig, online ist schon alles aktuell")
 
-    summary(counts, removed, severe_total, hint_total, rows, started, uploaded=uploaded, index=index, skipped=len(skipped))
+    summary(counts, removed, severe_total, hint_total, rows, started, uploaded=uploaded, index=index, skipped=len(skipped),
+            per_folder=folder_changes(to_process, unreadable, removed, analyses, now))
 
 
-def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=False, dry=False, index=None, skipped=0):
+FOLDER_LINES = 40     # so viele Ordner zeigt die Zusammenfassung hoechstens
+
+
+def folder_changes(to_process, unreadable, removed, analyses, now):
+    """Je Online-Ordner: wie viele Bilder neu, ersetzt, geloescht (v0.7.9, Wunsch 12.10.2026)."""
+    per = defaultdict(Counter)
+
+    def folder_of(name):
+        a = analyses.get(name) or regeln.analyze_name(name, now)
+        return regeln.interpret_folder(a["lr_folder"])["online"] or a["lr_folder"] or "(unbekannt)"
+    for path, _sha, _stat, status in to_process:
+        if path.name not in unreadable:
+            per[folder_of(path.name)][status] += 1
+    for name in removed:
+        per[folder_of(name)]["gelöscht"] += 1
+    return per
+
+
+def log_folder_changes(per, dry):
+    if not per:
+        return
+    log("Würde ändern je Ordner:" if dry else "Geändert je Ordner:")
+    names = sorted(per)
+    for name in names[:FOLDER_LINES]:
+        c = per[name]
+        parts = [f"{num(c[k])} {k}" for k in ("neu", "ersetzt", "gelöscht") if c[k]]
+        log(f"  {name}: " + " · ".join(parts))
+    if len(names) > FOLDER_LINES:
+        log(f"  ... und {num(len(names) - FOLDER_LINES)} weitere Ordner")
+
+
+def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=False, dry=False, index=None, skipped=0,
+            per_folder=None):
     log("")
     took = clock(time.time() - started)
     if dry:
         log(f"=== Probelauf fertig nach {took} - nichts wurde verändert ===")
         log(f"Beim echten Lauf: {num(counts['neu'])} neu · {num(counts['ersetzt'])} ersetzt"
             f" · {num(len(removed))} gelöscht · {num(counts['unveraendert'])} unverändert")
+        log_folder_changes(per_folder or {}, dry=True)
     else:
         log(f"=== Fertig nach {took} ===")
         if index is not None:
@@ -999,6 +1034,7 @@ def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=F
                 + ("" if uploaded else " (unverändert)"))
         log(f"Dieser Lauf: {num(counts['neu'])} neu · {num(counts['ersetzt'])} ersetzt"
             f" · {num(len(removed))} gelöscht · {num(counts['unveraendert'])} unverändert")
+        log_folder_changes(per_folder or {}, dry=False)
     log(f"Bewusst offline (Stapel unten, Rejected, _-Ordner): {num(skipped)}")
     log(f"Nicht hochgeladen (Dateiname oder Bild unbrauchbar): {num(severe_total)}")
     log(f"Mit Hinweis (trotzdem hochgeladen): {num(hint_total)}")
