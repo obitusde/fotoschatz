@@ -14,7 +14,7 @@ Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.7.7"
+__version__ = "0.7.10"
 
 import html
 import json
@@ -195,7 +195,9 @@ def scan_exports(export_dir, state):
         rec = files.get(path.name)
         synced = bool(rec and rec.get("size") == stat.st_size and rec.get("mtime_ns") == stat.st_mtime_ns)
         skip = state.get("skipped", {}).get(path.name)      # v0.7.7: bewusst offline (Stapel unten, Rejected)
-        if not synced and skip and skip.get("size") == stat.st_size and skip.get("mtime_ns") == stat.st_mtime_ns:
+        offline = bool(not synced and skip and skip.get("size") == stat.st_size
+                       and skip.get("mtime_ns") == stat.st_mtime_ns)
+        if offline:
             synced, rec = True, {"meta": {"orig": skip.get("orig")}}
         e = {
             "file": path.name,
@@ -208,6 +210,7 @@ def scan_exports(export_dir, state):
             "mtime": stat.st_mtime,
             "size": stat.st_size,
             "meta": (rec or {}).get("meta") if synced else None,
+            "offline": offline,   # nicht in der Galerie -> zaehlt nicht bei GPS/Personen/Sterne
         }
         if e["meta"] is None:
             need_exif.append(path)
@@ -226,7 +229,7 @@ def scan_exports(export_dir, state):
                 by_name[name]["meta"] = regeln.extract_metadata(entry)
     for e in exports:
         e["orig"] = (e["meta"] or {}).get("orig", "")
-        if e["meta"] is not None and not e["severe"]:
+        if e["meta"] is not None and not e["severe"] and not e["offline"]:   # offline: keine Metadaten gelesen
             e["problems"] += regeln.metadata_problems(e["meta"])
     return exports
 
@@ -308,17 +311,23 @@ def persons_of(meta, known):
 
 
 def meta_stats(r):
-    """Je Lightroom-Ordner: exportierte Bilder mit Metadaten, davon ohne GPS, ohne Personen (je Original einmal)."""
+    """Je Lightroom-Ordner: exportierte Bilder mit Metadaten, davon ohne GPS, ohne Personen, mit Sternen
+    (s1 = ★ gut, s2 = ★★ sehr gut, s3 = 3-5 Sterne von frueher; je Original einmal). Bilder, die Sync bewusst
+    offline laesst (Stapel unten, Rejected), zaehlen nicht mit."""
     known = known_persons(r["exports"])
     seen = set()
     stats = defaultdict(Counter)
     for e in r["exports"]:
-        if e.get("key") and e["meta"] is not None and e["key"] not in seen:
+        if e.get("key") and e["meta"] is not None and not e.get("offline") and e["key"] not in seen:
             seen.add(e["key"])
             st = stats[e["key"][0]]
             st["n"] += 1
             st["gps"] += "la" not in e["meta"]
             st["p"] += not persons_of(e["meta"], known)
+            stars = e["meta"].get("r", 0)
+            st["s1"] += stars == 1
+            st["s2"] += stars == 2
+            st["s3"] += stars >= 3
     return stats
 
 
@@ -348,9 +357,9 @@ def analyze(cfg, quiet=False):
 
 CSS = """
 :root{--bg:#f6f7f9;--card:#fff;--text:#1b1d21;--muted:#5f6570;--line:#e2e5ea;--ok:#1e8e3e;--wait:#c58a00;
---part:#e8710a;--none:#c5221f;--bar:#e3e6eb;--warn:#b06000}
+--part:#e8710a;--none:#c5221f;--bar:#e3e6eb;--warn:#b06000;--star:#1a5fb4}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--text:#e8eaed;--muted:#9aa0a6;--line:#262a31;
---ok:#5bb974;--wait:#fdd663;--part:#fcad70;--none:#f28b82;--bar:#262a31;--warn:#fcad70}}
+--ok:#5bb974;--wait:#fdd663;--part:#fcad70;--none:#f28b82;--bar:#262a31;--warn:#fcad70;--star:#8ab4f8}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,"Segoe UI",sans-serif}
 main{max-width:980px;margin:0 auto;padding:20px 16px 60px}h1{font-size:1.4rem;margin:0 0 4px}
 h2{font-size:1.1rem;margin:28px 0 6px}
@@ -384,6 +393,7 @@ table{border-collapse:collapse;font-size:.85rem;margin:6px 0;width:100%}td,th{pa
 .todo{margin:2px 0 8px;font-size:.9rem}.todo b{color:var(--warn)}
 .warn{color:var(--warn);font-size:.85rem}
 .gps{color:var(--muted);font-size:.85rem;white-space:nowrap}
+.stars{color:var(--star);font-size:.85rem;white-space:nowrap}.stars.zero{color:var(--muted)}
 .row>span+span{margin-left:2px}
 .hide-done .done{display:none}
 .legend span{margin-right:14px;white-space:nowrap}
@@ -391,12 +401,14 @@ table{border-collapse:collapse;font-size:.85rem;margin:6px 0;width:100%}td,th{pa
 .nowrap{white-space:nowrap}
 details.task table td:first-child{overflow-wrap:anywhere;min-width:170px}
 .only-fewp .year:not(.fewp),.only-fewp .folder:not(.fewp),.only-fewp .plain:not(.fewp){display:none}
+.only-nostar .year:not(.nostar),.only-nostar .folder:not(.nostar),.only-nostar .plain:not(.nostar){display:none}
 """
 
 JS = """
 function setFilter(mode){document.body.classList.toggle('hide-done',mode==='open');
 document.body.classList.toggle('only-fewp',mode==='fewp');
-['all','open','fewp'].forEach(m=>document.getElementById('f-'+m).classList.toggle('on',m===mode));}
+document.body.classList.toggle('only-nostar',mode==='nostar');
+['all','open','fewp','nostar'].forEach(m=>document.getElementById('f-'+m).classList.toggle('on',m===mode));}
 function openAll(v){document.querySelectorAll('details.year').forEach(d=>d.open=v);}
 function openTasks(v){document.querySelectorAll('details.task').forEach(d=>d.open=v);}
 """
@@ -449,7 +461,25 @@ def hint_badges(warn, st):
     if warn:
         kinds = Counter(SHORT_TYPE.get(problem_type(text), problem_type(text)) for _, text in warn)
         out += "<span class='warn'>⚠ " + " · ".join(f"{fmt(c)} {esc(k)}" for k, c in kinds.most_common()) + "</span>"
-    return out + meta_badge(st)
+    return out + meta_badge(st) + star_badge(st)
+
+
+def star_badge(st):
+    """'★ 12 · ★★ 3' je Ordner (v0.7.10): ★ = gutes Bild, ★★ = sehr gutes Bild."""
+    if not st or not st["n"]:
+        return ""
+    title = f"{fmt(st['n'])} exportierte Bilder: {fmt(st['s1'])} mit ★, {fmt(st['s2'])} mit ★★"
+    text = f"★ {fmt(st['s1'])} · ★★ {fmt(st['s2'])}"
+    if st["s3"]:
+        title += f", {fmt(st['s3'])} mit 3–5 Sternen (von früher)"
+        text += f" · 3–5★ {fmt(st['s3'])}"
+    zero = " zero" if no_stars(st) else ""
+    return f"<span class='stars{zero}' title='{esc(title)}'>{esc(text)}</span>"
+
+
+def no_stars(st):
+    """Exportiert, aber noch kein Bild mit Sternen (Ordner vermutlich noch nicht durchgesehen)."""
+    return bool(st and st["n"] and not (st["s1"] or st["s2"] or st["s3"]))
 
 
 def percent(part, whole):
@@ -524,6 +554,7 @@ def build_page(cfg, r, started):
     exported_folders = [st for st in stats.values() if st["n"]]
     no_gps_folders = sum(1 for st in exported_folders if st["gps"] == st["n"])
     no_person_folders = sum(1 for st in exported_folders if st["p"] == st["n"])
+    no_star_folders = sum(1 for st in exported_folders if no_stars(st))
     cleanup = r["orphans"] + r["dups"] + r["pair_exports"] + r["unusable"]
     # Lightroom Publish (v0.7.7): Exporte liegen in Unterordnern und werden von Lightroom verwaltet
     publish = any(p.parent != Path(cfg["export_dir"]) for p in regeln.find_exports(cfg["export_dir"])[0])
@@ -551,6 +582,9 @@ def build_page(cfg, r, started):
       f"{fmt(no_gps_folders)} von {fmt(len(exported_folders))} Ordnern ganz ohne</span></div>")
     w(f"<div class='card'><b class='muted'>👤 {esc(percent(st_all['p'], st_all['n']))}</b><span>der exportierten Bilder ohne "
       f"Personen · {fmt(no_person_folders)} von {fmt(len(exported_folders))} Ordnern ganz ohne</span></div>")
+    w(f"<div class='card'><b class='stars' style='font-size:1.5rem'>★ {fmt(st_all['s1'])} · ★★ {fmt(st_all['s2'])}</b>"
+      f"<span>Bilder mit ★ gut / ★★ sehr gut · {fmt(no_star_folders)} von {fmt(len(exported_folders))} Ordnern "
+      "noch ohne Sterne</span></div>")
     w("</div>")
     w(bar(totals["online"], totals["wait"], totals["none"], n))
 
@@ -567,6 +601,23 @@ def build_page(cfg, r, started):
             w(f"<tr><td>{esc(folders[key]['rel'])}</td><td>{fmt(st['n'])}</td>"
               f"<td class='nowrap'>{fmt(st['gps'])} ({esc(percent(st['gps'], st['n']))})</td>"
               f"<td class='nowrap'>{fmt(st['p'])} ({esc(percent(st['p'], st['n']))})</td></tr>")
+        w("</table></div></details>")
+        old = st_all["s3"] > 0
+        w(f"<details><summary><span class='t stars'>Sterne je Ordner – ★ gut · ★★ sehr gut</span></summary>"
+          "<div class='inner'><div class='todo'>Gezählt werden die Bilder in der Galerie, so wie sie zuletzt "
+          "veröffentlicht wurden (Sterne in Lightroom setzen → Publish → sync.bat → Übersicht neu). "
+          "Ordner ohne ein einziges Sternebild sind vermutlich noch nicht durchgesehen (Filter „Noch ohne Sterne“ "
+          "unten bei den Ordnern).</div>"
+          "<table><tr><th>Ordner in Lightroom</th><th>exportiert</th><th>★ gut</th><th>★★ sehr gut</th>"
+          + ("<th>3–5★ von früher</th>" if old else "") + "<th>ohne Sterne</th></tr>")
+        for key, st in sorted(stats.items(), key=lambda x: folders[x[0]]["rel"].casefold()):
+            if not st["n"]:
+                continue
+            none = st["n"] - st["s1"] - st["s2"] - st["s3"]
+            w(f"<tr><td>{esc(folders[key]['rel'])}</td><td>{fmt(st['n'])}</td>"
+              f"<td class='nowrap'>{fmt(st['s1'])}</td><td class='nowrap'>{fmt(st['s2'])}</td>"
+              + (f"<td class='nowrap'>{fmt(st['s3'])}</td>" if old else "")
+              + f"<td class='nowrap'>{fmt(none)} ({esc(percent(none, st['n']))})</td></tr>")
         w("</table></div></details>")
 
     # ---- Aufraeumen
@@ -605,12 +656,13 @@ def build_page(cfg, r, started):
       "<button id='f-all' class='on' onclick=\"setFilter('all')\">Alle Ordner</button>"
       "<button id='f-open' onclick=\"setFilter('open')\">Nur offene</button>"
       "<button id='f-fewp' onclick=\"setFilter('fewp')\">Viele ohne Personen</button>"
+      "<button id='f-nostar' onclick=\"setFilter('nostar')\">Noch ohne Sterne</button>"
       "<button onclick='openAll(true)'>Alle aufklappen</button>"
       "<button onclick='openAll(false)'>Alle zuklappen</button></div>")
     w("<div class='legend small muted'>"
       + "".join(f"<span><i class='dot s-{k}'></i>{v}</span>" for k, v in LABEL.items())
       + "<span class='warn'>⚠ Hinweise</span><span class='gps'>📍 ohne GPS · 👤 ohne Personen: Anteil der exportierten "
-      "Bilder (nur Info)</span></div>")
+      "Bilder (nur Info)</span><span class='stars'>★ gut · ★★ sehr gut: Anzahl Bilder</span></div>")
     # oberste Ebene wie unter D:\Bilder - Raw, neueste zuerst; Namen ohne Jahreszahl zuletzt
     for top in sorted(groups, key=lambda g: (g[:1].isdigit(), g.casefold()), reverse=True):
         items = sorted(groups[top], key=lambda f: f["sub"].casefold(), reverse=True)
@@ -630,6 +682,8 @@ def build_page(cfg, r, started):
         warn = hint_badges(warn_all, st_top)
         if any(few_persons(f["st"]) for f in items):
             done += " fewp"
+        if any(no_stars(f["st"]) for f in items):
+            done += " nostar"
         w(f"<details class='year{done}'><summary><span class='t'>{esc(top)}</span><span class='row'>{warn}"
           f"<span class='nums'>{fmt(y['n'])} Bilder · {fmt(y['online'])} online · Ordner: {states}</span>"
           f"{bar(y['online'], y['wait'], y['n'] - y['online'] - y['wait'], y['n'])}</span></summary><div class='inner'>")
@@ -645,6 +699,7 @@ def build_page(cfg, r, started):
             head = f"<span><i class='dot s-{f['state']}'></i>{esc(name)}</span>{warn}<span class='nums'>{nums}</span>"
             cls = " done" if f["state"] == "ok" and not f["hints"] else ""
             cls += " fewp" if few_persons(f["st"]) else ""
+            cls += " nostar" if no_stars(f["st"]) else ""
             if not f["missing"] and not f["hints"] and not f["gps"]:
                 w(f"<div class='plain{cls}'>{head}</div>")
                 continue

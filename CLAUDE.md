@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.33 · 12.10.2026 (sync.py 0.7.9: Zusammenfassung zeigt Änderungen je Ordner; davor Lightroom Publish am PC bestätigt, 7.205 Bilder bis 2012 online)
+**Dokumentversion:** v3.34 · 08.11.2026 (uebersicht.py 0.7.10: Sterne je Ordner; davor sync.py 0.7.9: Zusammenfassung zeigt Änderungen je Ordner)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -94,7 +94,7 @@
 
 | Thema | Entscheidung |
 |---|---|
-| Sterne (03.10.2026) | **★ = wichtig, ★★ = Lieblingsbild**, 0 = normal (die meisten). Werden in Lightroom neu gesetzt (alte 3–5★ ersetze ich). Wichtige und Lieblingsbilder prüfe ich gezielt (Personen u. a.); die App nutzt ★★/★ später für Rückblick und Best-of |
+| Sterne (03.10.2026, 08.11.2026 von mir so beschrieben: ★ = gutes Bild, ★★ = sehr gutes Bild; noch nicht alle Jahre durchgesehen) | **★ = wichtig, ★★ = Lieblingsbild**, 0 = normal (die meisten). Werden in Lightroom neu gesetzt (alte 3–5★ ersetze ich). Wichtige und Lieblingsbilder prüfe ich gezielt (Personen u. a.); die App nutzt ★★/★ später für Rückblick und Best-of |
 | Merker-Stichwörter (03.10.2026) | `ort-egal` (früher `location-ok`) = bewusst ohne GPS · `personen-egal` = bewusst ohne Personen. Die Tools melden solche Bilder nicht mehr; alte Namen (`location-ok`, `personen-ok`) gelten übergangsweise weiter (`katalog.ORT_EGAL`/`PERSONEN_EGAL`). In Lightroom *Include on Export* aus, in `ignore_keywords` ausgeblendet |
 | Hosting Bilder | Cloudflare R2, öffentlich lesbar, alles unter einem geheimen Pfad-Präfix |
 | Hosting App | GitHub Pages, Repo `obitusde/fotoschatz`, Ordner `docs/`, statische PWA, kein Backend |
@@ -317,6 +317,7 @@ Ohne Datei gelten diese Standardwerte:
   3. **Ordner wie in Lightroom** (v0.6.7): oberste Ebene mit den echten Ordnernamen unter `D:\Bilder - Raw` (neueste zuerst, Namen ohne Jahreszahl zuletzt), darin die Unterordner mit Pfad ab dort (z. B. `1936-1985 Familie Göbel\Briefe`), „lose Bilder → JJJJ Weitere Bilder“ bzw. „Bilder direkt in diesem Ordner“ am Ende. Ampel je Ordner, Hinweise nach Art (`⚠ 3 Jahr passt nicht · 1 Datum unplausibel`) und grau `📍 40 % ohne GPS · 👤 70 % ohne Personen` (Anteil der exportierten Bilder, v0.6.10; ohne Export „📍 – · 👤 –“; Personen = markierte Personen plus Stichwörter mit bekanntem Personennamen, wie im Sync-Tool); aufgeklappt Hinweise und fehlende Originaldateien. Filter „Nur offene“ (fehlendes GPS allein gilt als erledigt) und „Viele ohne Personen“ (≥ 50 % der exportierten Bilder ohne Personen – dort lohnt sich das Benennen in Lightroom, Taste O).
   - **Stand der Gesichtserkennung in Lightroom** sieht die Übersicht nicht (nur benannte Personen in den Exporten). In Lightroom: *Activity Center* (oben links) › *Face Detection*; Ordner öffnen, Taste **O** (*People*): *Named People* / *Unnamed People*.
   4. **Weitere Angaben:** leere Ordner, `_`-Ordner, Videos, Dateiarten.
+  5. **Sterne je Ordner (v0.7.10, Wunsch 08.11.2026: „sehen, wie viele 1-Stern und 2-Stern-Bilder es pro Ordner gibt“ – noch nicht alle Jahre durchgesehen):** Kachel oben „★ x · ★★ y“ mit „n von m Ordnern noch ohne Sterne“; je Ordner und je oberster Ebene blau `★ 12 · ★★ 3` (grau, wenn noch kein Sternebild; alte 3–5★ zusätzlich als „3–5★ n“); zugeklappte Tabelle „Sterne je Ordner“ (exportiert · ★ gut · ★★ sehr gut · ggf. 3–5★ von früher · ohne Sterne); Filter-Knopf „Noch ohne Sterne“ bei den Ordnern. Quelle: `XMP-xmp:Rating` aus den Exporten (`state.json`), also der Stand des letzten Publish + Sync. Bilder, die Sync bewusst offline lässt (`skipped`: Stapel unten, Rejected), zählen bei GPS/Personen/Sternen nicht mehr mit und bekommen keinen Hinweis „keine GPS-Daten“ mehr (vorher fälschlich). In der Cloud mit nachgebautem Export/`state.json` getestet (Stapelbild mit ★★ nicht gezählt, Ordner ohne Sterne gefiltert, Seite im Browser angesehen).
 - Zählfehler behoben (v0.6.8): „Ordner: ● n“ je Gruppe zählte Bilder statt Ordner.
 - Lightroom zählt je Ordner mehr als die Übersicht (z. B. 163 statt 147 bei Göbel/Schäfer): virtuelle Kopien und evtl. RAW+JPG als zwei Bilder. Maßgeblich: die Übersicht meldet keine fehlenden Originale.
 - Sicherheit: Abbruch, wenn Skript im Originalordner liegt oder Export- und Originalordner sich überschneiden. In der Cloud geprüft: Originalordner vor/nach dem Lauf identisch (Namen, Größen, Zeiten, Prüfsummen).
