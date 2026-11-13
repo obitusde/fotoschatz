@@ -7,6 +7,10 @@ Vergleicht drei Staende und schreibt eine aufklappbare Seite uebersicht.html
   Exporte     D:\\Fotoschatz       (Name der Originaldatei aus den Metadaten)
   Online      _sync\\work\\state.json (Stand des letzten erfolgreichen Syncs)
 
+Seit v0.7.11 kommen die Bilder je Ordner aus dem Lightroom-Katalog (Kopie, nur lesen; Lightroom muss dafuer
+beendet sein): alle Bilder fuer die Galerie (Stapel oben, nicht Rejected, nicht _-Ordner) mit Sternen, GPS und
+Personen - auch die noch nicht veroeffentlichten. Exporte und state.json sagen, was davon online ist.
+
 Dazu eine Liste ueberfluessiger Exporte, die aufraeumen.bat entfernen kann. Was in Lightroom zu
 korrigieren ist, zeigt seit v0.6.13 lightroom_pruefen.py (liest den Katalog).
 
@@ -14,7 +18,7 @@ Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.7.10"
+__version__ = "0.7.11"
 
 import html
 import json
@@ -27,6 +31,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import katalog
 import regeln
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -36,6 +41,7 @@ DEFAULTS = {
     "export_dir": str(SCRIPT_DIR.parent),
     "work_dir": str(SCRIPT_DIR / "work"),
     "originals_dir": r"D:\Bilder - Raw",
+    "catalog": katalog.DEFAULT_CATALOG,
     "max_delete": 100,
 }
 
@@ -206,7 +212,7 @@ def scan_exports(export_dir, state):
             "stamp": a["taken"].strftime("%Y-%m-%d_%H-%M-%S") if a["taken"] else "",
             "severe": regeln.is_severe(a["problems"]),
             "problems": list(a["problems"]),
-            "online": synced and not pending,
+            "online": synced and not pending and not offline,
             "mtime": stat.st_mtime,
             "size": stat.st_size,
             "meta": (rec or {}).get("meta") if synced else None,
@@ -353,6 +359,104 @@ def analyze(cfg, quiet=False):
     return r
 
 
+# ---------------------------------------------------------------- Lightroom-Katalog (seit v0.7.11)
+
+def read_lightroom(cfg, r, say=print):
+    """Alle Bilder aus der Katalog-Kopie, je Lightroom-Ordner. In die Zaehlung kommen nur Bilder fuer die Galerie
+    (wie sync.py: nicht in einem _-Ordner, im Stapel oben, nicht Rejected) - veroeffentlicht oder nicht.
+    Die Exporte werden ihnen zugeordnet (eigener Ordnername + Originaldatei) -> online / Sync fehlt / nicht
+    veroeffentlicht. Ergebnis in r["lr"]."""
+    import lightroom_pruefen as LP      # erst hier: lightroom_pruefen importiert selbst dieses Modul
+    import personen_pruefen as PP
+    say("Lese den Lightroom-Katalog (Kopie, nur lesen) ...")
+    try:
+        catalog_path, _copy, db = katalog.prepare(cfg["catalog"], protected=[cfg["originals_dir"]])
+    except katalog.CatalogError as err:
+        fail(str(err))
+    try:
+        c = LP.read_catalog(db, cfg)
+        kws, img_kw, conf_tags, names = PP.read_people(db)
+    except Exception as err:   # Aufbau des Katalogs anders als erwartet
+        fail(f"Katalog nicht lesbar ({type(err).__name__}: {err}). Bitte katalog_diagnose.bat laufen lassen und "
+             "katalog_diagnose.txt an Claude schicken.")
+    finally:
+        db.close()
+
+    def tag_name(tag):
+        return str(kws[tag]["name"] or "").casefold() if tag in kws else ""
+
+    folders, by_own, offline = {}, defaultdict(list), Counter()
+    for i in c["images"]:
+        if not i["parts"]:
+            continue    # direkt im Wurzelordner: gehoert zu keinem Lightroom-Ordner
+        fkey = i["folder"].casefold()
+        f = folders.get(fkey)
+        if f is None:
+            f = folders[fkey] = {"name": i["parts"][-1], "rel": os.sep.join(i["parts"]), "parts": i["parts"],
+                                 "images": [], "by_file": {}, "by_base": {}, "by_time": defaultdict(list)}
+            by_own[i["parts"][-1].casefold()].append(f)
+        # Nachschlagen fuer die Exporte - auch fuer Bilder, die nicht in die Galerie gehoeren
+        f["by_file"][i["file"].casefold()] = i
+        f["by_base"].setdefault(i["base"].casefold(), i)
+        if i["time"]:
+            f["by_time"][f"{i['time']:%Y-%m-%d_%H-%M-%S}"].append(i)
+        i["exports"] = []
+        if i["hidden"]:
+            continue    # _-Ordner: zaehlt die Platte unter „bewusst nicht online“
+        if not i["gallery"]:
+            offline["Stapel"] += 1
+            continue
+        if i["pick"] < 0:
+            offline["Rejected"] += 1
+            continue
+        tags = img_kw.get(i["id"], set())
+        i["person"] = bool(conf_tags.get(i["id"])) or any(tag_name(t) in names for t in tags)
+        i["person_egal"] = any(tag_name(t) in katalog.PERSONEN_EGAL for t in tags)
+        f["images"].append(i)
+
+    unmatched = []
+    for e in r["exports"]:
+        if e["severe"]:
+            continue
+        hit = None
+        for f in by_own.get(e["folder"].casefold(), []):
+            hit = (f["by_file"].get(e["orig"].casefold()) if e["orig"] else None) \
+                or f["by_base"].get(e["stem"].casefold())
+            if hit is None and len(f["by_time"].get(e["stamp"], [])) == 1:
+                hit = f["by_time"][e["stamp"]][0]
+            if hit:
+                break
+        if hit:
+            hit["exports"].append(e)
+            e["ckey"] = hit["folder"].casefold()
+        elif not e["offline"]:
+            unmatched.append(e)
+
+    stats = {}
+    for fkey, f in folders.items():
+        if not f["images"]:
+            continue
+        st = stats[fkey] = Counter()
+        for i in f["images"]:
+            st["n"] += 1
+            if any(e["online"] for e in i["exports"]):
+                i["status"] = "online"
+                st["online"] += 1
+            else:
+                i["status"] = "exportiert" if i["exports"] else None
+            st["exp"] += bool(i["exports"])
+            st["gps"] += not i["gps"] and not i["ok"]                  # ort-egal = bewusst ohne GPS
+            st["p"] += not i["person"] and not i["person_egal"]        # personen-egal = bewusst ohne Personen
+            st["s1"] += i["rating"] == 1
+            st["s2"] += i["rating"] == 2
+            st["s3"] += i["rating"] >= 3
+    r["lr"] = {"catalog": catalog_path.name, "folders": {k: f for k, f in folders.items() if f["images"]},
+               "stats": stats, "offline": offline, "unmatched": unmatched, "outside": sum(c["outside"].values())}
+    total = sum(st["n"] for st in stats.values())
+    say(f"  Katalog {catalog_path.name}: {total} Bilder fuer die Galerie in {len(stats)} Ordnern "
+        f"(nicht in der Galerie: {offline['Stapel']} unten im Stapel, {offline['Rejected']} Rejected)")
+
+
 # ---------------------------------------------------------------- Seite
 
 CSS = """
@@ -413,7 +517,8 @@ function openAll(v){document.querySelectorAll('details.year').forEach(d=>d.open=
 function openTasks(v){document.querySelectorAll('details.task').forEach(d=>d.open=v);}
 """
 
-LABEL = {"ok": "komplett online", "wait": "exportiert, Sync fehlt", "part": "teilweise exportiert", "none": "nicht exportiert"}
+LABEL = {"ok": "komplett online", "wait": "veröffentlicht, Sync fehlt", "part": "teilweise online",
+         "none": "noch nicht veröffentlicht"}
 
 
 def esc(text):
@@ -468,7 +573,7 @@ def star_badge(st):
     """'★ 12 · ★★ 3' je Ordner (v0.7.10): ★ = gutes Bild, ★★ = sehr gutes Bild."""
     if not st or not st["n"]:
         return ""
-    title = f"{fmt(st['n'])} exportierte Bilder: {fmt(st['s1'])} mit ★, {fmt(st['s2'])} mit ★★"
+    title = f"{fmt(st['n'])} Bilder in Lightroom: {fmt(st['s1'])} mit ★, {fmt(st['s2'])} mit ★★"
     text = f"★ {fmt(st['s1'])} · ★★ {fmt(st['s2'])}"
     if st["s3"]:
         title += f", {fmt(st['s3'])} mit 3–5 Sternen (von früher)"
@@ -478,7 +583,7 @@ def star_badge(st):
 
 
 def no_stars(st):
-    """Exportiert, aber noch kein Bild mit Sternen (Ordner vermutlich noch nicht durchgesehen)."""
+    """Noch kein Bild mit Sternen (Ordner vermutlich noch nicht durchgesehen)."""
     return bool(st and st["n"] and not (st["s1"] or st["s2"] or st["s3"]))
 
 
@@ -495,10 +600,11 @@ def percent(part, whole):
 
 
 def meta_badge(st):
-    """Anteil der exportierten Bilder ohne GPS / ohne Personen (nur Info)."""
+    """Anteil der Bilder in Lightroom ohne GPS / ohne Personen (nur Info)."""
     if not st or not st["n"]:
-        return "<span class='gps' title='noch nichts exportiert – Angaben kommen aus den Exporten'>📍 – · 👤 –</span>"
-    title = (f"{fmt(st['n'])} exportierte Bilder: {fmt(st['gps'])} ohne GPS, {fmt(st['p'])} ohne markierte Personen")
+        return "<span class='gps'>📍 – · 👤 –</span>"
+    title = (f"{fmt(st['n'])} Bilder in Lightroom: {fmt(st['gps'])} ohne GPS, {fmt(st['p'])} ohne Personen "
+             "(ort-egal / personen-egal zählen nicht)")
     return (f"<span class='gps' title='{esc(title)}'>📍 {esc(percent(st['gps'], st['n']))} ohne GPS · "
             f"👤 {esc(percent(st['p'], st['n']))} ohne Personen</span>")
 
@@ -520,36 +626,34 @@ TODO_CAPTURE = "Bild markieren › Metadata › Edit Capture Time… und das ric
 
 
 def build_page(cfg, r, started):
-    folders, status = r["folders"], r["status"]
+    lr = r["lr"]
+    folders, stats = lr["folders"], lr["stats"]
     hints_by_folder = defaultdict(list)   # ohne GPS: das sind die echten Warnungen
     gps_by_folder = defaultdict(list)     # fehlendes GPS: nur Info (Ort oft unbekannt)
     for e in r["exports"]:
-        if not e["severe"] and e.get("key"):
+        if not e["severe"] and e.get("ckey"):
             for sev, text in e["problems"]:
                 if sev == regeln.HINWEIS:
-                    (gps_by_folder if text == GPS_HINT else hints_by_folder)[e["key"][0]].append((e, text))
+                    (gps_by_folder if text == GPS_HINT else hints_by_folder)[e["ckey"]].append((e, text))
 
     groups = defaultdict(list)
     totals = Counter()
     for key, folder in folders.items():
-        images = folder["images"]
-        n = len(images)
-        online = sum(1 for stem in images if status.get((key, stem)) == "online")
-        exported = sum(1 for stem in images if (key, stem) in status)
-        missing = sorted((img for stem, img in images.items() if (key, stem) not in status),
-                         key=lambda img: img["stem"].casefold())
+        st = stats[key]
+        n, exported, online = st["n"], st["exp"], st["online"]
+        missing = sorted(({"stem": i["base"], "ext": {"." + i["ext"]} if i["ext"] else set()}
+                          for i in folder["images"] if not i["status"]), key=lambda img: img["stem"].casefold())
         state = folder_state(n, exported, online)
-        parts = folder["rel"].split(os.sep)
+        parts = folder["parts"]
         groups[parts[0]].append({"name": folder["name"], "rel": folder["rel"], "sub": os.sep.join(parts[1:]),
                                  "n": n, "exp": exported, "online": online, "missing": missing, "state": state,
                                  "hints": hints_by_folder.get(key, []), "gps": gps_by_folder.get(key, []),
-                                 "st": r["stats"].get(key)})
+                                 "st": st})
         totals["n"] += n
         totals["online"] += online
         totals["wait"] += exported - online
         totals["none"] += n - exported
 
-    stats = r["stats"]
     st_all = sum(stats.values(), Counter())
     exported_folders = [st for st in stats.values() if st["n"]]
     no_gps_folders = sum(1 for st in exported_folders if st["gps"] == st["n"])
@@ -568,19 +672,20 @@ def build_page(cfg, r, started):
     w(f"<title>Fotoschatz Übersicht</title><style>{CSS}</style><script>{JS}</script></head><body><main>")
     w("<h1>Fotoschatz – was ist online?</h1>")
     w(f"<div class='muted small'>Stand {datetime.now():%d.%m.%Y %H:%M} · uebersicht.py v{__version__} · "
-      f"Originale: {esc(cfg['originals_dir'])} · Exporte: {esc(cfg['export_dir'])} · {time.time() - started:.0f} s</div>")
+      f"Katalog: {esc(lr['catalog'])} · Originale: {esc(cfg['originals_dir'])} · Exporte: {esc(cfg['export_dir'])} · "
+      f"{time.time() - started:.0f} s</div>")
 
     n = totals["n"]
     pct = f" ({100 * totals['online'] / n:.0f} %)" if n else ""
     w("<div class='cards'>")
-    w(f"<div class='card'><b>{fmt(n)}</b><span>Bilder in Lightroom-Ordnern</span></div>")
+    w(f"<div class='card'><b>{fmt(n)}</b><span>Bilder in Lightroom für die Galerie (Stapel oben, nicht Rejected)</span></div>")
     w(f"<div class='card'><b style='color:var(--ok)'>{fmt(totals['online'])}</b><span>online{pct}</span></div>")
-    w(f"<div class='card'><b style='color:var(--wait)'>{fmt(totals['wait'])}</b><span>exportiert, Sync fehlt noch</span></div>")
-    w(f"<div class='card'><b style='color:var(--none)'>{fmt(totals['none'])}</b><span>noch nicht exportiert</span></div>")
+    w(f"<div class='card'><b style='color:var(--wait)'>{fmt(totals['wait'])}</b><span>veröffentlicht, Sync fehlt noch</span></div>")
+    w(f"<div class='card'><b style='color:var(--none)'>{fmt(totals['none'])}</b><span>noch nicht veröffentlicht</span></div>")
     w(f"<div class='card'><b style='color:var(--warn)'>{fmt(len(cleanup))}</b><span>überflüssige Exporte (aufraeumen.bat)</span></div>")
-    w(f"<div class='card'><b class='muted'>📍 {esc(percent(st_all['gps'], st_all['n']))}</b><span>der exportierten Bilder ohne GPS · "
+    w(f"<div class='card'><b class='muted'>📍 {esc(percent(st_all['gps'], st_all['n']))}</b><span>der Bilder ohne GPS · "
       f"{fmt(no_gps_folders)} von {fmt(len(exported_folders))} Ordnern ganz ohne</span></div>")
-    w(f"<div class='card'><b class='muted'>👤 {esc(percent(st_all['p'], st_all['n']))}</b><span>der exportierten Bilder ohne "
+    w(f"<div class='card'><b class='muted'>👤 {esc(percent(st_all['p'], st_all['n']))}</b><span>der Bilder ohne "
       f"Personen · {fmt(no_person_folders)} von {fmt(len(exported_folders))} Ordnern ganz ohne</span></div>")
     w(f"<div class='card'><b class='stars' style='font-size:1.5rem'>★ {fmt(st_all['s1'])} · ★★ {fmt(st_all['s2'])}</b>"
       f"<span>Bilder mit ★ gut / ★★ sehr gut · {fmt(no_star_folders)} von {fmt(len(exported_folders))} Ordnern "
@@ -590,13 +695,16 @@ def build_page(cfg, r, started):
 
     w("<div class='todo'><b>Was in Lightroom zu korrigieren ist</b> (Ordner, Aufnahmezeit, Stapel, fehlende Dateien, "
       "Stichwörter, Gesichter) zeigt jetzt <b style='color:inherit'>lightroom_pruefen.bat</b> – diese Übersicht zeigt "
-      "nur noch, was exportiert und online ist.</div>")
+      "nur, was in Lightroom ist und was davon online ist. Alle Zahlen kommen aus dem Lightroom-Katalog "
+      "(auch für noch nicht veröffentlichte Bilder); ob ein Bild online ist, aus den Exporten und dem letzten Sync."
+      "</div>")
     if exported_folders:
         w(f"<details><summary><span class='t gps'>Ohne GPS / ohne Personen je Ordner – nur Info</span></summary>"
-          "<div class='inner'><div class='todo'>Gezählt werden die exportierten Bilder. Oft ist der Ort unbekannt, und "
+          "<div class='inner'><div class='todo'>Gezählt werden alle Bilder in Lightroom für die Galerie (Bilder mit "
+          "ort-egal bzw. personen-egal zählen nicht als „ohne“). Oft ist der Ort unbekannt, und "
           "Landschaftsbilder haben keine Personen – das ist in Ordnung. Wer mag, setzt in Lightroom den Ort nach (Map) "
           "oder benennt Gesichter (Taste O, <i>People</i>).</div>"
-          "<table><tr><th>Ordner in Lightroom</th><th>exportiert</th><th>ohne GPS</th><th>ohne Personen</th></tr>")
+          "<table><tr><th>Ordner in Lightroom</th><th>Bilder</th><th>ohne GPS</th><th>ohne Personen</th></tr>")
         for key, st in sorted(stats.items(), key=lambda x: folders[x[0]]["rel"].casefold()):
             w(f"<tr><td>{esc(folders[key]['rel'])}</td><td>{fmt(st['n'])}</td>"
               f"<td class='nowrap'>{fmt(st['gps'])} ({esc(percent(st['gps'], st['n']))})</td>"
@@ -604,17 +712,17 @@ def build_page(cfg, r, started):
         w("</table></div></details>")
         old = st_all["s3"] > 0
         w(f"<details><summary><span class='t stars'>Sterne je Ordner – ★ gut · ★★ sehr gut</span></summary>"
-          "<div class='inner'><div class='todo'>Gezählt werden die Bilder in der Galerie, so wie sie zuletzt "
-          "veröffentlicht wurden (Sterne in Lightroom setzen → Publish → sync.bat → Übersicht neu). "
-          "Ordner ohne ein einziges Sternebild sind vermutlich noch nicht durchgesehen (Filter „Noch ohne Sterne“ "
+          "<div class='inner'><div class='todo'>Gezählt werden alle Bilder in Lightroom für die Galerie, "
+          "veröffentlicht oder nicht, mit den Sternen, die gerade in Lightroom stehen (Lightroom schließen → "
+          "uebersicht.bat). Online kommen neue Sterne erst mit Publish und sync.bat. Ordner ohne ein einziges Sternebild sind vermutlich noch nicht durchgesehen (Filter „Noch ohne Sterne“ "
           "unten bei den Ordnern).</div>"
-          "<table><tr><th>Ordner in Lightroom</th><th>exportiert</th><th>★ gut</th><th>★★ sehr gut</th>"
+          "<table><tr><th>Ordner in Lightroom</th><th>Bilder</th><th>online</th><th>★ gut</th><th>★★ sehr gut</th>"
           + ("<th>3–5★ von früher</th>" if old else "") + "<th>ohne Sterne</th></tr>")
         for key, st in sorted(stats.items(), key=lambda x: folders[x[0]]["rel"].casefold()):
             if not st["n"]:
                 continue
             none = st["n"] - st["s1"] - st["s2"] - st["s3"]
-            w(f"<tr><td>{esc(folders[key]['rel'])}</td><td>{fmt(st['n'])}</td>"
+            w(f"<tr><td>{esc(folders[key]['rel'])}</td><td>{fmt(st['n'])}</td><td>{fmt(st['online'])}</td>"
               f"<td class='nowrap'>{fmt(st['s1'])}</td><td class='nowrap'>{fmt(st['s2'])}</td>"
               + (f"<td class='nowrap'>{fmt(st['s3'])}</td>" if old else "")
               + f"<td class='nowrap'>{fmt(none)} ({esc(percent(none, st['n']))})</td></tr>")
@@ -661,8 +769,8 @@ def build_page(cfg, r, started):
       "<button onclick='openAll(false)'>Alle zuklappen</button></div>")
     w("<div class='legend small muted'>"
       + "".join(f"<span><i class='dot s-{k}'></i>{v}</span>" for k, v in LABEL.items())
-      + "<span class='warn'>⚠ Hinweise</span><span class='gps'>📍 ohne GPS · 👤 ohne Personen: Anteil der exportierten "
-      "Bilder (nur Info)</span><span class='stars'>★ gut · ★★ sehr gut: Anzahl Bilder</span></div>")
+      + "<span class='warn'>⚠ Hinweise</span><span class='gps'>📍 ohne GPS · 👤 ohne Personen: Anteil der "
+      "Bilder in Lightroom (nur Info)</span><span class='stars'>★ gut · ★★ sehr gut: Anzahl Bilder</span></div>")
     # oberste Ebene wie unter D:\Bilder - Raw, neueste zuerst; Namen ohne Jahreszahl zuletzt
     for top in sorted(groups, key=lambda g: (g[:1].isdigit(), g.casefold()), reverse=True):
         items = sorted(groups[top], key=lambda f: f["sub"].casefold(), reverse=True)
@@ -694,7 +802,9 @@ def build_page(cfg, r, started):
                 name = f"lose Bilder → „{top} Weitere Bilder“"
             else:
                 name = "Bilder direkt in diesem Ordner"
-            nums = f"{fmt(f['n'])} Bilder · {fmt(f['exp'])} exportiert · {fmt(f['online'])} online"
+            nums = f"{fmt(f['n'])} Bilder · {fmt(f['online'])} online"
+            if f["exp"] > f["online"]:
+                nums += f" · {fmt(f['exp'] - f['online'])} Sync fehlt"
             warn = hint_badges(f["hints"], f["st"])
             head = f"<span><i class='dot s-{f['state']}'></i>{esc(name)}</span>{warn}<span class='nums'>{nums}</span>"
             cls = " done" if f["state"] == "ok" and not f["hints"] else ""
@@ -710,8 +820,10 @@ def build_page(cfg, r, started):
                 for e, text in sorted(f["hints"], key=lambda x: x[0]["file"]) + sorted(f["gps"], key=lambda x: x[0]["file"]):
                     w(f"<tr><td>{esc(e['orig'] or e['stem'])}</td><td>{esc(text)}</td></tr>")
                 w("</table>")
-            if f["missing"]:
-                w(f"<div class='small muted'>Nicht exportiert ({fmt(len(f['missing']))}):</div><ul class='files'>")
+            if f["missing"] and not f["exp"]:
+                w(f"<div class='small muted'>Noch nichts veröffentlicht ({fmt(len(f['missing']))} Bilder).</div>")
+            elif f["missing"]:
+                w(f"<div class='small muted'>Noch nicht veröffentlicht ({fmt(len(f['missing']))}):</div><ul class='files'>")
                 for img in f["missing"]:
                     exts = " + ".join(sorted(x.lstrip(".").upper() for x in img["ext"]))
                     w(f"<li>{esc(img['stem'])} <span class='muted'>{esc(exts)}</span></li>")
@@ -721,6 +833,20 @@ def build_page(cfg, r, started):
 
     # ---- Weitere Angaben
     w("<h2>Weitere Angaben</h2>")
+    off = lr["offline"]
+    w(f"<div class='none'>Nicht in der Galerie (laut Lightroom): {fmt(off['Stapel'])} unten im Stapel · "
+      f"{fmt(off['Rejected'])} Rejected (X) – sie zählen oben nicht mit.</div>")
+    if lr["outside"]:
+        w(f"<div class='none'>{fmt(lr['outside'])} Bilder im Katalog liegen nicht unter {esc(cfg['originals_dir'])} "
+          "und zählen nicht mit (siehe lightroom_pruefen.bat).</div>")
+    if lr["unmatched"]:
+        w(f"<details><summary><span class='t'>Exporte ohne passendes Bild in Lightroom ({fmt(len(lr['unmatched']))})"
+          "</span></summary><div class='inner'><div class='small muted'>Werden von sync trotzdem hochgeladen. "
+          "Meist ist das Bild in Lightroom umbenannt oder gelöscht und noch nicht neu veröffentlicht.</div><table>"
+          "<tr><th>Exportdatei</th><th>Originaldatei</th><th>online</th></tr>")
+        for e in sorted(lr["unmatched"], key=lambda x: x["file"]):
+            w(f"<tr><td>{esc(e['file'])}</td><td>{esc(e['orig'] or '–')}</td><td>{'ja' if e['online'] else 'nein'}</td></tr>")
+        w("</table></div></details>")
     if r["empty"]:
         w(f"<details><summary><span class='t'>Leere Ordner ({len(r['empty'])})</span></summary><div class='inner'><table>")
         for rel in sorted(r["empty"]):
@@ -791,14 +917,15 @@ def main():
     cfg = load_config()
     print(f"uebersicht.py v{__version__}")
     r = analyze(cfg)
+    read_lightroom(cfg, r)
     page, totals, cleanup_total = build_page(cfg, r, started)
     OUT_FILE.write_text(page, encoding="utf-8")
 
     print()
-    print(f"Bilder in Lightroom-Ordnern: {totals['n']}")
-    print(f"  online:                    {totals['online']}")
-    print(f"  exportiert, Sync fehlt:    {totals['wait']}")
-    print(f"  noch nicht exportiert:     {totals['none']}")
+    print(f"Bilder in Lightroom fuer die Galerie: {totals['n']}")
+    print(f"  online:                         {totals['online']}")
+    print(f"  veroeffentlicht, Sync fehlt:    {totals['wait']}")
+    print(f"  noch nicht veroeffentlicht:     {totals['none']}")
     print("Was in Lightroom zu korrigieren ist: lightroom_pruefen.bat")
     print(f"Aufzuraeumen (aufraeumen.bat): {cleanup_total}")
     print(f"\nUebersicht: {OUT_FILE}")
