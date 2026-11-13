@@ -462,6 +462,7 @@ body.map-mode { overflow: hidden; }
 .v-actions { display: flex; align-items: center; gap: 4px; }
 .v-counter { font-size: .85rem; opacity: .85; padding-right: 4px; }
 .v-info-btn[aria-pressed="true"] { background: rgba(255,255,255,.2); }
+.v-top .v-cast-btn.on, .v-top .v-cast-btn.on:hover { background: #2f6fdb; color: #fff; }
 .v-info {
   position: absolute;
   left: 0; right: 0; bottom: 0;

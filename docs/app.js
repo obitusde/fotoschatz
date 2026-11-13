@@ -1,13 +1,13 @@
 "use strict";
 
-const APP_VERSION = "0.7.11";
+const APP_VERSION = "0.7.12";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
 const INFO_KEY = "fotoschatz.info";
 const INSTALL_KEY = "fotoschatz.install-hidden";
 const ORDER_KEY = "fotoschatz.order";   // Bilder (Suche, Alle Bilder, im Ordner): "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
-const STARS_KEY = "fotoschatz.stars";   // "1" = nur Bilder mit Sternen (Ordner, Alle Bilder, Suche; v0.6.38)
+const STARS_KEY = "fotoschatz.stars";   // "0" alle, "1" = ★ und ★★, "2" = nur ★★ (Ordner, Alle Bilder, Suche; v0.7.12)
 const FOLDER_ORDER_KEY = "fotoschatz.folder-order";   // Ordnerliste: "desc" = neueste zuerst (Standard), "asc" = aelteste zuerst
 const HEADER_H = 44;
 const GAP = 2;
@@ -214,21 +214,29 @@ function toggleOrder() {
   writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
 }
 
-// Sternefilter (v0.6.38): nur Bilder mit ★ oder ★★ (Feld r aus Lightroom)
-const starsOnly = () => readPref(STARS_KEY) === "1";
-const withStars = (list) => (starsOnly() ? list.filter((p) => p.r) : list);
+// Sternefilter (v0.6.38, drei Stufen seit v0.7.12): 0 = alle, 1 = ★ und ★★, 2 = nur ★★
+// (Feld r aus Lightroom; alte Bewertungen mit 3–5 Sternen zaehlen wie ★★)
+const starLevel = () => {
+  const v = readPref(STARS_KEY);
+  return v === "2" ? 2 : v === "1" ? 1 : 0;
+};
+const starsOnly = () => starLevel() > 0;
+const passStars = (p) => (p.r || 0) >= starLevel();
+const withStars = (list) => (starsOnly() ? list.filter(passStars) : list);
+const starText = () => (starLevel() === 2 ? "mit ★★" : "mit ★ oder ★★");
 
 function toggleStars() {
-  writePref(STARS_KEY, starsOnly() ? "0" : "1");
+  writePref(STARS_KEY, String((starLevel() + 1) % 3));
 }
 
 function showStarButton() {
   const btn = $("#stars");
-  const on = starsOnly();
-  btn.textContent = on ? "★" : "☆";
-  btn.classList.toggle("on", on);
-  btn.setAttribute("aria-pressed", String(on));
-  btn.title = on ? "Nur Bilder mit Sternen – antippen für alle" : "Alle Bilder – antippen für nur Bilder mit Sternen";
+  const level = starLevel();
+  btn.textContent = ["☆", "★", "★★"][level];
+  btn.classList.toggle("on", level > 0);
+  btn.setAttribute("aria-pressed", String(level > 0));
+  btn.title = ["Alle Bilder – antippen: nur ★ und ★★", "Bilder mit ★ oder ★★ – antippen: nur ★★",
+    "Nur Bilder mit ★★ – antippen: alle"][level];
   btn.hidden = false;
 }
 
@@ -569,6 +577,8 @@ const Viewer = {
       // Kein automatisches Vollbild (Chrome blendet sonst jedes Mal einen Hinweis ein).
       // Stattdessen die Statusleiste schwarz faerben -> in der installierten App fast wie Vollbild.
       this.setThemeColor(true);
+      Cast.load();      // Chromecast-Bibliothek erst jetzt laden (v0.7.12)
+      Cast.update();
     }
     this.display(i);
   },
@@ -604,6 +614,7 @@ const Viewer = {
     $(".v-prev", this.root).style.visibility = this.i > 0 ? "" : "hidden";
     $(".v-next", this.root).style.visibility = this.i < this.list.length - 1 ? "" : "hidden";
     this.renderInfo(p);
+    Cast.send();        // laeuft der Fernseher, zeigt er dasselbe Bild
   },
 
   // Infos zum Bild, jede Zeile mit Bezeichnung (v0.6.35)
@@ -626,7 +637,7 @@ const Viewer = {
     }) : null;
     if (place || mapLink) rows.push(["Ort", [place, place && mapLink ? " · " : "", mapLink]]);
     if (p.de && p.de !== label.name && p.de !== p.f) rows.push(["Beschreibung", p.de]);
-    if (p.r) rows.push(["Bewertung", p.r === 1 ? "★ wichtig" : p.r === 2 ? "★★ Lieblingsbild" : "★".repeat(p.r)]);
+    if (p.r) rows.push(["Bewertung", p.r === 1 ? "★ gut" : p.r === 2 ? "★★ sehr gut" : "★".repeat(p.r)]);
     if (p.o) rows.push(["Datei", p.o]);
     this.info.replaceChildren(...rows.map(([name, value, cls]) => el("div", { class: "row" + (cls ? ` ${cls}` : "") },
       el("span", { class: "label", text: name }), el("span", { class: "value" }, ...[].concat(value)))));
@@ -814,6 +825,118 @@ const Viewer = {
   },
 };
 
+/* ---------------------------------------------------------------- Chromecast (v0.7.12) */
+
+// Bild auf den Fernseher (Google TV mit Chromecast) ueber Googles fertigen Empfaenger
+// (Default Media Receiver, keine Anmeldung; zeigt Bilder laut Google hoechstens in 1280 × 720).
+// Die Cast-Bibliothek gibt es nur direkt von Google und ohne feste Version. Sie wird erst geladen,
+// wenn das erste Bild geoeffnet wird. Findet Chrome kein Cast-Geraet im WLAN, bleibt der Knopf versteckt.
+// Ein Geraet auswaehlen muss man im Chrome-Fenster selbst (Browser-Regel); danach verbindet die App
+// beim naechsten Start von allein wieder (ORIGIN_SCOPED).
+const CAST_SDK = "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1";
+
+const Cast = {
+  state: "off",       // off | loading | ready
+  btn: null,
+  ctx: null,
+  timer: 0,
+  sent: "",           // zuletzt gesendetes Bild (id.hash)
+
+  init() {
+    this.btn = $(".v-cast-btn");
+    this.btn.addEventListener("click", () => this.click());
+  },
+
+  load() {
+    if (this.state !== "off" || !window.chrome) return;   // Cast gibt es nur in Chrome
+    this.state = "loading";
+    window.__onGCastApiAvailable = (ok) => {
+      if (ok && window.cast && cast.framework) this.setup();
+      else this.state = "off";
+    };
+    const script = document.createElement("script");
+    script.src = CAST_SDK;
+    script.async = true;
+    script.onerror = () => { this.state = "off"; };       // z. B. ohne Netz: einfach kein Knopf
+    document.head.append(script);
+  },
+
+  setup() {
+    const cf = cast.framework;
+    try {
+      this.ctx = cf.CastContext.getInstance();
+      this.ctx.setOptions({
+        receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+      });
+    } catch (e) {
+      this.state = "off";
+      return;
+    }
+    this.ctx.addEventListener(cf.CastContextEventType.CAST_STATE_CHANGED, () => this.update());
+    this.ctx.addEventListener(cf.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
+      if (e.sessionState === cf.SessionState.SESSION_STARTED || e.sessionState === cf.SessionState.SESSION_RESUMED) {
+        this.sent = "";
+        this.send(true);
+      }
+      if (e.sessionState === cf.SessionState.SESSION_ENDED) this.sent = "";
+      this.update();
+    });
+    this.state = "ready";
+    this.update();
+  },
+
+  connected() {
+    return this.state === "ready" && this.ctx.getCastState() === cast.framework.CastState.CONNECTED;
+  },
+
+  update() {
+    if (this.state !== "ready") {
+      this.btn.hidden = true;
+      return;
+    }
+    const castState = this.ctx.getCastState();
+    const on = castState === cast.framework.CastState.CONNECTED;
+    this.btn.hidden = castState === cast.framework.CastState.NO_DEVICES_AVAILABLE;
+    this.btn.classList.toggle("on", on);
+    this.btn.setAttribute("aria-pressed", String(on));
+    const label = on ? "Läuft auf dem Fernseher – antippen zum Beenden" : "Auf dem Fernseher zeigen";
+    this.btn.title = label;
+    this.btn.setAttribute("aria-label", label);
+  },
+
+  click() {
+    if (this.state !== "ready") return;
+    if (this.connected()) this.ctx.endCurrentSession(true);
+    else this.ctx.requestSession().catch(() => {});      // Auswahl abgebrochen: kein Fehler
+  },
+
+  // Aktuelles Bild des Betrachters an den Fernseher; beim schnellen Blaettern nur das letzte senden
+  send(now = false) {
+    clearTimeout(this.timer);
+    if (!this.connected() || !Viewer.open) return;
+    this.timer = setTimeout(() => this.push(), now ? 0 : 300);
+  },
+
+  push() {
+    const session = this.ctx.getCurrentSession();
+    const p = Viewer.open && Viewer.list ? Viewer.list[Viewer.i] : null;
+    if (!session || !p) return;
+    const key = `${p.id}.${p.h}`;
+    if (key === this.sent) return;
+    this.sent = key;
+    const info = new chrome.cast.media.MediaInfo(imageUrl(p), "image/jpeg");
+    const meta = new chrome.cast.media.PhotoMediaMetadata();
+    meta.title = p.f;
+    meta.creationDateTime = p.t;
+    const place = placePath(p).reverse().join(", ");
+    if (place) meta.location = place;
+    info.metadata = meta;
+    const done = session.loadMedia(new chrome.cast.media.LoadRequest(info));
+    if (done && done.catch) done.catch(() => { if (this.sent === key) this.sent = ""; });
+  },
+};
+
 function openViewer(i) {
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   navigate({ ...history.state, viewer: { i } });
@@ -908,7 +1031,7 @@ function searchPositions(keys, freeText) {
       pos = pos.filter((i) => set.has(i));
     }
   }
-  if (starsOnly()) pos = pos ? pos.filter((i) => DATA.allDesc[i].r) : SEARCH.starred;
+  if (starsOnly()) pos = (pos || SEARCH.starred).filter((i) => passStars(DATA.allDesc[i]));
   const w = words(freeText);
   if (w.length) {
     const base = pos || DATA.allDesc.map((_, i) => i);
@@ -1209,7 +1332,7 @@ function mountSearch(main, state, m) {
   }
 
   function renderResults() {
-    const signature = JSON.stringify([s.keys, words(s.text), oldestFirst(), starsOnly()]);
+    const signature = JSON.stringify([s.keys, words(s.text), oldestFirst(), starLevel()]);
     if (signature === s.shown) {
       if (m.grid) {
         m.grid.render();
@@ -1838,7 +1961,7 @@ const scrollMemory = new Map();
 // Je Reihenfolge eigene Ansicht und Scroll-Position (sonst passt sie nach dem Umschalten nicht)
 function viewKey(s) {
   const dir = (asc) => (asc ? "asc" : "desc");
-  const star = starsOnly() ? ":stars" : "";
+  const star = starsOnly() ? `:stars${starLevel()}` : "";
   if (s.v === "folder") return `folder:${dir(oldestFirst())}${star}:${s.f}`;
   if (s.v === "all") return `all:${dir(oldestFirst())}${star}`;
   if (s.v === "search") return "search";
@@ -1876,12 +1999,12 @@ function mountView(state) {
     m.toggleStars = toggleStars;
     m.list = withStars(DATA.byFolder.get(f.n) || []);
     if (!oldestFirst()) m.list = m.list.slice().reverse();
-    if (starsOnly()) $("#subtitle").textContent = `${countLabel(m.list.length)} mit Sternen · von ${f.c}`;
+    if (starsOnly()) $("#subtitle").textContent = `${countLabel(m.list.length)} ${starText()} · von ${f.c}`;
     if (m.list.length) m.grid = new Grid(main, m.list);
-    else main.append(el("p", { class: "center muted", text: "Keine Bilder mit Sternen in diesem Ordner." }));
+    else main.append(el("p", { class: "center muted", text: `Keine Bilder ${starText()} in diesem Ordner.` }));
   } else if (state.v === "all") {
     m.list = withStars(oldestFirst() ? DATA.photos : DATA.allDesc);
-    const total = starsOnly() ? `${countLabel(m.list.length)} mit Sternen` : countLabel(m.list.length);
+    const total = starsOnly() ? `${countLabel(m.list.length)} ${starText()}` : countLabel(m.list.length);
     setHeader("Alle Bilder", total);
     showOrderButton(m, oldestFirst(), toggleOrder);
     showStarButton();
@@ -1895,7 +2018,7 @@ function mountView(state) {
         $("#subtitle").textContent = year || total;
       });
     } else {
-      main.append(el("p", { class: "center muted", text: "Noch keine Bilder mit Sternen – in Lightroom ★ oder ★★ setzen, neu exportieren, sync.bat." }));
+      main.append(el("p", { class: "center muted", text: `Noch keine Bilder ${starText()} – in Lightroom Sterne setzen, Publish, sync.bat.` }));
     }
   } else if (state.v === "map") {
     const M = mapView();
@@ -2078,6 +2201,7 @@ function showNeutral(text) {
 async function start() {
   registerServiceWorker();
   Viewer.init();
+  Cast.init();
   $("#back").addEventListener("click", () => history.back());
   // Umschalter in der Kopfzeile (Ordnerliste, Ordner, Alle Bilder): Reihenfolge umdrehen, oben neu beginnen
   $("#order").addEventListener("click", () => {
