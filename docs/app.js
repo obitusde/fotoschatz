@@ -1,13 +1,15 @@
 "use strict";
 
-const APP_VERSION = "0.7.12";
+const APP_VERSION = "0.7.13";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
-const SECRET_RE = /^[A-Za-z0-9]{32,}$/;
+// Link: #<Praefix>-<Schluessel> (seit v0.7.13: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
+// Inhaltsverzeichnis index-<Schluessel>.json); alter Link nur mit Praefix -> index.json
+const SECRET_RE = /^[A-Za-z0-9]{32,}(-[A-Za-z0-9]{16,})?$/;
 const INFO_KEY = "fotoschatz.info";
 const INSTALL_KEY = "fotoschatz.install-hidden";
 const ORDER_KEY = "fotoschatz.order";   // Bilder (Suche, Alle Bilder, im Ordner): "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
-const STARS_KEY = "fotoschatz.stars";   // "0" alle, "1" = ★ und ★★, "2" = nur ★★ (Ordner, Alle Bilder, Suche; v0.7.12)
+const STARS_KEY = "fotoschatz.stars";   // "0" alle, "1" = ★ und ★★, "2" = nur ★★ (Ordner, Alle Bilder, Suche; v0.7.13)
 const FOLDER_ORDER_KEY = "fotoschatz.folder-order";   // Ordnerliste: "desc" = neueste zuerst (Standard), "asc" = aelteste zuerst
 const HEADER_H = 44;
 const GAP = 2;
@@ -214,7 +216,7 @@ function toggleOrder() {
   writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
 }
 
-// Sternefilter (v0.6.38, drei Stufen seit v0.7.12): 0 = alle, 1 = ★ und ★★, 2 = nur ★★
+// Sternefilter (v0.6.38, drei Stufen seit v0.7.13): 0 = alle, 1 = ★ und ★★, 2 = nur ★★
 // (Feld r aus Lightroom; alte Bewertungen mit 3–5 Sternen zaehlen wie ★★)
 const starLevel = () => {
   const v = readPref(STARS_KEY);
@@ -577,7 +579,7 @@ const Viewer = {
       // Kein automatisches Vollbild (Chrome blendet sonst jedes Mal einen Hinweis ein).
       // Stattdessen die Statusleiste schwarz faerben -> in der installierten App fast wie Vollbild.
       this.setThemeColor(true);
-      Cast.load();      // Chromecast-Bibliothek erst jetzt laden (v0.7.12)
+      Cast.load();      // Chromecast-Bibliothek erst jetzt laden (v0.7.13)
       Cast.update();
     }
     this.display(i);
@@ -825,7 +827,7 @@ const Viewer = {
   },
 };
 
-/* ---------------------------------------------------------------- Chromecast (v0.7.12) */
+/* ---------------------------------------------------------------- Chromecast (v0.7.13) */
 
 // Bild auf den Fernseher (Google TV mit Chromecast) ueber Googles fertigen Empfaenger
 // (Default Media Receiver, keine Anmeldung; zeigt Bilder laut Google hoechstens in 1280 × 720).
@@ -2233,11 +2235,12 @@ async function start() {
     showNeutral("Bitte den Link verwenden, den du bekommen hast.");
     return;
   }
-  BASE = `${R2_PUBLIC_URL}/${secret}`;
+  const [prefix, key] = secret.split("-");
+  BASE = `${R2_PUBLIC_URL}/${prefix}`;
 
   let index;
   try {
-    const res = await fetch(`${BASE}/index.json`, { cache: "no-cache" });
+    const res = await fetch(`${BASE}/${key ? `index-${key}` : "index"}.json`, { cache: "no-cache" });
     if (res.status === 403 || res.status === 404) {
       forgetSecret();
       showNeutral("Bitte den Link verwenden, den du bekommen hast.");

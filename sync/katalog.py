@@ -9,7 +9,7 @@ Aenderungen.
 Wird von katalog_diagnose.py (und spaeter von der Lightroom-Pruefung) benutzt.
 """
 
-__version__ = "0.7.6"
+__version__ = "0.7.13"
 
 import os
 import shutil
@@ -188,6 +188,24 @@ def gallery_lookup(db):
         else:
             reason = None
         result[key] = "mehrdeutig" if key in result else reason
+    return result
+
+
+def image_paths(db):
+    """Fuer sync.py (v0.7.13, Ausblenden/Freigaben): Schluessel wie bei gallery_lookup (eigener Ordnername,
+    Dateiname mit Endung, klein geschrieben) -> alle Ordnernamen des Pfads, klein geschrieben, z. B.
+    ("1912-1985 göbel und schäfer", "1914-1940 familie eugen göbel"). Doppelte Schluessel: alle Pfade zusammen."""
+    rows = db.execute("""
+        SELECT f.baseName AS base, f.extension AS ext, fo.pathFromRoot AS path, r.name AS rootName
+        FROM AgLibraryFile f
+        JOIN AgLibraryFolder fo ON fo.id_local = f.folder
+        JOIN AgLibraryRootFolder r ON r.id_local = fo.rootFolder""").fetchall()
+    result = {}
+    for r in rows:
+        parts = [p for p in (r["path"] or "").split("/") if p] or [r["rootName"] or ""]
+        name = (r["base"] or "") + (f".{r['ext']}" if r["ext"] else "")
+        key = (parts[-1].casefold(), name.casefold())
+        result[key] = tuple(sorted(set(result.get(key, ())) | {x.casefold() for x in parts}))
     return result
 
 

@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.7.9"
+__version__ = "0.7.13"
 
 import argparse
 import csv
@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -55,6 +56,15 @@ KEYWORD_FILE = SCRIPT_DIR / "stichwoerter.txt"
 PLACES_FILE = SCRIPT_DIR / "orte.txt"
 BIRTHDAY_FILE = SCRIPT_DIR / "geburtstage.txt"     # bleibt auf dem PC (nicht im Repo)
 LOG_FILE = SCRIPT_DIR / "letzter_lauf.txt"
+# Links (v0.7.13): ein Link fuer mich (alles), einer fuer Gaeste (ohne ausblenden.txt), je Freigabe einer fuer einen Ordner.
+# Alle Dateien bleiben auf dem PC (nicht im Repo).
+HIDE_FILE = SCRIPT_DIR / "ausblenden.txt"       # Personen und Ordner, die Gaeste nicht sehen
+SHARE_FILE = SCRIPT_DIR / "freigaben.txt"       # Ordner, die einen eigenen Link bekommen
+KEY_FILE = SCRIPT_DIR / "schluessel.json"       # geheime Schluessel der Links (sicher aufbewahren)
+LINKS_FILE = SCRIPT_DIR / "links.txt"           # die fertigen Links zum Kopieren
+APP_URL = "https://obitusde.github.io/fotoschatz/"
+KEY_RE = re.compile(r"^[A-Za-z0-9]{16,}$")
+INDEX_FILE_RE = re.compile(r"^index(-[A-Za-z0-9]+)?\.json$")
 
 # Erhoehen, wenn extract_metadata neue Felder liefert -> Metadaten aller Bilder werden neu gelesen
 META_VERSION = 2
@@ -295,11 +305,16 @@ def clean_dir(directory, keep):
 
 # ---------------------------------------------------------------- index.json
 
-def build_index(files, analyses, ignore_keywords, birthdays=None):
-    known_persons = {}
+def known_persons_of(files):
+    known = {}
     for rec in files.values():
         for person in rec["meta"].get("p", []):
-            known_persons.setdefault(person.casefold(), person)
+            known.setdefault(person.casefold(), person)
+    return known
+
+
+def build_index(files, analyses, ignore_keywords, birthdays=None, known=None):
+    known_persons = known if known is not None else known_persons_of(files)
     ignore = {k.casefold() for k in ignore_keywords}
 
     photos = []
@@ -532,6 +547,168 @@ def update_birthday_file(person_counts):
     return birthdays, notes
 
 
+# ---------------------------------------------------------------- Links: ich / Gaeste / Ordner (v0.7.13)
+
+HIDE_HEAD = [
+    "# Fotoschatz - für Gäste ausblenden (Wunsch 13.11.2026)",
+    "# Eine Zeile je Eintrag. Erlaubt sind:",
+    "#   - ein Personenname, wie in Lightroom (z. B. Uli): jedes Bild, auf dem die Person markiert ist,",
+    "#     fehlt beim Gäste-Link und bei Ordner-Freigaben",
+    "#   - ein Ordnername, wie in Lightroom (z. B. 2019-04-16 Legoland & Ingolstadt): der Ordner und alle",
+    "#     Unterordner fehlen beim Gäste-Link und bei Ordner-Freigaben",
+    "# Groß-/Kleinschreibung ist egal. # = Kommentar. Gilt ab dem nächsten sync.bat.",
+    "# Dein eigener Link zeigt immer alles. Die Datei bleibt auf deinem PC.",
+    "",
+]
+SHARE_HEAD = [
+    "# Fotoschatz - Ordner freigeben (Wunsch 13.11.2026)",
+    "# Eine Zeile je Ordner, Name wie in Lightroom (z. B. 2019-04-16 Legoland & Ingolstadt).",
+    "# Jeder Ordner bekommt einen eigenen Link: Wer ihn hat, sieht nur diesen Ordner mit Unterordnern",
+    "# (ohne die Bilder aus ausblenden.txt). Die Links stehen nach dem nächsten sync.bat in links.txt.",
+    "# Zeile löschen = Link gilt ab dem nächsten sync.bat nicht mehr. # = Kommentar.",
+    "",
+]
+
+
+def read_name_list(path, head):
+    """Textdatei mit einem Namen je Zeile (# = Kommentar). Fehlt sie, wird sie mit Erklaerung angelegt."""
+    if not path.exists():
+        path.write_text("\n".join(head) + "\n", encoding="utf-8")
+        return []
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252")      # mit dem Windows-Editor als ANSI gespeichert
+    names, seen = [], set()
+    for line in text.splitlines():
+        name = " ".join(line.split("#", 1)[0].split())
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            names.append(name)
+    return names
+
+
+def new_key():
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    return "".join(secrets.choice(alphabet) for _ in range(24))
+
+
+def load_keys(shares):
+    """Schluessel lesen bzw. anlegen: mein, gaeste, je Freigabe einer. Nicht mehr freigegebene fallen weg."""
+    try:
+        keys = json.loads(KEY_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        keys = {}
+    out = {"mein": keys.get("mein"), "gaeste": keys.get("gaeste"), "ordner": {}}
+    for role in ("mein", "gaeste"):
+        if not (isinstance(out[role], str) and KEY_RE.match(out[role])):
+            out[role] = new_key()
+    old = keys.get("ordner") if isinstance(keys.get("ordner"), dict) else {}
+    for name in shares:
+        key = old.get(name.casefold())
+        out["ordner"][name.casefold()] = key if isinstance(key, str) and KEY_RE.match(key) else new_key()
+    used = [out["mein"], out["gaeste"], *out["ordner"].values()]
+    if len(set(used)) != len(used):          # praktisch ausgeschlossen, aber sicher ist sicher
+        out["gaeste"] = new_key()
+    if out != keys:
+        write_json_atomic(KEY_FILE, out)
+    return out
+
+
+def build_views(new_files, analyses, paths, ignore_keywords, birthdays):
+    """Inhaltsverzeichnisse fuer die drei Arten von Links. Gibt (Liste von (Rolle, Name, Schluessel, Index),
+    Meldungen fuers Protokoll) zurueck."""
+    hide = read_name_list(HIDE_FILE, HIDE_HEAD)
+    shares = read_name_list(SHARE_FILE, SHARE_HEAD)
+    keys = load_keys(shares)
+    known = known_persons_of(new_files)
+    full = build_index(new_files, analyses, ignore_keywords, birthdays, known)
+    by_id = {p["id"]: p for p in full["photos"]}
+
+    # Ordner eines Bildes: alle Ordnernamen des Lightroom-Pfads (aus dem Katalog) und der Online-Ordner
+    folders_of = {}
+    for name, rec in new_files.items():
+        lr = analyses[name]["lr_folder"].casefold()
+        orig = (rec["meta"].get("orig") or "").casefold()
+        parts = set(paths.get((lr, orig), ())) | {lr, analyses[name]["online_folder"].casefold()}
+        folders_of[name] = parts
+
+    def matches(name, entry):
+        """'Ordner' / 'Person' / None"""
+        if entry in folders_of[name]:
+            return "Ordner"
+        photo = by_id.get(new_files[name]["id"])
+        if photo and entry in {p.casefold() for p in photo.get("p", [])}:
+            return "Person"
+        return None
+
+    hidden, hide_report = set(), []
+    for entry in hide:
+        kinds, count = Counter(), 0
+        for name in new_files:
+            kind = matches(name, entry.casefold())
+            if kind:
+                kinds[kind] += 1
+                count += 1
+                hidden.add(name)
+        hide_report.append((entry, kinds, count))
+
+    def subset(names):
+        return build_index({n: new_files[n] for n in names}, analyses, ignore_keywords, birthdays, known)
+
+    guest_names = [n for n in new_files if n not in hidden]
+    views = [("mein", "Mein Link", keys["mein"], full),
+             ("gaeste", "Gäste-Link", keys["gaeste"], subset(guest_names))]
+    share_report = []
+    for entry in shares:
+        names = [n for n in guest_names if entry.casefold() in folders_of[n]]
+        share_report.append((entry, len(names)))
+        if names:
+            view = subset(names)
+            # Anzeige mit der Schreibweise aus Lightroom (falls der Eintrag ein Online-Ordner ist)
+            label = next((f["n"] for f in view["folders"] if f["n"].casefold() == entry.casefold()), entry)
+            views.append(("ordner", label, keys["ordner"][entry.casefold()], view))
+
+    notes = [f"    Dein Link: {bilder(full['count'])} · Gäste-Link: {bilder(views[1][3]['count'])}"
+             + (f" · {num(len(views) - 2)} Ordner-Freigabe{'' if len(views) == 3 else 'n'}" if len(views) > 2 else "")]
+    if hide:
+        notes.append(f"    Für Gäste ausgeblendet ({HIDE_FILE.name}): {bilder(len(hidden))}")
+        width = min(40, max(len(e) for e in hide))
+        for entry, kinds, count in hide_report:
+            if not count:
+                what = "⚠ nichts gefunden (Tippfehler?)"
+            else:
+                what = " und ".join(("Ordner mit Unterordnern" if k == "Ordner" else k) for k in kinds) + f" · {bilder(count)}"
+            notes.append(f"      {entry:<{width}}  {what}")
+    for entry, count in share_report:
+        notes.append(f"    Freigabe {entry}: " + (bilder(count) if count else "⚠ nichts gefunden (Tippfehler?) - kein Link"))
+    return views, notes
+
+
+def write_links(prefix, views):
+    """links.txt mit allen Links (enthaelt den geheimen Teil - bleibt auf dem PC, nicht ins Protokoll)."""
+    link = lambda key: f"{APP_URL}#{prefix}-{key}"
+    lines = [f"Fotoschatz – deine Links (Stand {datetime.now():%d.%m.%Y %H:%M}, sync.py {__version__})",
+             "Diese Datei bleibt auf deinem PC. Links zum Teilen einfach kopieren (z. B. in WhatsApp).", ""]
+    for role, label, key, index in views:
+        if role == "mein":
+            lines += ["MEIN LINK – alle Bilder. NICHT weitergeben, nur auf deinen eigenen Geräten öffnen:",
+                      f"  {link(key)}", f"  ({bilder(index['count'])})", ""]
+        elif role == "gaeste":
+            lines += ["GÄSTE-LINK – zum Teilen. Ohne die Personen und Ordner aus ausblenden.txt:",
+                      f"  {link(key)}", f"  ({bilder(index['count'])})", ""]
+    shares = [v for v in views if v[0] == "ordner"]
+    if shares:
+        lines.append("ORDNER-LINKS – zeigen nur diesen Ordner mit Unterordnern (ohne ausblenden.txt):")
+        for _role, label, key, index in shares:
+            lines += [f"  {label} ({bilder(index['count'])}):", f"  {link(key)}", ""]
+    lines += ["Ein Link ist in falsche Hände geraten? In schluessel.json die Zeile dieses Links löschen",
+              "(bei einem Ordner: die Zeile in freigaben.txt) und sync.bat starten - der alte Link zeigt",
+              "dann nichts mehr, links.txt enthält den neuen."]
+    LINKS_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 # ---------------------------------------------------------------- Upload
 
 RCLONE_STATS = ["--use-json-log", "--stats", "2s", "--stats-log-level", "NOTICE"]
@@ -560,7 +737,7 @@ def rclone_line(label, st, kind):
 def rclone_done(label, st, kind, seconds):
     done, deletes = st.get("transfers", 0), st.get("deletes", 0)
     if kind == "index":
-        return f"    {label} hochgeladen – ab jetzt zeigt die App den neuen Stand"
+        return f"    {label}: Inhaltsverzeichnis hochgeladen"
     parts = []
     if done:
         parts.append(f"{num(done)} hochgeladen ({size_text(st.get('bytes', 0))})")
@@ -606,7 +783,7 @@ def run_rclone(rclone, args, label, kind, prefix):
     line.finish(rclone_done(label, stats, kind, time.time() - started))
 
 
-def upload(cfg, prefix, staging):
+def upload(cfg, prefix, staging, index_files):
     rclone = regeln.find_tool("rclone", "Installieren mit: winget install Rclone.Rclone")
     remote = f"{cfg['rclone_remote']}/{prefix}"
     common = ["--size-only", "--transfers", str(cfg["transfers"]), "--checkers", "16"]
@@ -616,9 +793,22 @@ def upload(cfg, prefix, staging):
     for sub in ("img", "thumb"):
         run_rclone(rclone, ["copy", str(staging / sub), f"{remote}/{sub}",
                             "--header-upload", CACHE_IMMUTABLE] + common, names[sub], "copy", prefix)
-    log("    b) Inhaltsverzeichnis hochladen")
-    run_rclone(rclone, ["copyto", str(staging / "index.json"), f"{remote}/index.json",
-                        "--header-upload", CACHE_NO_CACHE, "--ignore-times"], "index.json", "index", prefix)
+    log("    b) Inhaltsverzeichnisse hochladen (dein Link, Gäste-Link, Ordner-Freigaben)")
+    for label, path in index_files:
+        run_rclone(rclone, ["copyto", str(path), f"{remote}/{path.name}", "--header-upload", CACHE_NO_CACHE,
+                            "--ignore-times"], label, "index", prefix)
+    log("    Ab jetzt zeigt die App den neuen Stand.")
+    # Nicht mehr gueltige Links: deren Inhaltsverzeichnis online loeschen (auch das alte index.json ohne Schluessel)
+    wanted = {p.name for _label, p in index_files}
+    stale = [n for n in list_online(rclone, remote, prefix) if INDEX_FILE_RE.match(n) and n not in wanted]
+    for name in stale:
+        result = subprocess.run([rclone, "deletefile", f"{remote}/{name}"], capture_output=True,
+                                encoding="utf-8", errors="replace")
+        if result.returncode != 0:
+            fail("rclone konnte ein altes Inhaltsverzeichnis nicht löschen. Beim nächsten Lauf wird es wiederholt.")
+    if stale:
+        log(f"    {num(len(stale))} nicht mehr gültige{'r' if len(stale) == 1 else ''} Link{'' if len(stale) == 1 else 's'}"
+            " abgeschaltet (Inhaltsverzeichnis online gelöscht)")
     log("    c) Alte Dateien online löschen (Bilder, die nicht mehr im Export-Ordner sind, und alte Fassungen)")
     for sub in ("img", "thumb"):
         # Alte Fassungen neu exportierter Bilder (gleiche id, anderer Inhalt) sind keine echten Loeschungen
@@ -719,6 +909,7 @@ def main():
     try:
         catalog, _copy, db = katalog.prepare(cfg["catalog"], protected=[cfg["originals_dir"]])
         lookup = katalog.gallery_lookup(db)
+        image_paths = katalog.image_paths(db)       # fuer ausblenden.txt / freigaben.txt (v0.7.13)
         db.close()
     except katalog.CatalogError as err:
         fail(str(err))
@@ -936,7 +1127,7 @@ def main():
         new_files.pop(name, None)
 
     # 5. Staging aufraeumen und vervollstaendigen, index.json
-    step(6, "Inhaltsverzeichnis für die App bauen (index.json: alle Bilder mit Datum, Ort, Personen)")
+    step(6, "Inhaltsverzeichnisse für die App bauen (alle Bilder mit Datum, Ort, Personen - je Link eines)")
     img_keep, thumb_keep = set(), set()
     for name, rec in new_files.items():
         base = f"{rec['id']}.{rec['hash']}"
@@ -950,17 +1141,38 @@ def main():
     clean_dir(staging / "img", img_keep)
     clean_dir(staging / "thumb", thumb_keep)
 
-    index = build_index(new_files, analyses, cfg["ignore_keywords"], birthdays)
-    index_changed = True     # Inhalt anders als beim letzten Mal (z. B. neues Feld) -> index.json neu hochladen
-    try:
-        old_index = json.loads((staging / "index.json").read_text(encoding="utf-8"))
-        index_changed = (old_index.get("photos") != index["photos"] or old_index.get("folders") != index["folders"]
-                         or old_index.get("bd") != index.get("bd"))
-    except (OSError, ValueError):
-        pass
-    write_json_atomic(staging / "index.json", index, compact=True)
-    index_kb = (staging / "index.json").stat().st_size / 1024
+    # Je Link ein eigenes Inhaltsverzeichnis index-<Schluessel>.json (v0.7.13); hochgeladen wird es nur,
+    # wenn sich etwas geaendert hat (z. B. neues Feld, neue Freigabe, ausblenden.txt geaendert)
+    views, view_notes = build_views(new_files, analyses, image_paths, cfg["ignore_keywords"], birthdays)
+    index = views[0][3]
+    link_dir = staging / "links"
+    link_dir.mkdir(parents=True, exist_ok=True)
+    index_files, index_changed = [], False
+    for role, label, key, view in views:
+        path = link_dir / f"index-{key}.json"
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+            same = all(old.get(k) == view.get(k) for k in ("photos", "folders", "bd"))
+        except (OSError, ValueError):
+            same = False
+        if not same:
+            write_json_atomic(path, view, compact=True)
+            index_changed = True
+        index_files.append((label if role != "ordner" else f"Freigabe {label}", path))
+    for old in link_dir.glob("index-*.json"):
+        if old not in [p for _l, p in index_files]:
+            old.unlink()
+            index_changed = True
+    old_plain = staging / "index.json"          # bis 0.7.12: ein Inhaltsverzeichnis ohne Schluessel
+    if old_plain.exists():
+        old_plain.unlink()
+        index_changed = True
+    index_kb = index_files[0][1].stat().st_size / 1024
     log(f"    {bilder(index['count'])} in {num(len(index['folders']))} Ordnern · {index_kb:,.0f} KB".replace(",", "."))
+    for line in view_notes:
+        log(line)
+    write_links(prefix, views)
+    log(f"    Links zum Teilen: {LINKS_FILE}")
 
     changed = counts["neu"] or counts["ersetzt"] or removed or refreshed or index_changed
     state = {
@@ -976,7 +1188,7 @@ def main():
     uploaded = False
     if state["upload_pending"]:
         step(7, "Hochladen zu Cloudflare R2 (Online-Speicher der Galerie)")
-        upload(cfg, prefix, staging)
+        upload(cfg, prefix, staging, index_files)
         state["upload_pending"] = False
         write_json_atomic(state_file, state)
         uploaded = True

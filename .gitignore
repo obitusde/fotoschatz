@@ -35,3 +35,8 @@ sync/gps_test.txt
 sync/gpx/
 sync/google/
 sync/geburtstage.txt
+# Links (v0.7.13): Schluessel, Links, Listen mit Namen - bleiben auf dem PC
+sync/schluessel.json
+sync/links.txt
+sync/ausblenden.txt
+sync/freigaben.txt
