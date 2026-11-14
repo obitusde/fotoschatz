@@ -1,15 +1,15 @@
 "use strict";
 
-const APP_VERSION = "0.7.14";
+const APP_VERSION = "0.7.15";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
-// Link: #<Praefix>-<Schluessel> (seit v0.7.14: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
+// Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
 // Inhaltsverzeichnis index-<Schluessel>.json); alter Link nur mit Praefix -> index.json
 const SECRET_RE = /^[A-Za-z0-9]{32,}(-[A-Za-z0-9]{16,})?$/;
 const INFO_KEY = "fotoschatz.info";
 const INSTALL_KEY = "fotoschatz.install-hidden";
 const ORDER_KEY = "fotoschatz.order";   // Bilder (Suche, Alle Bilder, im Ordner): "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
-const STARS_KEY = "fotoschatz.stars";   // "0" alle, "1" = ★ und ★★, "2" = nur ★★ (Ordner, Alle Bilder, Suche; v0.7.14)
+const STARS_KEY = "fotoschatz.stars";   // "0" alle, "1" = ★ und ★★, "2" = nur ★★ (Ordner, Alle Bilder, Suche; v0.7.15)
 const FOLDER_ORDER_KEY = "fotoschatz.folder-order";   // Ordnerliste: "desc" = neueste zuerst (Standard), "asc" = aelteste zuerst
 const HEADER_H = 44;
 const GAP = 2;
@@ -33,7 +33,7 @@ function el(tag, props = {}, ...children) {
 
 /* ---------------------------------------------------------------- Geheimnis */
 
-// Seit v0.7.14 merkt sich die App ALLE auf diesem Geraet geoeffneten Links (z. B. mehrere geteilte Ordner)
+// Seit v0.7.15 merkt sich die App ALLE auf diesem Geraet geoeffneten Links (z. B. mehrere geteilte Ordner)
 // und zeigt sie zusammen. Der zuletzt geoeffnete steht vorne.
 const LINKS_KEY = "fotoschatz.links";
 
@@ -52,7 +52,7 @@ function saveLinks(list) {
 
 function takeLinks() {
   let list = storedLinks();
-  try {   // bis v0.7.14 gab es nur einen gespeicherten Link
+  try {   // bis v0.7.15 gab es nur einen gespeicherten Link
     const old = localStorage.getItem(SECRET_KEY);
     if (old && SECRET_RE.test(old) && !list.includes(old)) list.push(old);
     localStorage.removeItem(SECRET_KEY);
@@ -113,7 +113,7 @@ function folderLabel(f) {
 let BASE = "";
 let DATA = null;
 let LINK_PREFIX = "";     // geheimer Teil vor dem Schluessel (fuer Teilen-Links)
-let OWNER = false;        // dein Link: Verzeichnis mit Teilen-Schluesseln (v0.7.14)
+let OWNER = false;        // dein Link: Verzeichnis mit Teilen-Schluesseln (v0.7.15)
 
 const thumbUrl = (p) => `${BASE}/thumb/${p.id}.${p.h}.webp`;
 const imageUrl = (p) => `${BASE}/img/${p.id}.${p.h}.jpg`;
@@ -175,7 +175,7 @@ function placePath(p, keys = PLACE_KEYS) {
   return path;
 }
 
-// Mehrere Inhaltsverzeichnisse (z. B. mehrere geteilte Ordner) zu einem zusammenlegen (v0.7.14)
+// Mehrere Inhaltsverzeichnisse (z. B. mehrere geteilte Ordner) zu einem zusammenlegen (v0.7.15)
 function mergeIndexes(list) {
   if (list.length === 1) return list[0];
   const photos = new Map();
@@ -259,7 +259,7 @@ function toggleOrder() {
   writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
 }
 
-// Sternefilter (v0.6.38, drei Stufen seit v0.7.14): 0 = alle, 1 = ★ und ★★, 2 = nur ★★
+// Sternefilter (v0.6.38, drei Stufen seit v0.7.15): 0 = alle, 1 = ★ und ★★, 2 = nur ★★
 // (Feld r aus Lightroom; alte Bewertungen mit 3–5 Sternen zaehlen wie ★★)
 const starLevel = () => {
   const v = readPref(STARS_KEY);
@@ -632,7 +632,7 @@ const Viewer = {
       // Kein automatisches Vollbild (Chrome blendet sonst jedes Mal einen Hinweis ein).
       // Stattdessen die Statusleiste schwarz faerben -> in der installierten App fast wie Vollbild.
       this.setThemeColor(true);
-      Cast.load();      // Chromecast-Bibliothek erst jetzt laden (v0.7.14)
+      Cast.load();      // Chromecast-Bibliothek erst jetzt laden (v0.7.15)
       Cast.update();
     }
     this.display(i);
@@ -880,7 +880,7 @@ const Viewer = {
   },
 };
 
-/* ---------------------------------------------------------------- Chromecast (v0.7.14) */
+/* ---------------------------------------------------------------- Chromecast (v0.7.15) */
 
 // Bild auf den Fernseher (Google TV mit Chromecast) ueber Googles fertigen Empfaenger
 // (Default Media Receiver, keine Anmeldung; zeigt Bilder laut Google hoechstens in 1280 × 720).
@@ -2052,7 +2052,7 @@ function mountView(state) {
     showOrderButton(m, oldestFirst(), toggleOrder);
     showStarButton();
     m.toggleStars = toggleStars;
-    if (OWNER) {          // nur mit deinem Link (v0.7.14)
+    if (OWNER) {          // nur mit deinem Link (v0.7.15)
       $("#share").hidden = false;
       m.share = () => shareFolder(f);
     }
@@ -2173,7 +2173,7 @@ function switchTab(view) {
   navigate({ v: view }, view === "folders" || current.v !== "folders");
 }
 
-/* ---------------------------------------------------------------- Teilen (v0.7.14, nur mit deinem Link) */
+/* ---------------------------------------------------------------- Teilen (v0.7.15, nur mit deinem Link) */
 
 const linkFor = (key) => `${location.origin}${location.pathname}#${LINK_PREFIX}-${key}`;
 
@@ -2218,7 +2218,7 @@ function shareFolder(f) {
 
 let installPrompt = null;
 
-// Einmaliger Hinweis (v0.7.14): Chrome bietet „Installieren“ selbst an, Firefox nur ueber sein Menue.
+// Einmaliger Hinweis (v0.7.15): Chrome bietet „Installieren“ selbst an, Firefox nur ueber sein Menue.
 // Nach „Installieren“, „Nein danke“ bzw. „OK“ kommt er auf diesem Geraet nie wieder; in der installierten App nie.
 const IS_FIREFOX_ANDROID = /Android/.test(navigator.userAgent) && /Firefox\//.test(navigator.userAgent);
 
@@ -2272,7 +2272,7 @@ let updating = false;
 let waitingWorker = null;
 let reloadWhenHidden = false;
 
-// Neue Version: du siehst „Neue Version verfügbar“; alle anderen bekommen sie still (v0.7.14) – neu geladen
+// Neue Version: du siehst „Neue Version verfügbar“; alle anderen bekommen sie still (v0.7.15) – neu geladen
 // wird erst, wenn die App im Hintergrund ist, beim naechsten Oeffnen ist sie dann aktuell.
 function applyUpdate() {
   const worker = waitingWorker;

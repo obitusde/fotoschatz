@@ -18,7 +18,7 @@ Aufruf: uebersicht.bat (Doppelklick) oder python uebersicht.py
 Optional in config.local.json: "originals_dir": "D:\\\\Bilder - Raw"
 """
 
-__version__ = "0.7.11"
+__version__ = "0.7.15"
 
 import html
 import json
@@ -207,7 +207,8 @@ def scan_exports(export_dir, state):
             synced, rec = True, {"meta": {"orig": skip.get("orig")}}
         e = {
             "file": path.name,
-            "folder": a["lr_folder"],
+            # Ordner in Lightroom umbenannt/verschoben: sync merkt sich den aktuellen Ordner (v0.7.15)
+            "folder": (rec or {}).get("lr") or a["lr_folder"] if synced else a["lr_folder"],
             "stem": a["stem"],
             "stamp": a["taken"].strftime("%Y-%m-%d_%H-%M-%S") if a["taken"] else "",
             "severe": regeln.is_severe(a["problems"]),

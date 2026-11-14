@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.7.14"
+__version__ = "0.7.15"
 
 import argparse
 import csv
@@ -49,7 +49,9 @@ DEFAULTS = {
 }
 
 # Warum ein Export nicht in die Galerie kommt (Abgleich mit dem Lightroom-Katalog, v0.7.7)
-SKIP_TEXT = {"Stapel": "unten im Stapel", "Rejected": "Rejected (X)", "_-Ordner": "in einem _-Ordner"}
+SKIP_TEXT = {"Stapel": "unten im Stapel", "Rejected": "Rejected (X)", "_-Ordner": "in einem _-Ordner",
+             "veraltet": "alte Datei eines umbenannten/verschobenen Ordners (es gibt eine neuere)"}
+UNDERSCORE_PROBLEM = "Ordner beginnt mit '_'"     # Anfang des SCHWER-Hinweises aus regeln.interpret_folder
 
 CSV_FILE = SCRIPT_DIR / "korrekturen.csv"
 KEYWORD_FILE = SCRIPT_DIR / "stichwoerter.txt"
@@ -924,6 +926,7 @@ def main():
         lookup = katalog.gallery_lookup(db)
         image_paths = katalog.image_paths(db)       # fuer ausblenden.txt und Ordner-Teilen (v0.7.13)
         lr_folder_names = katalog.folder_names(db)  # fuer „Ordner umbenannt“ (v0.7.14)
+        capture = katalog.capture_times(db)         # fuer sicheres Wiederfinden (v0.7.15)
         db.close()
     except katalog.CatalogError as err:
         fail(str(err))
@@ -939,24 +942,44 @@ def main():
     folders_by_file = defaultdict(set)
     for own, fname in lookup:
         folders_by_file[fname].add(own)
-    renamed = Counter()     # (alter Name, neuer Name) -> Anzahl
+    moved_names = {}        # Exportdatei -> (alter Ordner, neuer Ordner)
+
+    def relocate(name, orig):
+        """Weg B (v0.7.15): Liegt das Bild in Lightroom inzwischen in einem anderen Ordner (Ordner umbenannt oder
+        Bilder verschoben - Lightroom veroeffentlicht dann nicht neu), wird der Export diesem Ordner zugeordnet.
+        Sicher erkannt an Originaldatei UND Aufnahmezeit. Gibt den neuen Ordnernamen zurueck oder None."""
+        a = analyses[name]
+        old, file_key = a["lr_folder"].casefold(), orig.casefold()
+        if (old, file_key) in lookup:
+            return None
+        candidates = folders_by_file.get(file_key, set()) - {old}
+        stamp = f"{a['taken']:%Y-%m-%d %H:%M:%S}" if a["taken"] else ""
+        timed = [f for f in candidates if stamp and capture.get((f, file_key)) == stamp]
+        if len(timed) == 1:
+            new = timed[0]
+        elif not timed and len(candidates) == 1 and old not in lr_folder_names:
+            new = next(iter(candidates))      # Ordner umbenannt, Zeit im Katalog fehlt/abweichend
+        else:
+            return None
+        new_name = lr_folder_names.get(new, new)
+        moved = regeln.analyze_name(new_name + name[len(a["lr_folder"]):], now)
+        moved["file"] = name
+        moved["moved_from"] = a["lr_folder"]
+        analyses[name] = moved
+        moved_names[name] = (a["lr_folder"], new_name)
+        return new_name
 
     def verdict(name, orig):
         """None = in die Galerie; sonst Grund aus SKIP_TEXT. Unbekannt -> hochladen (mit Hinweis)."""
         if not orig:
             analyses[name]["problems"].append((regeln.HINWEIS, "Originaldatei unbekannt - Lightroom-Abgleich nicht möglich"))
             return None
-        old = analyses[name]["lr_folder"]
-        reason = lookup.get((old.casefold(), orig.casefold()), "fehlt")
+        reason = lookup.get((analyses[name]["lr_folder"].casefold(), orig.casefold()), "fehlt")
         if reason == "fehlt":
-            # Ordner in Lightroom umbenannt? Den alten Namen gibt es nicht mehr, die Datei liegt jetzt woanders.
-            now = folders_by_file.get(orig.casefold(), set())
-            if old.casefold() not in lr_folder_names and len(now) == 1:
-                new = lr_folder_names.get(next(iter(now)), next(iter(now)))
-                renamed[(old, new)] += 1
-                analyses[name]["problems"].append((regeln.HINWEIS, f"Ordner in Lightroom umbenannt (jetzt „{new}“) -"
-                                                   " Published Smart Folder › Mark to Republish › Publish"))
-                return None
+            new = relocate(name, orig)       # Ordner umbenannt / Bild verschoben -> neuer Ordner
+            if new:
+                reason = lookup.get((new.casefold(), orig.casefold()), "fehlt")
+        if reason == "fehlt":
             analyses[name]["problems"].append((regeln.HINWEIS, "im Lightroom-Katalog nicht gefunden - trotzdem hochgeladen"))
             return None
         if reason == "mehrdeutig":
@@ -1029,6 +1052,57 @@ def main():
         else:
             kept.append(t)
     to_process = kept
+
+    # Weg B: Exporte mit „_“-Ordner im Namen, deren Bild in Lightroom inzwischen in einem normalen Ordner liegt
+    # (z. B. aus _Diverse zurueckgeschoben, ohne neu zu veroeffentlichen) -> doch in die Galerie
+    rescued = 0
+    for path in severe_paths:
+        a = analyses[path.name]
+        hard = [text for sev, text in a["problems"] if sev == regeln.SCHWER]
+        entry = exif.get(path.name)
+        orig = regeln.extract_metadata(entry).get("orig") if entry else None
+        if not orig or not hard or not all(text.startswith(UNDERSCORE_PROBLEM) for text in hard):
+            continue
+        if not relocate(path.name, orig) or regeln.is_severe(analyses[path.name]["problems"]):
+            continue
+        reason = lookup.get((analyses[path.name]["lr_folder"].casefold(), orig.casefold()))
+        stat = path.stat()
+        if reason:
+            skipped[path.name] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "orig": orig, "why": reason}
+            continue
+        rescued += 1
+        prev = old_files.get(path.name)
+        if prev and prev["size"] == stat.st_size and prev["mtime_ns"] == stat.st_mtime_ns:
+            new_files[path.name] = prev
+            counts["unveraendert"] += 1
+        else:
+            to_process.append((path, sha1_file(path), stat, "ersetzt" if prev else "neu"))
+
+    # Zwei Exporte vom selben Bild (alte Datei des umbenannten Ordners + neue von Lightroom): die neuere gilt
+    def orig_of(name):
+        rec = new_files.get(name)
+        if rec:
+            return rec["meta"].get("orig")
+        entry = exif.get(name)
+        return regeln.extract_metadata(entry).get("orig") if entry else None
+    groups = defaultdict(list)
+    for name in list(new_files) + [t[0].name for t in to_process]:
+        orig = orig_of(name)
+        if orig:
+            groups[(analyses[name]["lr_folder"].casefold(), orig.casefold())].append(name)
+    stale = set()
+    for names in groups.values():
+        if len(names) > 1:
+            names.sort(key=lambda n: (not analyses[n].get("moved_from"), paths[n].stat().st_mtime_ns), reverse=True)
+            stale.update(names[1:])
+    for name in stale:
+        stat = paths[name].stat()
+        skipped[name] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "orig": orig_of(name), "why": "veraltet"}
+        if name in new_files:
+            new_files.pop(name)
+            counts["unveraendert"] -= 1
+    to_process = [t for t in to_process if t[0].name not in stale]
+    renamed = Counter(v for n, v in moved_names.items() if n not in stale)
     refreshed = 0
     for path in to_refresh:
         entry = exif.get(path.name)
@@ -1048,6 +1122,13 @@ def main():
         f" · {num(len(removed))} nicht mehr dabei (werden online gelöscht)")
     if to_refresh:
         log(f"    {num(len(to_refresh))} unveränderte Bilder: Infos neu gelesen (neues Format, kein neuer Bild-Upload)")
+    if renamed:
+        log(f"    {bilder(sum(renamed.values()))} aus umbenannten/verschobenen Ordnern - automatisch dem neuen Ordner"
+            " zugeordnet (in Lightroom ist nichts zu tun):")
+        for (old, new), count in sorted(renamed.items())[:FOLDER_LINES]:
+            log(f"      „{old}“ → „{new}“ ({bilder(count)})")
+        if rescued:
+            log(f"      davon {bilder(rescued)} aus „_“-Ordnern zurückgeholt")
     if len(removed) > cfg["max_delete"]:
         confirm_deletions(removed, cfg["max_delete"], dry)
         cfg["max_delete"] = len(removed)      # nur fuer diesen Lauf (auch fuer rclone --max-delete)
@@ -1170,6 +1251,11 @@ def main():
     clean_dir(staging / "img", img_keep)
     clean_dir(staging / "thumb", thumb_keep)
 
+    for name, rec in new_files.items():       # aktueller Lightroom-Ordner, wenn er vom Dateinamen abweicht (v0.7.15)
+        if analyses[name].get("moved_from"):
+            rec["lr"] = analyses[name]["lr_folder"]
+        else:
+            rec.pop("lr", None)
     # Je Link ein eigenes Inhaltsverzeichnis index-<Schluessel>.json (v0.7.13); hochgeladen wird es nur,
     # wenn sich etwas geaendert hat (z. B. neues Feld, neue Freigabe, ausblenden.txt geaendert)
     views, view_notes = build_views(new_files, analyses, image_paths, cfg["ignore_keywords"], birthdays)
@@ -1200,12 +1286,6 @@ def main():
     log(f"    {bilder(index['count'])} in {num(len(index['folders']))} Ordnern · {index_kb:,.0f} KB".replace(",", "."))
     for line in view_notes:
         log(line)
-    if renamed:
-        log(f"    ⚠ {bilder(sum(renamed.values()))} aus umbenannten Ordnern - Lightroom hat sie nicht neu veröffentlicht:")
-        for (old, new), count in sorted(renamed.items()):
-            log(f"      „{old}“ heißt jetzt „{new}“ ({bilder(count)})")
-        log("      In Lightroom: Published Smart Folder › Library Filter › Metadata › Folder: den Ordner wählen ›")
-        log("      Strg+A › Rechtsklick › Mark to Republish › Publish, dann wieder sync.bat")
     write_links(prefix, views)
     log(f"    Links zum Teilen: {LINKS_FILE}")
 

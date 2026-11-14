@@ -35,7 +35,7 @@ Lightroom ──Publish──> D:\Fotoschatz\Published Smart Folder ──sync.b
 - **Einen Ordner teilen:** in der App den Ordner öffnen › oben **Teilen** (nur mit deinem Link sichtbar). Der Link zeigt nur diesen Ordner mit Unterordnern, ohne `ausblenden.txt`. Mehrere geteilte Ordner sammelt die App beim Empfänger.
 - **Empfänger:** Link antippen → Bilder sofort, keine Fragen. Einmalig „Als App installieren“ (Chrome: Knopf, Firefox: Anleitung) – danach nie wieder. Updates still.
 - Ausblenden ändern → `sync.bat` → gilt sofort für alle Links. Link zurückziehen: in `schluessel.json` seine Zeile löschen (Ordner: die Zeile mit dem Ordnernamen) → `sync.bat`. `schluessel.json` mitsichern.
-- **Ordner in Lightroom umbenannt:** Lightroom veröffentlicht die Bilder nicht neu – `sync.bat` meldet „Ordner … heißt jetzt …“. Dann: Published Smart Folder › Filter *Folder* › Strg+A › Rechtsklick › *Mark to Republish* › Publish › `sync.bat`. Der Teilen-Link des Ordners ändert sich dabei.
+- **Ordner in Lightroom umbenannt oder Bilder verschoben** (auch aus einem `_`-Ordner heraus oder hinein): Lightroom veröffentlicht dabei nicht neu – **`sync.bat` ordnet die Bilder seit 0.7.15 selbst dem neuen Ordner zu** (erkannt an Originaldatei und Aufnahmezeit), in Lightroom ist nichts zu tun. Veröffentlicht Lightroom später doch neu, nimmt sync die neue Datei, nichts erscheint doppelt. Der Teilen-Link eines umbenannten Ordners ändert sich.
 
 **Grundregel:** Korrigiert wird **nur in Lightroom**, danach neu exportieren. Nie Dateien im Explorer umbenennen, verschieben oder ändern, sonst passt der Katalog nicht mehr.
 

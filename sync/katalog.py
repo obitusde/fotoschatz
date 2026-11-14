@@ -9,7 +9,7 @@ Aenderungen.
 Wird von katalog_diagnose.py (und spaeter von der Lightroom-Pruefung) benutzt.
 """
 
-__version__ = "0.7.14"
+__version__ = "0.7.15"
 
 import os
 import shutil
@@ -206,6 +206,26 @@ def image_paths(db):
         name = (r["base"] or "") + (f".{r['ext']}" if r["ext"] else "")
         key = (parts[-1].casefold(), name.casefold())
         result[key] = tuple(sorted(set(result.get(key, ())) | {x.casefold() for x in parts}))
+    return result
+
+
+def capture_times(db):
+    """Fuer sync.py (v0.7.15): Schluessel wie bei gallery_lookup -> Aufnahmezeit "JJJJ-MM-TT hh:mm:ss"
+    (zum sicheren Wiederfinden von Bildern, deren Ordner in Lightroom umbenannt oder verschoben wurde)."""
+    rows = db.execute("""
+        SELECT f.baseName AS base, f.extension AS ext, fo.pathFromRoot AS path, r.name AS rootName,
+               i.captureTime AS t
+        FROM Adobe_images i
+        JOIN AgLibraryFile f ON f.id_local = i.rootFile
+        JOIN AgLibraryFolder fo ON fo.id_local = f.folder
+        JOIN AgLibraryRootFolder r ON r.id_local = fo.rootFolder""").fetchall()
+    result = {}
+    for r in rows:
+        parts = [p for p in (r["path"] or "").split("/") if p]
+        own = parts[-1] if parts else (r["rootName"] or "")
+        name = (r["base"] or "") + (f".{r['ext']}" if r["ext"] else "")
+        t = str(r["t"] or "").replace("T", " ")[:19]
+        result[(own.casefold(), name.casefold())] = t
     return result
 
 
