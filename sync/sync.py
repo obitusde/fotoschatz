@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.7.13"
+__version__ = "0.7.14"
 
 import argparse
 import csv
@@ -59,7 +59,7 @@ LOG_FILE = SCRIPT_DIR / "letzter_lauf.txt"
 # Links (v0.7.13): ein Link fuer mich (alles), einer fuer Gaeste (ohne ausblenden.txt), je Freigabe einer fuer einen Ordner.
 # Alle Dateien bleiben auf dem PC (nicht im Repo).
 HIDE_FILE = SCRIPT_DIR / "ausblenden.txt"       # Personen und Ordner, die Gaeste nicht sehen
-SHARE_FILE = SCRIPT_DIR / "freigaben.txt"       # Ordner, die einen eigenen Link bekommen
+SHARE_FILE = SCRIPT_DIR / "freigaben.txt"       # nur 0.7.13 - seit 0.7.14 teilt man Ordner in der App
 KEY_FILE = SCRIPT_DIR / "schluessel.json"       # geheime Schluessel der Links (sicher aufbewahren)
 LINKS_FILE = SCRIPT_DIR / "links.txt"           # die fertigen Links zum Kopieren
 APP_URL = "https://obitusde.github.io/fotoschatz/"
@@ -553,19 +553,11 @@ HIDE_HEAD = [
     "# Fotoschatz - für Gäste ausblenden (Wunsch 13.11.2026)",
     "# Eine Zeile je Eintrag. Erlaubt sind:",
     "#   - ein Personenname, wie in Lightroom (z. B. Uli): jedes Bild, auf dem die Person markiert ist,",
-    "#     fehlt beim Gäste-Link und bei Ordner-Freigaben",
+    "#     fehlt beim Gäste-Link und bei geteilten Ordnern",
     "#   - ein Ordnername, wie in Lightroom (z. B. 2019-04-16 Legoland & Ingolstadt): der Ordner und alle",
-    "#     Unterordner fehlen beim Gäste-Link und bei Ordner-Freigaben",
+    "#     Unterordner fehlen beim Gäste-Link und bei geteilten Ordnern",
     "# Groß-/Kleinschreibung ist egal. # = Kommentar. Gilt ab dem nächsten sync.bat.",
     "# Dein eigener Link zeigt immer alles. Die Datei bleibt auf deinem PC.",
-    "",
-]
-SHARE_HEAD = [
-    "# Fotoschatz - Ordner freigeben (Wunsch 13.11.2026)",
-    "# Eine Zeile je Ordner, Name wie in Lightroom (z. B. 2019-04-16 Legoland & Ingolstadt).",
-    "# Jeder Ordner bekommt einen eigenen Link: Wer ihn hat, sieht nur diesen Ordner mit Unterordnern",
-    "# (ohne die Bilder aus ausblenden.txt). Die Links stehen nach dem nächsten sync.bat in links.txt.",
-    "# Zeile löschen = Link gilt ab dem nächsten sync.bat nicht mehr. # = Kommentar.",
     "",
 ]
 
@@ -595,7 +587,8 @@ def new_key():
 
 
 def load_keys(shares):
-    """Schluessel lesen bzw. anlegen: mein, gaeste, je Freigabe einer. Nicht mehr freigegebene fallen weg."""
+    """Schluessel lesen bzw. anlegen: mein, gaeste, je teilbarem Ordner einer (seit 0.7.14 automatisch fuer alle
+    Online-Ordner). Ordner, die es nicht mehr gibt (z. B. umbenannt), fallen weg - ihr alter Link zeigt nichts mehr."""
     try:
         keys = json.loads(KEY_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -617,11 +610,10 @@ def load_keys(shares):
 
 
 def build_views(new_files, analyses, paths, ignore_keywords, birthdays):
-    """Inhaltsverzeichnisse fuer die drei Arten von Links. Gibt (Liste von (Rolle, Name, Schluessel, Index),
-    Meldungen fuers Protokoll) zurueck."""
+    """Inhaltsverzeichnisse fuer alle Links. Gibt (Liste von (Rolle, Name, Schluessel, Index), Meldungen) zurueck.
+    mein = alles (dazu je Ordner sein Teilen-Schluessel und der Gaeste-Schluessel fuer „App teilen“),
+    gaeste = ohne ausblenden.txt, ordner = je Online-Ordner die Gaeste-Bilder dieses Ordners mit Unterordnern."""
     hide = read_name_list(HIDE_FILE, HIDE_HEAD)
-    shares = read_name_list(SHARE_FILE, SHARE_HEAD)
-    keys = load_keys(shares)
     known = known_persons_of(new_files)
     full = build_index(new_files, analyses, ignore_keywords, birthdays, known)
     by_id = {p["id"]: p for p in full["photos"]}
@@ -657,21 +649,43 @@ def build_views(new_files, analyses, paths, ignore_keywords, birthdays):
     def subset(names):
         return build_index({n: new_files[n] for n in names}, analyses, ignore_keywords, birthdays, known)
 
+    # Teilen je Online-Ordner (v0.7.14): der Ordner mit seinen Lightroom-Unterordnern; „JJJJ Weitere Bilder“
+    # nur mit den losen Bildern (sonst waere es das ganze Jahr)
+    members = defaultdict(list)          # Online-Ordner -> alle Bilder (auch ausgeblendete), die dazugehoeren
+    rest = {f["n"] for f in full["folders"] if f.get("x")}
+    for name in new_files:
+        own = analyses[name]["online_folder"]
+        members[own].append(name)
+    names_by_folder = {}
+    for f in full["folders"]:
+        if f["n"] in rest:
+            names_by_folder[f["n"]] = members[f["n"]]
+        else:
+            key = f["n"].casefold()
+            names_by_folder[f["n"]] = [n for n in new_files if key in folders_of[n]]
+    keys = load_keys([n for n, names in names_by_folder.items() if any(x not in hidden for x in names)])
+
     guest_names = [n for n in new_files if n not in hidden]
     views = [("mein", "Mein Link", keys["mein"], full),
              ("gaeste", "Gäste-Link", keys["gaeste"], subset(guest_names))]
-    share_report = []
-    for entry in shares:
-        names = [n for n in guest_names if entry.casefold() in folders_of[n]]
-        share_report.append((entry, len(names)))
-        if names:
-            view = subset(names)
-            # Anzeige mit der Schreibweise aus Lightroom (falls der Eintrag ein Online-Ordner ist)
-            label = next((f["n"] for f in view["folders"] if f["n"].casefold() == entry.casefold()), entry)
-            views.append(("ordner", label, keys["ordner"][entry.casefold()], view))
+    full["gk"] = keys["gaeste"]          # nur in deinem Verzeichnis: für den Knopf „App teilen“
+    blocked = 0
+    for f in full["folders"]:
+        names = names_by_folder[f["n"]]
+        visible = [n for n in names if n not in hidden]
+        if len(visible) != len(names):
+            f["g"], f["a"] = len(visible), len(names)      # Gaeste sehen g von a Bildern
+        if not visible:
+            blocked += 1
+            continue
+        key = keys["ordner"][f["n"].casefold()]
+        f["s"] = key                                       # Teilen-Schluessel - steht nur in deinem Verzeichnis
+        views.append(("ordner", f["n"], key, subset(visible)))
 
+    shared = len(views) - 2
     notes = [f"    Dein Link: {bilder(full['count'])} · Gäste-Link: {bilder(views[1][3]['count'])}"
-             + (f" · {num(len(views) - 2)} Ordner-Freigabe{'' if len(views) == 3 else 'n'}" if len(views) > 2 else "")]
+             f" · Teilen-Links für {num(shared)} Ordner"
+             + (f" ({num(blocked)} Ordner ganz ausgeblendet)" if blocked else "")]
     if hide:
         notes.append(f"    Für Gäste ausgeblendet ({HIDE_FILE.name}): {bilder(len(hidden))}")
         width = min(40, max(len(e) for e in hide))
@@ -681,8 +695,9 @@ def build_views(new_files, analyses, paths, ignore_keywords, birthdays):
             else:
                 what = " und ".join(("Ordner mit Unterordnern" if k == "Ordner" else k) for k in kinds) + f" · {bilder(count)}"
             notes.append(f"      {entry:<{width}}  {what}")
-    for entry, count in share_report:
-        notes.append(f"    Freigabe {entry}: " + (bilder(count) if count else "⚠ nichts gefunden (Tippfehler?) - kein Link"))
+    if SHARE_FILE.exists():
+        notes.append(f"    Hinweis: {SHARE_FILE.name} wird nicht mehr gebraucht - Ordner teilst du jetzt in der App "
+                     "(Ordner öffnen › Teilen). Die Datei kannst du löschen.")
     return views, notes
 
 
@@ -698,14 +713,12 @@ def write_links(prefix, views):
         elif role == "gaeste":
             lines += ["GÄSTE-LINK – zum Teilen. Ohne die Personen und Ordner aus ausblenden.txt:",
                       f"  {link(key)}", f"  ({bilder(index['count'])})", ""]
-    shares = [v for v in views if v[0] == "ordner"]
-    if shares:
-        lines.append("ORDNER-LINKS – zeigen nur diesen Ordner mit Unterordnern (ohne ausblenden.txt):")
-        for _role, label, key, index in shares:
-            lines += [f"  {label} ({bilder(index['count'])}):", f"  {link(key)}", ""]
-    lines += ["Ein Link ist in falsche Hände geraten? In schluessel.json die Zeile dieses Links löschen",
-              "(bei einem Ordner: die Zeile in freigaben.txt) und sync.bat starten - der alte Link zeigt",
-              "dann nichts mehr, links.txt enthält den neuen."]
+    lines += ["EINEN ORDNER TEILEN: in der App (mit deinem Link) den Ordner öffnen › oben auf Teilen tippen.",
+              "Der Link zeigt nur diesen Ordner mit Unterordnern (ohne ausblenden.txt).",
+              "Die ganze App teilen geht auch in der App: Ordnerliste ganz unten › „App teilen“.", "",
+              "Ein Link ist in falsche Hände geraten? In schluessel.json die Zeile dieses Links löschen",
+              "(bei einem Ordner: die Zeile mit dem Ordnernamen) und sync.bat starten - der alte Link",
+              "zeigt dann nichts mehr. Neue Links: links.txt bzw. in der App neu teilen."]
     LINKS_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -783,7 +796,7 @@ def run_rclone(rclone, args, label, kind, prefix):
     line.finish(rclone_done(label, stats, kind, time.time() - started))
 
 
-def upload(cfg, prefix, staging, index_files):
+def upload(cfg, prefix, staging, index_files, link_dir):
     rclone = regeln.find_tool("rclone", "Installieren mit: winget install Rclone.Rclone")
     remote = f"{cfg['rclone_remote']}/{prefix}"
     common = ["--size-only", "--transfers", str(cfg["transfers"]), "--checkers", "16"]
@@ -793,10 +806,10 @@ def upload(cfg, prefix, staging, index_files):
     for sub in ("img", "thumb"):
         run_rclone(rclone, ["copy", str(staging / sub), f"{remote}/{sub}",
                             "--header-upload", CACHE_IMMUTABLE] + common, names[sub], "copy", prefix)
-    log("    b) Inhaltsverzeichnisse hochladen (dein Link, Gäste-Link, Ordner-Freigaben)")
-    for label, path in index_files:
-        run_rclone(rclone, ["copyto", str(path), f"{remote}/{path.name}", "--header-upload", CACHE_NO_CACHE,
-                            "--ignore-times"], label, "index", prefix)
+    log("    b) Inhaltsverzeichnisse hochladen (dein Link, Gäste-Link, je Ordner eines zum Teilen)")
+    # ein Aufruf fuer alle (v0.7.14: je Ordner eines); rclone laedt nur, was sich geaendert hat
+    run_rclone(rclone, ["copy", str(link_dir), remote, "--header-upload", CACHE_NO_CACHE, "--transfers",
+                        str(cfg["transfers"]), "--checkers", "16"], "Inhaltsverzeichnisse", "copy", prefix)
     log("    Ab jetzt zeigt die App den neuen Stand.")
     # Nicht mehr gueltige Links: deren Inhaltsverzeichnis online loeschen (auch das alte index.json ohne Schluessel)
     wanted = {p.name for _label, p in index_files}
@@ -909,7 +922,8 @@ def main():
     try:
         catalog, _copy, db = katalog.prepare(cfg["catalog"], protected=[cfg["originals_dir"]])
         lookup = katalog.gallery_lookup(db)
-        image_paths = katalog.image_paths(db)       # fuer ausblenden.txt / freigaben.txt (v0.7.13)
+        image_paths = katalog.image_paths(db)       # fuer ausblenden.txt und Ordner-Teilen (v0.7.13)
+        lr_folder_names = katalog.folder_names(db)  # fuer „Ordner umbenannt“ (v0.7.14)
         db.close()
     except katalog.CatalogError as err:
         fail(str(err))
@@ -921,13 +935,28 @@ def main():
     ok_paths = [p for p in jpgs if not regeln.is_severe(analyses[p.name]["problems"])]
     severe_paths = [p for p in jpgs if regeln.is_severe(analyses[p.name]["problems"])]
 
+    # Wo liegt eine Originaldatei jetzt? (Datei klein -> eigene Ordnernamen klein) - fuer umbenannte Ordner
+    folders_by_file = defaultdict(set)
+    for own, fname in lookup:
+        folders_by_file[fname].add(own)
+    renamed = Counter()     # (alter Name, neuer Name) -> Anzahl
+
     def verdict(name, orig):
         """None = in die Galerie; sonst Grund aus SKIP_TEXT. Unbekannt -> hochladen (mit Hinweis)."""
         if not orig:
             analyses[name]["problems"].append((regeln.HINWEIS, "Originaldatei unbekannt - Lightroom-Abgleich nicht möglich"))
             return None
-        reason = lookup.get((analyses[name]["lr_folder"].casefold(), orig.casefold()), "fehlt")
+        old = analyses[name]["lr_folder"]
+        reason = lookup.get((old.casefold(), orig.casefold()), "fehlt")
         if reason == "fehlt":
+            # Ordner in Lightroom umbenannt? Den alten Namen gibt es nicht mehr, die Datei liegt jetzt woanders.
+            now = folders_by_file.get(orig.casefold(), set())
+            if old.casefold() not in lr_folder_names and len(now) == 1:
+                new = lr_folder_names.get(next(iter(now)), next(iter(now)))
+                renamed[(old, new)] += 1
+                analyses[name]["problems"].append((regeln.HINWEIS, f"Ordner in Lightroom umbenannt (jetzt „{new}“) -"
+                                                   " Published Smart Folder › Mark to Republish › Publish"))
+                return None
             analyses[name]["problems"].append((regeln.HINWEIS, "im Lightroom-Katalog nicht gefunden - trotzdem hochgeladen"))
             return None
         if reason == "mehrdeutig":
@@ -1152,7 +1181,7 @@ def main():
         path = link_dir / f"index-{key}.json"
         try:
             old = json.loads(path.read_text(encoding="utf-8"))
-            same = all(old.get(k) == view.get(k) for k in ("photos", "folders", "bd"))
+            same = all(old.get(k) == view.get(k) for k in ("photos", "folders", "bd", "gk"))
         except (OSError, ValueError):
             same = False
         if not same:
@@ -1171,6 +1200,12 @@ def main():
     log(f"    {bilder(index['count'])} in {num(len(index['folders']))} Ordnern · {index_kb:,.0f} KB".replace(",", "."))
     for line in view_notes:
         log(line)
+    if renamed:
+        log(f"    ⚠ {bilder(sum(renamed.values()))} aus umbenannten Ordnern - Lightroom hat sie nicht neu veröffentlicht:")
+        for (old, new), count in sorted(renamed.items()):
+            log(f"      „{old}“ heißt jetzt „{new}“ ({bilder(count)})")
+        log("      In Lightroom: Published Smart Folder › Library Filter › Metadata › Folder: den Ordner wählen ›")
+        log("      Strg+A › Rechtsklick › Mark to Republish › Publish, dann wieder sync.bat")
     write_links(prefix, views)
     log(f"    Links zum Teilen: {LINKS_FILE}")
 
@@ -1188,7 +1223,7 @@ def main():
     uploaded = False
     if state["upload_pending"]:
         step(7, "Hochladen zu Cloudflare R2 (Online-Speicher der Galerie)")
-        upload(cfg, prefix, staging, index_files)
+        upload(cfg, prefix, staging, index_files, link_dir)
         state["upload_pending"] = False
         write_json_atomic(state_file, state)
         uploaded = True

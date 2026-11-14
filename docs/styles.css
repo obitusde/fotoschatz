@@ -138,7 +138,20 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
   background: var(--surface);
   font-size: .9rem;
 }
-.install-bar span { flex: 1; }
+.install-bar { flex-wrap: wrap; padding: 14px; }
+.install-text { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; }
+.install-text b { font-size: 1rem; }
+.install-text span { color: var(--muted); }
+.install-actions { display: flex; gap: 8px; align-items: center; }
+.install-no { font: inherit; padding: 8px 12px; border-radius: 18px; color: var(--muted); }
+.share-app { text-align: center; padding: 20px 16px 0; }
+.share-app p { font-size: .8rem; margin: 6px 0 0; }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--nav-h) + var(--safe-bottom) + 16px); z-index: 60;
+  padding: 10px 16px; border-radius: 20px; background: var(--text); color: var(--bg);
+  font-size: .9rem; box-shadow: 0 4px 16px rgba(0,0,0,.25); max-width: calc(100% - 32px);
+}
 .update-bar {
   position: fixed;
   left: 12px; right: 12px;

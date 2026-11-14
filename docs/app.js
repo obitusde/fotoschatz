@@ -1,15 +1,15 @@
 "use strict";
 
-const APP_VERSION = "0.7.13";
+const APP_VERSION = "0.7.14";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
-// Link: #<Praefix>-<Schluessel> (seit v0.7.13: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
+// Link: #<Praefix>-<Schluessel> (seit v0.7.14: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
 // Inhaltsverzeichnis index-<Schluessel>.json); alter Link nur mit Praefix -> index.json
 const SECRET_RE = /^[A-Za-z0-9]{32,}(-[A-Za-z0-9]{16,})?$/;
 const INFO_KEY = "fotoschatz.info";
 const INSTALL_KEY = "fotoschatz.install-hidden";
 const ORDER_KEY = "fotoschatz.order";   // Bilder (Suche, Alle Bilder, im Ordner): "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
-const STARS_KEY = "fotoschatz.stars";   // "0" alle, "1" = ★ und ★★, "2" = nur ★★ (Ordner, Alle Bilder, Suche; v0.7.13)
+const STARS_KEY = "fotoschatz.stars";   // "0" alle, "1" = ★ und ★★, "2" = nur ★★ (Ordner, Alle Bilder, Suche; v0.7.14)
 const FOLDER_ORDER_KEY = "fotoschatz.folder-order";   // Ordnerliste: "desc" = neueste zuerst (Standard), "asc" = aelteste zuerst
 const HEADER_H = 44;
 const GAP = 2;
@@ -33,20 +33,41 @@ function el(tag, props = {}, ...children) {
 
 /* ---------------------------------------------------------------- Geheimnis */
 
-function takeSecret() {
+// Seit v0.7.14 merkt sich die App ALLE auf diesem Geraet geoeffneten Links (z. B. mehrere geteilte Ordner)
+// und zeigt sie zusammen. Der zuletzt geoeffnete steht vorne.
+const LINKS_KEY = "fotoschatz.links";
+
+function storedLinks() {
+  try {
+    const list = JSON.parse(localStorage.getItem(LINKS_KEY) || "[]");
+    return Array.isArray(list) ? list.filter((x) => typeof x === "string" && SECRET_RE.test(x)) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveLinks(list) {
+  try { localStorage.setItem(LINKS_KEY, JSON.stringify(list.slice(0, 50))); } catch (e) { /* privat */ }
+}
+
+function takeLinks() {
+  let list = storedLinks();
+  try {   // bis v0.7.14 gab es nur einen gespeicherten Link
+    const old = localStorage.getItem(SECRET_KEY);
+    if (old && SECRET_RE.test(old) && !list.includes(old)) list.push(old);
+    localStorage.removeItem(SECRET_KEY);
+  } catch (e) { /* privat */ }
   const fromHash = decodeURIComponent(location.hash.slice(1)).trim();
   if (fromHash) {
     history.replaceState(null, "", location.pathname + location.search);
-    if (SECRET_RE.test(fromHash)) {
-      try { localStorage.setItem(SECRET_KEY, fromHash); } catch (e) { /* privat */ }
-      return fromHash;
-    }
+    if (SECRET_RE.test(fromHash)) list = [fromHash, ...list.filter((x) => x !== fromHash)];
   }
-  try {
-    const stored = localStorage.getItem(SECRET_KEY);
-    if (stored && SECRET_RE.test(stored)) return stored;
-  } catch (e) { /* privat */ }
-  return null;
+  saveLinks(list);
+  return list;
+}
+
+function dropLink(link) {
+  saveLinks(storedLinks().filter((x) => x !== link));
 }
 
 function readPref(key) {
@@ -57,9 +78,6 @@ function writePref(key, value) {
   try { localStorage.setItem(key, value); } catch (e) { /* privat */ }
 }
 
-function forgetSecret() {
-  try { localStorage.removeItem(SECRET_KEY); } catch (e) { /* privat */ }
-}
 
 /* ---------------------------------------------------------------- Formate */
 
@@ -94,6 +112,8 @@ function folderLabel(f) {
 
 let BASE = "";
 let DATA = null;
+let LINK_PREFIX = "";     // geheimer Teil vor dem Schluessel (fuer Teilen-Links)
+let OWNER = false;        // dein Link: Verzeichnis mit Teilen-Schluesseln (v0.7.14)
 
 const thumbUrl = (p) => `${BASE}/thumb/${p.id}.${p.h}.webp`;
 const imageUrl = (p) => `${BASE}/img/${p.id}.${p.h}.jpg`;
@@ -153,6 +173,29 @@ function placePath(p, keys = PLACE_KEYS) {
     path.push(value);
   }
   return path;
+}
+
+// Mehrere Inhaltsverzeichnisse (z. B. mehrere geteilte Ordner) zu einem zusammenlegen (v0.7.14)
+function mergeIndexes(list) {
+  if (list.length === 1) return list[0];
+  const photos = new Map();
+  const folders = new Map();
+  for (const ix of list) {
+    for (const p of ix.photos) if (!photos.has(p.id)) photos.set(p.id, p);
+    for (const f of ix.folders) if (!folders.has(f.n)) folders.set(f.n, { ...f, c: 0 });
+  }
+  for (const p of photos.values()) {
+    const f = folders.get(p.f);
+    if (f) f.c += 1;
+  }
+  return {
+    v: 1,
+    generated: list.map((ix) => ix.generated || "").sort().pop(),
+    count: photos.size,
+    folders: [...folders.values()].filter((f) => f.c),
+    photos: [...photos.values()],
+    bd: Object.assign({}, ...list.map((ix) => ix.bd || {})),
+  };
 }
 
 function prepare(index) {
@@ -216,7 +259,7 @@ function toggleOrder() {
   writePref(ORDER_KEY, oldestFirst() ? "desc" : "asc");
 }
 
-// Sternefilter (v0.6.38, drei Stufen seit v0.7.13): 0 = alle, 1 = ★ und ★★, 2 = nur ★★
+// Sternefilter (v0.6.38, drei Stufen seit v0.7.14): 0 = alle, 1 = ★ und ★★, 2 = nur ★★
 // (Feld r aus Lightroom; alte Bewertungen mit 3–5 Sternen zaehlen wie ★★)
 const starLevel = () => {
   const v = readPref(STARS_KEY);
@@ -267,6 +310,8 @@ function setHeader(title, subtitle = "", back = false) {
   if (order) order.hidden = true;
   const stars = $("#stars");
   if (stars) stars.hidden = true;
+  const share = $("#share");
+  if (share) share.hidden = true;
   $("#title").textContent = title;
   $("#subtitle").textContent = subtitle;
   $("#back").hidden = !back;
@@ -308,6 +353,14 @@ function folderListView() {
     }
   }
   const generated = DATA.index.generated ? fmtDay.format(new Date(DATA.index.generated)) : "?";
+  if (OWNER && DATA.index.gk) {
+    wrap.append(el("div", { class: "share-app" },
+      el("button", {
+        type: "button", class: "search-action",
+        onclick: () => shareLink("Fotoschatz", "Unsere Fotos", linkFor(DATA.index.gk)),
+      }, "App teilen (Gäste-Link)"),
+      el("p", { class: "muted", text: "Zeigt alle Bilder außer denen aus ausblenden.txt." })));
+  }
   wrap.append(el("p", {
     class: "footer-note",
     text: `${countLabel(DATA.photos.length)} · Stand ${generated} · Version ${APP_VERSION} · Anzeige: ${displayMode()}`,
@@ -579,7 +632,7 @@ const Viewer = {
       // Kein automatisches Vollbild (Chrome blendet sonst jedes Mal einen Hinweis ein).
       // Stattdessen die Statusleiste schwarz faerben -> in der installierten App fast wie Vollbild.
       this.setThemeColor(true);
-      Cast.load();      // Chromecast-Bibliothek erst jetzt laden (v0.7.13)
+      Cast.load();      // Chromecast-Bibliothek erst jetzt laden (v0.7.14)
       Cast.update();
     }
     this.display(i);
@@ -827,7 +880,7 @@ const Viewer = {
   },
 };
 
-/* ---------------------------------------------------------------- Chromecast (v0.7.13) */
+/* ---------------------------------------------------------------- Chromecast (v0.7.14) */
 
 // Bild auf den Fernseher (Google TV mit Chromecast) ueber Googles fertigen Empfaenger
 // (Default Media Receiver, keine Anmeldung; zeigt Bilder laut Google hoechstens in 1280 × 720).
@@ -1999,6 +2052,10 @@ function mountView(state) {
     showOrderButton(m, oldestFirst(), toggleOrder);
     showStarButton();
     m.toggleStars = toggleStars;
+    if (OWNER) {          // nur mit deinem Link (v0.7.14)
+      $("#share").hidden = false;
+      m.share = () => shareFolder(f);
+    }
     m.list = withStars(DATA.byFolder.get(f.n) || []);
     if (!oldestFirst()) m.list = m.list.slice().reverse();
     if (starsOnly()) $("#subtitle").textContent = `${countLabel(m.list.length)} ${starText()} · von ${f.c}`;
@@ -2116,31 +2173,86 @@ function switchTab(view) {
   navigate({ v: view }, view === "folders" || current.v !== "folders");
 }
 
+/* ---------------------------------------------------------------- Teilen (v0.7.14, nur mit deinem Link) */
+
+const linkFor = (key) => `${location.origin}${location.pathname}#${LINK_PREFIX}-${key}`;
+
+function toast(text) {
+  const old = $(".toast");
+  if (old) old.remove();
+  const node = el("div", { class: "toast", role: "status", text });
+  document.body.append(node);
+  setTimeout(() => node.remove(), 2500);
+}
+
+// Handy: Android-Teilen-Menue (WhatsApp usw.); PC: Link in die Zwischenablage
+function shareLink(title, text, url) {
+  const touch = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+  if (touch && navigator.share) {
+    navigator.share({ title, text, url }).catch(() => { /* abgebrochen */ });
+    return;
+  }
+  const fallback = () => window.prompt("Link kopieren:", url);
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(url).then(() => toast("Link kopiert – zum Teilen einfügen"), fallback);
+  } else {
+    fallback();
+  }
+}
+
+function shareFolder(f) {
+  const name = folderLabel(f).name;
+  if (!f.s) {
+    window.alert(`„${name}“ ist für Gäste ganz ausgeblendet (ausblenden.txt) – Teilen ist nicht möglich.`);
+    return;
+  }
+  if (f.a && f.g < f.a) {
+    const ok = window.confirm(`Wer den Link bekommt, sieht ${f.g} von ${f.a} Bildern ` +
+      `(${f.a - f.g} sind ausgeblendet, ausblenden.txt). Teilen?`);
+    if (!ok) return;
+  }
+  shareLink(name, `Fotos: ${name}`, linkFor(f.s));
+}
+
 /* ---------------------------------------------------------------- App installieren & Updates */
 
 let installPrompt = null;
+
+// Einmaliger Hinweis (v0.7.14): Chrome bietet „Installieren“ selbst an, Firefox nur ueber sein Menue.
+// Nach „Installieren“, „Nein danke“ bzw. „OK“ kommt er auf diesem Geraet nie wieder; in der installierten App nie.
+const IS_FIREFOX_ANDROID = /Android/.test(navigator.userAgent) && /Firefox\//.test(navigator.userAgent);
 
 function renderInstallBanner() {
   const old = $(".install-bar");
   if (old) old.remove();
   const list = $(".folders");
-  if (!installPrompt || !list || readPref(INSTALL_KEY) === "1") return;
-  list.prepend(el("div", { class: "install-bar" },
-    el("span", { text: "Fotoschatz als App auf dem Startbildschirm?" }),
-    el("button", {
-      type: "button", class: "search-action",
-      onclick: async () => {
-        const prompt = installPrompt;
-        installPrompt = null;
-        renderInstallBanner();
-        prompt.prompt();
-        try { await prompt.userChoice; } catch (e) { /* egal */ }
-      },
-    }, "Installieren"),
-    el("button", {
-      type: "button", class: "icon-btn", "aria-label": "Nicht mehr anzeigen",
-      onclick: () => { writePref(INSTALL_KEY, "1"); renderInstallBanner(); },
-    }, svgNode(ICON_X))));
+  if (!list || readPref(INSTALL_KEY) === "1" || displayMode() !== "Browser") return;
+  const done = () => { writePref(INSTALL_KEY, "1"); renderInstallBanner(); };
+  if (installPrompt) {
+    list.prepend(el("div", { class: "install-bar" },
+      el("div", { class: "install-text" },
+        el("b", { text: "Fotoschatz als App installieren" }),
+        el("span", { text: "Dann liegt Fotoschatz als Symbol auf dem Startbildschirm." })),
+      el("div", { class: "install-actions" },
+        el("button", {
+          type: "button", class: "search-action",
+          onclick: async () => {
+            const prompt = installPrompt;
+            installPrompt = null;
+            done();
+            prompt.prompt();
+            try { await prompt.userChoice; } catch (e) { /* egal */ }
+          },
+        }, "Installieren"),
+        el("button", { type: "button", class: "install-no", onclick: done }, "Nein danke"))));
+  } else if (IS_FIREFOX_ANDROID) {
+    list.prepend(el("div", { class: "install-bar" },
+      el("div", { class: "install-text" },
+        el("b", { text: "Fotoschatz als App aufs Handy holen?" }),
+        el("span", { text: "Tippe auf ⋮ (Menü) und dann auf „Installieren“ bzw. „Zum Startbildschirm hinzufügen“." })),
+      el("div", { class: "install-actions" },
+        el("button", { type: "button", class: "search-action", onclick: done }, "OK"))));
+  }
 }
 
 function showUpdateBar(worker) {
@@ -2157,6 +2269,21 @@ function showUpdateBar(worker) {
 }
 
 let updating = false;
+let waitingWorker = null;
+let reloadWhenHidden = false;
+
+// Neue Version: du siehst „Neue Version verfügbar“; alle anderen bekommen sie still (v0.7.14) – neu geladen
+// wird erst, wenn die App im Hintergrund ist, beim naechsten Oeffnen ist sie dann aktuell.
+function applyUpdate() {
+  const worker = waitingWorker;
+  if (!worker || !DATA) return;
+  if (OWNER) {
+    showUpdateBar(worker);
+  } else {
+    waitingWorker = null;
+    worker.postMessage("SKIP_WAITING");
+  }
+}
 
 function registerServiceWorker() {
   window.addEventListener("beforeinstallprompt", (e) => {
@@ -2166,15 +2293,23 @@ function registerServiceWorker() {
   });
   window.addEventListener("appinstalled", () => {
     installPrompt = null;
+    writePref(INSTALL_KEY, "1");
     renderInstallBanner();
   });
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (updating) location.reload();
+    else if (!OWNER) reloadWhenHidden = true;
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (reloadWhenHidden && document.visibilityState === "hidden") location.reload();
   });
   navigator.serviceWorker.register("sw.js").then((reg) => {
     const offer = (worker) => {
-      if (worker && navigator.serviceWorker.controller) showUpdateBar(worker);
+      if (worker && navigator.serviceWorker.controller) {
+        waitingWorker = worker;
+        applyUpdate();
+      }
     };
     offer(reg.waiting);
     reg.addEventListener("updatefound", () => {
@@ -2201,6 +2336,14 @@ function showNeutral(text) {
 }
 
 async function start() {
+  // Neuer Link, waehrend die App schon offen ist (nur der Teil nach # aendert sich): merken und neu starten
+  window.addEventListener("hashchange", () => {
+    const link = decodeURIComponent(location.hash.slice(1)).trim();
+    if (!SECRET_RE.test(link)) return;
+    saveLinks([link, ...storedLinks().filter((x) => x !== link)]);
+    history.replaceState(null, "", location.pathname + location.search);
+    location.reload();
+  });
   registerServiceWorker();
   Viewer.init();
   Cast.init();
@@ -2217,6 +2360,7 @@ async function start() {
     scrollMemory.delete(viewKey(state));
     render(state);
   });
+  $("#share").addEventListener("click", () => { if (mounted && mounted.share) mounted.share(); });
   // Sternefilter in der Kopfzeile (Ordner, Alle Bilder, Suche); Suche zaehlt selbst neu, sonst neu aufbauen
   $("#stars").addEventListener("click", () => {
     if (!mounted || !mounted.toggleStars) return;
@@ -2230,32 +2374,45 @@ async function start() {
     btn.addEventListener("click", () => switchTab(btn.dataset.view));
   }
 
-  const secret = takeSecret();
-  if (!secret) {
+  const links = takeLinks();
+  if (!links.length) {
     showNeutral("Bitte den Link verwenden, den du bekommen hast.");
     return;
   }
-  const [prefix, key] = secret.split("-");
-  BASE = `${R2_PUBLIC_URL}/${prefix}`;
+  LINK_PREFIX = links[0].split("-")[0];
+  BASE = `${R2_PUBLIC_URL}/${LINK_PREFIX}`;
 
-  let index;
-  try {
-    const res = await fetch(`${BASE}/${key ? `index-${key}` : "index"}.json`, { cache: "no-cache" });
-    if (res.status === 403 || res.status === 404) {
-      forgetSecret();
+  // Alle gemerkten Links laden (gleicher geheimer Teil); ungueltige still vergessen
+  const results = await Promise.all(links.filter((l) => l.split("-")[0] === LINK_PREFIX).map(async (link) => {
+    const key = link.split("-")[1];
+    try {
+      const res = await fetch(`${BASE}/${key ? `index-${key}` : "index"}.json`, { cache: "no-cache" });
+      if (res.status === 403 || res.status === 404) return { link, gone: true };
+      if (!res.ok) return { link, error: true };
+      return { link, index: await res.json() };
+    } catch (err) {
+      return { link, error: true };
+    }
+  }));
+  for (const r of results) if (r.gone) dropLink(r.link);
+  const loaded = results.filter((r) => r.index);
+  if (!loaded.length) {
+    if (!results.some((r) => r.error)) {
       showNeutral("Bitte den Link verwenden, den du bekommen hast.");
       return;
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    index = await res.json();
-  } catch (err) {
     showNeutral("Keine Verbindung – bitte später noch einmal versuchen.");
     $("#main").append(el("p", { class: "center" },
       el("button", { type: "button", class: "folder-row", text: "Neu laden", onclick: () => location.reload() })));
     return;
   }
+  // Dein Verzeichnis enthaelt alles (und die Teilen-Schluessel) - dann nur dieses
+  const own = loaded.find((r) => r.index.gk);
+  OWNER = Boolean(own);
+  const index = own ? own.index : mergeIndexes(loaded.map((r) => r.index));
 
   DATA = prepare(index);
+  applyUpdate();
   $("#nav").hidden = false;
   window.addEventListener("popstate", (e) => render(e.state || { v: "folders" }));
   history.replaceState({ v: "folders" }, "");

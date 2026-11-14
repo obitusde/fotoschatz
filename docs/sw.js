@@ -1,7 +1,7 @@
 "use strict";
 
 // Fotoschatz Service Worker. Version folgt VERSION / APP_VERSION.
-const VERSION = "0.7.13";
+const VERSION = "0.7.14";
 const APP_CACHE = `fotoschatz-app-${VERSION}`;
 const THUMB_CACHE = "fotoschatz-thumb";
 const IMG_CACHE = "fotoschatz-img";
@@ -19,7 +19,7 @@ const APP_FILES = [
 ];
 // Pfade in R2: /<Praefix>/thumb/…, /<Praefix>/img/…, /<Praefix>/index-<Schluessel>.json
 const R2_FILE = /^\/[A-Za-z0-9]{32,}\/(thumb|img)\/[^/]+$/;
-const R2_INDEX = /^\/[A-Za-z0-9]{32,}\/index(-[A-Za-z0-9]+)?\.json$/;   // je Link eines (v0.7.13)
+const R2_INDEX = /^\/[A-Za-z0-9]{32,}\/index(-[A-Za-z0-9]+)?\.json$/;   // je Link eines (v0.7.14)
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(APP_CACHE).then((cache) => cache.addAll(APP_FILES)));

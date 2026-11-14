@@ -9,7 +9,7 @@ Aenderungen.
 Wird von katalog_diagnose.py (und spaeter von der Lightroom-Pruefung) benutzt.
 """
 
-__version__ = "0.7.13"
+__version__ = "0.7.14"
 
 import os
 import shutil
@@ -207,6 +207,16 @@ def image_paths(db):
         key = (parts[-1].casefold(), name.casefold())
         result[key] = tuple(sorted(set(result.get(key, ())) | {x.casefold() for x in parts}))
     return result
+
+
+def folder_names(db):
+    """Fuer sync.py (v0.7.14): eigener Ordnername klein -> Schreibweise in Lightroom (alle Ordner im Katalog)."""
+    names = {}
+    for r in db.execute("SELECT pathFromRoot AS path FROM AgLibraryFolder").fetchall():
+        parts = [p for p in (r["path"] or "").split("/") if p]
+        if parts:
+            names.setdefault(parts[-1].casefold(), parts[-1])
+    return names
 
 
 def prepare(setting, protected=()):
