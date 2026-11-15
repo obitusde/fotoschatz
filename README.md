@@ -37,6 +37,13 @@ Lightroom ──Publish──> D:\Fotoschatz\Published Smart Folder ──sync.b
 - Ausblenden ändern → `sync.bat` → gilt sofort für alle Links. Link zurückziehen: in `schluessel.json` seine Zeile löschen (Ordner: die Zeile mit dem Ordnernamen) → `sync.bat`. `schluessel.json` mitsichern.
 - **Ordner in Lightroom umbenannt oder Bilder verschoben** (auch aus einem `_`-Ordner heraus oder hinein): Lightroom veröffentlicht dabei nicht neu – **`sync.bat` ordnet die Bilder seit 0.7.15 selbst dem neuen Ordner zu** (erkannt an Originaldatei und Aufnahmezeit), in Lightroom ist nichts zu tun. Veröffentlicht Lightroom später doch neu, nimmt sync die neue Datei, nichts erscheint doppelt. Der Teilen-Link eines umbenannten Ordners ändert sich.
 
+**In der App (seit 0.7.16, für alle, die die App nutzen):**
+- **Erinnerungen** (Reiter unten): Geburtstag heute („🎂 Uli wird heute 46“, je Jahr ein Bild) und „Demnächst“ (7 Tage), Heute vor X Jahren (sonst ±3 Tage), Ordner aus dieser Woche in früheren Jahren, Wiederentdecken (12 Bilder ★★ bzw. ★), Ort wiederentdecken (eine Stadt mit mindestens 10 Bildern, nicht der Wohnort). Wechselt einmal am Tag. Geburtstage nur mit vollem Datum in `geburtstage.txt`.
+- **Personenseite** (Suche › „Personenseite ›“ oder Erinnerungen › „Alle Personen“): alle Personen mit Anzahl und heutigem Alter; je Person die Bilder nach Jahren mit dem **Alter in der Überschrift** („2006 · 30–31 Jahre · 39 Bilder“). Auch in der Suche, wenn genau eine Person gewählt ist.
+- **Bild teilen** (Symbol im Betrachter oben): schickt das Bild selbst (z. B. an WhatsApp), ohne GPS und Namen darin; ohne Teilen-Funktion wird es heruntergeladen.
+- **Weitere Ordner** unter jedem Ordner: davor/danach, gleicher Anlass (Wort im Namen), gleicher Ort (20 km), dieselben Personen, gleicher Monat.
+- **Text-Suche:** Wort eintippen, Enter (oder „Alle Bilder mit „…“ (Text)“) → alle Bilder mit dem Wort in Ordnername, Beschreibung, Ort, Person oder Stichwort.
+
 **Grundregel:** Korrigiert wird **nur in Lightroom**, danach neu exportieren. Nie Dateien im Explorer umbenennen, verschieben oder ändern, sonst passt der Katalog nicht mehr.
 
 ---
@@ -84,4 +91,5 @@ Die `.py`-Dateien gehören zu den `.bat`-Dateien (`regeln.py` und `katalog.py` s
 - [ ] Im Publish Service muss bei *Metadata* „Remove Person Info“ und „Remove Location Info“ **aus** sein – sonst fehlen GPS und Personen (passiert beim ersten Publish).
 - [ ] Warnung „x Bilder warten noch auf Publish“ in `sync.bat` – dafür `katalog_diagnose.txt` nach dem großen Publish an Claude (Abschnitt 12).
 - [ ] Link an die Familie schicken.
-- [ ] Später in der App: Chromecast, „Heute vor X Jahren“, Personen-Seite, Diashow, Teilen (Liste in `CLAUDE.md`, Abschnitt 10).
+- [x] In der App: Chromecast (0.7.12), Erinnerungen mit „Heute vor X Jahren“, Personen-Seite, Bild teilen (0.7.16).
+- [ ] Später in der App: Diashow, Zugriffs-Statistik (erstmal nicht, Entscheidung 15.11.2026) (Liste in `CLAUDE.md`, Abschnitt 10).

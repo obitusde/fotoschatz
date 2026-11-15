@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.15";
+const APP_VERSION = "0.7.16";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -224,6 +224,7 @@ function prepare(index) {
     byFolder,
     perYear,
     birthdays: index.bd || {},
+    bdNorm: new Map(Object.entries(index.bd || {}).map(([name, birth]) => [normText(name), birth])),
     folderByName: new Map(index.folders.map((f) => [f.n, f])),
     allDesc: photos.slice().reverse(),
   };
@@ -247,6 +248,84 @@ function ageAt(birth, taken) {
   if (days < 0) return "";
   if (days < 7) return "neugeboren";
   return days < 14 ? "1 Woche" : `${Math.floor(days / 7)} Wochen`;
+}
+
+// Alter als Text mit Einheit: "46" -> "46 Jahre", "ca. 45" -> "ca. 45 Jahre", "14 Monate" bleibt
+function ageText(age) {
+  if (/^\d+$/.test(age)) return age === "1" ? "1 Jahr" : `${age} Jahre`;
+  if (age.startsWith("ca. ")) return `${age} Jahre`;
+  return age;
+}
+
+// Alter als Spanne fuer eine Jahresueberschrift (v0.7.16): erstes bis letztes Bild des Jahres ("30–31 Jahre")
+function ageSpan(birth, first, last) {
+  const a = ageAt(birth, first);
+  const z = ageAt(birth, last);
+  if (!z) return "";
+  if (!a || a === z) return ageText(z);
+  if (/^\d+$/.test(a) && /^\d+$/.test(z)) return `${a}–${z} Jahre`;
+  return `${ageText(a)} – ${ageText(z)}`;
+}
+
+// Geburtsdatum einer Person (Schreibweise egal)
+const birthOf = (name) => (DATA.bdNorm.get(normText(name)) || "");
+
+// Ueberschrift je Jahr fuer ein Raster; mit Geburtsdatum zusaetzlich das Alter ("2006 · Uli 30–31 Jahre · 39 Bilder")
+function yearSectionOf(list, birth = "", name = "") {
+  const info = new Map();
+  for (const p of list) {
+    const y = p.t.slice(0, 4);
+    const e = info.get(y);
+    if (!e) info.set(y, { n: 1, a: p.t, z: p.t });
+    else {
+      e.n += 1;
+      if (p.t < e.a) e.a = p.t;
+      if (p.t > e.z) e.z = p.t;
+    }
+  }
+  const labels = new Map();
+  for (const [y, e] of info) {
+    const age = birth ? ageSpan(birth, e.a, e.z) : "";
+    labels.set(y, [y, age && (name ? `${name} ${age}` : age), countLabel(e.n)].filter(Boolean).join(" · "));
+  }
+  return (p) => labels.get(p.t.slice(0, 4));
+}
+
+// Heutiges Datum als "JJJJ-MM-TT" (Ortszeit)
+function localDay(d = new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Zufall, der fuer denselben Text immer gleich ist (Erinnerungen wechseln einmal am Tag, nicht bei jedem Oeffnen)
+function seeded(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h ^= h >>> 13;
+  h = Math.imul(h, 1597334677);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+// Wie gut sich ein Bild als Vorschlag eignet: ★★ vor ★, Personen leicht bevorzugt, dazu Tages-Zufall
+const photoScore = (p, seed) => ((p.r || 0) >= 2 ? 3 : p.r === 1 ? 1.5 : 0) + (p.p && p.p.length ? 0.5 : 0) + seeded(seed + p.id);
+
+// Die n besten Bilder, nach Aufnahmezeit sortiert
+function bestPhotos(list, n, seed) {
+  return list.map((p) => [photoScore(p, seed), p]).sort((a, b) => b[0] - a[0]).slice(0, n)
+    .map((x) => x[1]).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+}
+
+// Abstand zweier Kalendertage ("MM-TT") in Tagen, ueber den Jahreswechsel hinweg
+function dayDistance(a, b) {
+  const doy = (md) => {
+    const [m, d] = md.split("-").map(Number);
+    return (Date.UTC(2001, m - 1, Math.min(d, m === 2 ? 28 : d)) - Date.UTC(2001, 0, 1)) / 86400000;
+  };
+  const diff = Math.abs(doy(a) - doy(b));
+  return Math.min(diff, 365 - diff);
 }
 
 /* ---------------------------------------------------------------- Kopfzeile & Leiste */
@@ -293,14 +372,18 @@ function toggleFolderOrder() {
 function showHeaderAction(m, label, action) {
   const btn = $("#order");
   btn.textContent = label;
+  btn.title = "";
   btn.hidden = false;
   m.headerAction = action;
 }
 
 // Kleiner Umschalter rechts in der Kopfzeile (Ordnerliste, Ordner, Alle Bilder) – je Ansicht eigene Aktion
+// Am Handy kurz ("alt→neu"), damit der Titel Platz hat (v0.7.16); am PC ausgeschrieben
 function showOrderButton(m, asc, toggle) {
   const order = $("#order");
-  order.textContent = orderLabel(asc);
+  order.replaceChildren(el("span", { class: "ord-long", text: orderLabel(asc) }),
+    el("span", { class: "ord-short", text: asc ? "alt→neu" : "neu→alt" }));
+  order.title = `${asc ? "Älteste" : "Neueste"} zuerst – antippen zum Umdrehen`;
   order.hidden = false;
   m.toggleOrder = toggle;
 }
@@ -318,7 +401,8 @@ function setHeader(title, subtitle = "", back = false) {
 }
 
 function updateNav(view) {
-  const active = view === "folder" ? "folders" : ["mapgrid", "world", "countries"].includes(view) ? "map" : view;
+  const active = view === "folder" ? "folders" : ["mapgrid", "world", "countries"].includes(view) ? "map"
+    : view === "memory" ? "memories" : ["people", "person"].includes(view) ? "search" : view;
   for (const btn of document.querySelectorAll("#nav button")) {
     btn.classList.toggle("active", btn.dataset.view === active);
   }
@@ -578,6 +662,7 @@ const Viewer = {
     $(".v-next", this.root).addEventListener("click", () => this.go(1));
     this.infoBtn.addEventListener("click", () => this.setInfo(!this.infoOn, true));
     this.fsBtn.addEventListener("click", () => this.toggleFullscreen());
+    $(".v-share-btn", this.root).addEventListener("click", () => shareImage(this.list[this.i]));
     this.stage.addEventListener("pointerdown", (e) => this.down(e));
     this.stage.addEventListener("pointermove", (e) => this.move(e));
     this.stage.addEventListener("pointerup", (e) => this.up(e));
@@ -1159,7 +1244,7 @@ function mountSearch(main, state, m) {
 
   const chips = el("div", { class: "chips" });
   const input = el("input", {
-    type: "search", placeholder: "Person, Ort, Ordner, Jahr …", enterkeyhint: "search",
+    type: "search", placeholder: "Person, Ort, Ordner, Jahr oder Text …", enterkeyhint: "search",
     autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Suchbegriff",
   });
   const clear = el("button", { type: "button", class: "icon-btn search-clear", "aria-label": "Eingabe löschen" }, svgNode(ICON_X));
@@ -1257,7 +1342,7 @@ function mountSearch(main, state, m) {
     const free = searchPositions(s.keys, s.text);
     nodes.push(el("button", {
       type: "button", class: "sg-row sg-free", onclick: () => { s.panel = false; input.blur(); update(); },
-    }, el("span", { class: "name", text: `Freitext „${s.text.trim()}“ übernehmen` }),
+    }, el("span", { class: "name", text: `Alle Bilder mit „${s.text.trim()}“ (Text)` }),
     el("span", { class: "meta", text: free && free.length ? countLabel(free.length) : "keine Treffer" })));
     for (const group of suggestTerms(s.text, s.keys)) {
       nodes.push(el("div", { class: "sg-head", text: TERM_GROUP[group.type] }));
@@ -1374,6 +1459,7 @@ function mountSearch(main, state, m) {
           onclick: () => { s.allPersons = !s.allPersons; renderFacets(); },
         }, s.allPersons ? "weniger" : `alle ${persons.length} zeigen`));
       }
+      box.append(el("button", { type: "button", class: "pick pick-more", onclick: () => navigate({ v: "people" }) }, "Personenseite ›"));
       nodes.push(el("div", { class: "sg-head", text: "Personen" }), box);
     }
     const places = placeRows(counts);
@@ -1408,9 +1494,10 @@ function mountSearch(main, state, m) {
       return;
     }
     // Ueberschrift je Jahr; das Jahr oben im Bild steht im Untertitel der Kopfzeile
-    const perYear = new Map();
-    for (const p of m.list) perYear.set(p.t.slice(0, 4), (perYear.get(p.t.slice(0, 4)) || 0) + 1);
-    const yearOf = (p) => `${p.t.slice(0, 4)} · ${countLabel(perYear.get(p.t.slice(0, 4)))}`;
+    // genau eine Person gewaehlt und Geburtsdatum bekannt: Alter in der Ueberschrift (v0.7.16)
+    const personKeys = s.keys.filter((k) => k.startsWith("p:"));
+    const person = personKeys.length === 1 ? SEARCH.terms.get(personKeys[0]).label : "";
+    const yearOf = yearSectionOf(m.list, person ? birthOf(person) : "", person);
     m.grid = new Grid(results, m.list, yearOf, (year) => {
       if (s.mode === "results") $("#subtitle").textContent = year || "";
     });
@@ -2008,6 +2095,420 @@ function countryListView() {
   return wrap;
 }
 
+/* ---------------------------------------------------------------- Weitere Ordner (v0.7.16) */
+
+// Unter einem Ordner: davor/danach in der Zeit, dazu bis zu 4 passende Ordner
+// (gleicher Anlass laut Name, gleicher Ort, dieselben Personen, gleicher Monat)
+const NAME_STOPWORDS = new Set(("mit und der die das den dem des ein eine einer bei beim von vom zum zur fur auf aus nach " +
+  "uber unter ohne the and with weitere bilder familie teil").split(" "));
+const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+function folderSummaries() {
+  if (DATA.fsum) return DATA.fsum;
+  const sums = new Map();
+  for (const f of DATA.index.folders) {
+    const list = DATA.byFolder.get(f.n) || [];
+    const gps = list.filter(hasGps);
+    const cities = new Map();
+    const persons = new Map();
+    for (const p of list) {
+      if (p.ci) cities.set(p.ci, (cities.get(p.ci) || 0) + 1);
+      for (const name of p.p || []) persons.set(name, (persons.get(name) || 0) + 1);
+    }
+    const label = folderLabel(f);
+    sums.set(f.n, {
+      f,
+      c: list.length || 1,
+      la: gps.length ? quantile(gps.map((p) => p.la), 0.5) : null,
+      lo: gps.length ? quantile(gps.map((p) => p.lo), 0.5) : null,
+      city: [...cities].sort((a, b) => b[1] - a[1]).map((x) => x[0])[0] || "",
+      persons,
+      month: f.d ? +f.d.slice(5, 7) : 0,
+      words: new Set(f.x ? [] : words(label.name).filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !NAME_STOPWORDS.has(w))),
+    });
+  }
+  DATA.fsum = sums;
+  return sums;
+}
+
+function folderSuggestions(f) {
+  const sums = folderSummaries();
+  const me = sums.get(f.n);
+  const all = DATA.index.folders.slice().sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.n.localeCompare(b.n, "de")));
+  const at = all.findIndex((x) => x.n === f.n);
+  const prev = at > 0 ? all[at - 1] : null;
+  const next = at >= 0 && at < all.length - 1 ? all[at + 1] : null;
+  const others = [...sums.values()].filter((s) => s.f.n !== f.n && !s.f.x);
+  const yearGap = (s) => Math.abs((+s.f.d.slice(0, 4) || 0) - (+f.d.slice(0, 4) || 0));
+  const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+
+  const byName = me.words.size ? others.map((s) => ({ s, shared: [...s.words].filter((w) => me.words.has(w)) }))
+    .filter((x) => x.shared.length).sort((a, b) => b.shared.length - a.shared.length || yearGap(a.s) - yearGap(b.s))
+    .map((x) => ({ f: x.s.f, why: `Gleicher Anlass: „${cap(x.shared[0])}“` })) : [];
+
+  let byPlace = [];
+  if (me.la !== null) {
+    byPlace = others.filter((s) => s.la !== null).map((s) => ({ s, km: distanceKm(me.la, me.lo, s.la, s.lo) }))
+      .filter((x) => x.km <= 20).sort((a, b) => a.km - b.km)
+      .map((x) => ({ f: x.s.f, why: x.s.city || me.city ? `Auch in ${x.s.city || me.city}` : "Auch hier in der Nähe" }));
+  } else if (me.city) {
+    byPlace = others.filter((s) => s.city === me.city).sort((a, b) => yearGap(a) - yearGap(b))
+      .map((s) => ({ f: s.f, why: `Auch in ${me.city}` }));
+  }
+
+  const mine = [...me.persons].filter(([, n]) => n / me.c >= 0.2).sort((a, b) => b[1] - a[1]).slice(0, 3).map((x) => x[0]);
+  const byPersons = mine.length ? others.map((s) => {
+    const names = mine.filter((name) => (s.persons.get(name) || 0) / s.c >= 0.15);
+    return { s, names, score: names.reduce((sum, name) => sum + s.persons.get(name) / s.c, 0) };
+  }).filter((x) => x.names.length).sort((a, b) => b.names.length - a.names.length || b.score - a.score)
+    .map((x) => ({ f: x.s.f, why: `Auch mit ${x.names.length > 1 ? `${x.names.slice(0, -1).join(", ")} und ${x.names[x.names.length - 1]}` : x.names[0]}` })) : [];
+
+  const bySeason = me.month ? others.filter((s) => s.month === me.month && s.f.y !== f.y)
+    .sort((a, b) => seeded(f.n + a.f.n) - seeded(f.n + b.f.n))
+    .map((s) => ({ f: s.f, why: `Auch im ${MONTHS[me.month - 1]}` })) : [];
+
+  // erst je Gruppe hoechstens 2 (Reihenfolge wie oben), dann auffuellen; jeder Ordner nur einmal, hoechstens 4
+  const used = new Set([f.n, prev && prev.n, next && next.n]);
+  const more = [];
+  const groups = [byName, byPlace, byPersons, bySeason];
+  for (const limit of [2, 4]) {
+    for (const group of groups) {
+      let taken = more.filter((x) => x.group === group).length;
+      for (const x of group) {
+        if (more.length >= 4 || taken >= limit) break;
+        if (used.has(x.f.n)) continue;
+        used.add(x.f.n);
+        more.push({ ...x, group });
+        taken += 1;
+      }
+    }
+  }
+  return { prev, next, more };
+}
+
+function folderRow(f, why, cls = "") {
+  const label = folderLabel(f);
+  const name = f.x ? f.n : label.name;
+  const meta = [why, label.date || String(f.y), countLabel(f.c)].filter(Boolean).join(" · ");
+  return el("button", {
+    type: "button", class: `folder-row ${cls}`.trim(), onclick: () => navigate({ v: "folder", f: f.n }),
+  }, el("div", { class: "name", text: name }), el("div", { class: "meta", text: meta }));
+}
+
+function folderMoreView(f) {
+  const { prev, next, more } = folderSuggestions(f);
+  const rows = [];
+  if (prev) rows.push(folderRow(prev, "‹ Davor"));
+  if (next) rows.push(folderRow(next, "Danach ›"));
+  for (const x of more) rows.push(folderRow(x.f, x.why));
+  if (!rows.length) return null;
+  return el("section", { class: "more" },
+    el("div", { class: "more-end", text: "Ende des Ordners" }),
+    el("div", { class: "more-box" }, el("h2", { class: "more-head", text: "Weitere Ordner" }), ...rows));
+}
+
+/* ---------------------------------------------------------------- Personen (v0.7.16) */
+
+const PEOPLE_ORDER_KEY = "fotoschatz.people-order";   // "count" (Standard) oder "name"
+
+function personsIndex() {
+  if (DATA.persons) return DATA.persons;
+  const map = new Map();
+  for (const p of DATA.photos) {
+    for (const name of p.p || []) {
+      const key = normText(name);
+      if (!key) continue;
+      let e = map.get(key);
+      if (!e) map.set(key, (e = { name, key, list: [] }));
+      e.list.push(p);
+    }
+  }
+  DATA.persons = map;
+  return map;
+}
+
+function peopleView() {
+  const byName = readPref(PEOPLE_ORDER_KEY) === "name";
+  const now = `${localDay()}T12:00:00`;
+  const people = [...personsIndex().values()].sort((a, b) => (byName ? 0 : b.list.length - a.list.length)
+    || a.name.localeCompare(b.name, "de"));
+  return el("div", { class: "folders people" }, ...people.map((e) => {
+    const age = ageAt(birthOf(e.name), now);
+    return el("button", {
+      type: "button", class: "folder-row", onclick: () => navigate({ v: "person", n: e.key }),
+    }, el("div", { class: "name", text: e.name }),
+    el("div", { class: "meta", text: [countLabel(e.list.length), age && ageText(age)].filter(Boolean).join(" · ") }));
+  }));
+}
+
+function birthLabel(birth) {
+  if (!birth) return "";
+  if (birth.length === 4) return `geb. ${birth}`;
+  return `geb. ${fmtDay.format(parseLocal(birth))}`;
+}
+
+/* ---------------------------------------------------------------- Erinnerungen (v0.7.16) */
+
+// Fuer alle, die die App nutzen, aus den eigenen Bildern; wechselt einmal am Tag.
+const MEM_PLACE_KEY = "fotoschatz.mem-place";   // { day, key, recent: [...] } – zuletzt vorgeschlagene Orte
+let MEM = null;
+
+function memories() {
+  const day = localDay();
+  if (MEM && MEM.day === day) return MEM;
+  const year = +day.slice(0, 4);
+  const md = day.slice(5);
+  const now = `${day}T12:00:00`;
+  const cards = [];
+  const soon = [];
+  const persons = personsIndex();
+
+  // Geburtstag heute (je Person eine Karte) und in den naechsten 7 Tagen
+  for (const e of persons.values()) {
+    const birth = birthOf(e.name);
+    if (birth.length !== 10) continue;
+    const bmd = birth.slice(5);
+    const age = year - +birth.slice(0, 4);
+    if (bmd === md && age > 0) {
+      const perYear = new Map();
+      for (const p of e.list) {
+        const y = p.t.slice(0, 4);
+        if (!perYear.has(y)) perYear.set(y, []);
+        perYear.get(y).push(p);
+      }
+      const strip = [...perYear.values()].map((list) => bestPhotos(list, 1, `${day}bd`)[0]);
+      cards.push({
+        key: `bd:${e.key}`, kind: "birthday", birth,
+        title: `🎂 ${e.name} wird heute ${age}`,
+        sub: `${perYear.size === 1 ? "1 Jahr" : `${perYear.size} Jahre`} in Bildern · je Jahr ein Bild`,
+        strip, open: { v: "person", n: e.key },
+      });
+      continue;
+    }
+    for (let ahead = 1; ahead <= 7; ahead++) {
+      const d = new Date();
+      d.setDate(d.getDate() + ahead);
+      const dd = localDay(d);
+      if (dd.slice(5) !== bmd) continue;
+      soon.push({ e, ahead, age: +dd.slice(0, 4) - +birth.slice(0, 4), date: d });
+    }
+  }
+  soon.sort((a, b) => a.ahead - b.ahead);
+
+  // Heute vor X Jahren (sonst ±3 Tage)
+  const past = DATA.photos.filter((p) => +p.t.slice(0, 4) < year);
+  let today = past.filter((p) => p.t.slice(5, 10) === md);
+  let exact = true;
+  if (!today.length) {
+    today = past.filter((p) => dayDistance(p.t.slice(5, 10), md) <= 3);
+    exact = false;
+  }
+  if (today.length) {
+    const years = [...new Set(today.map((p) => +p.t.slice(0, 4)))];
+    const per = new Map();
+    for (const p of today) per.set(p.t.slice(0, 4), (per.get(p.t.slice(0, 4)) || 0) + 1);
+    const ago = (y) => (year - y === 1 ? "vor 1 Jahr" : `vor ${year - y} Jahren`);
+    cards.push({
+      key: "today", kind: "today",
+      title: !exact ? "Um diesen Tag in früheren Jahren" : years.length === 1 ? `Heute ${ago(years[0])}`
+        : years.length <= 3 ? `Heute vor ${years.map((y) => year - y).sort((x, y) => x - y).join(", ").replace(/, (\d+)$/, " und $1")} Jahren`
+          : "Heute in früheren Jahren",
+      sub: `${yearRanges(years)} · ${countLabel(today.length)}`,
+      all: today, strip: bestPhotos(today, 12, `${day}today`),
+      sectionOf: (p) => `${p.t.slice(0, 4)} · ${ago(+p.t.slice(0, 4))} · ${countLabel(per.get(p.t.slice(0, 4)))}`,
+    });
+  }
+
+  // Vor X Jahren: Ordner, deren Datum in diese Woche faellt
+  const folders = DATA.index.folders.filter((f) => !f.x && f.d && +f.d.slice(0, 4) < year && dayDistance(f.d.slice(5), md) <= 3)
+    .map((f) => ({ f, dist: dayDistance(f.d.slice(5), md), stars: (DATA.byFolder.get(f.n) || []).filter((p) => p.r).length }))
+    .sort((a, b) => a.dist - b.dist || b.stars - a.stars || seeded(day + a.f.n) - seeded(day + b.f.n))
+    .slice(0, 3).map((x) => x.f);
+
+  // Wiederentdecken: 12 sehr gute Bilder (★★, sonst ★) des Tages
+  let pool = DATA.photos.filter((p) => (p.r || 0) >= 2);
+  let poolText = "★★";
+  if (pool.length < 6) {
+    pool = DATA.photos.filter((p) => (p.r || 0) >= 1);
+    poolText = "★";
+  }
+  if (pool.length >= 4) {
+    const pick = pool.map((p) => [seeded(`${day}stars${p.id}`), p]).sort((a, b) => a[0] - b[0]).slice(0, 12)
+      .map((x) => x[1]).sort((a, b) => (a.t < b.t ? -1 : 1));
+    cards.push({
+      key: "stars", kind: "stars", title: "Wiederentdecken",
+      sub: `${pick.length} Bilder mit ${poolText} aus allen Jahren – jeden Tag andere`,
+      all: pick, strip: pick,
+    });
+  }
+
+  // Ort wiederentdecken: eine Stadt mit mindestens 10 Bildern, nicht der Wohnort, laenger nicht vorgeschlagen
+  const cities = new Map();
+  for (const p of DATA.photos) {
+    if (!p.ci) continue;
+    const key = `${normText(p.co || "")}|${normText(p.ci)}`;
+    let c = cities.get(key);
+    if (!c) cities.set(key, (c = { key, name: p.ci, country: p.co || "", list: [], stars: 0 }));
+    c.list.push(p);
+    if (p.r) c.stars += 1;
+  }
+  const ranked = [...cities.values()].sort((a, b) => b.list.length - a.list.length);
+  const home = ranked[0];
+  const candidates = ranked.filter((c) => c !== home && c.list.length >= 10);
+  let place = null;
+  if (candidates.length) {
+    let saved = {};
+    try { saved = JSON.parse(readPref(MEM_PLACE_KEY) || "{}") || {}; } catch (e) { saved = {}; }
+    place = saved.day === day ? candidates.find((c) => c.key === saved.key) : null;
+    if (!place) {
+      const recent = new Set(Array.isArray(saved.recent) ? saved.recent : []);
+      const fresh = candidates.filter((c) => !recent.has(c.key));
+      const from = fresh.length ? fresh : candidates;
+      // gewichtet: mehr Bilder und mehr Sterne = oefter an der Reihe
+      const weight = (c) => Math.sqrt(c.list.length) * (1 + c.stars / c.list.length);
+      const total = from.reduce((sum, c) => sum + weight(c), 0);
+      let r = seeded(`${day}place`) * total;
+      place = from.find((c) => (r -= weight(c)) <= 0) || from[from.length - 1];
+      const keep = [place.key, ...(Array.isArray(saved.recent) ? saved.recent : []).filter((k) => k !== place.key)]
+        .slice(0, Math.max(1, Math.min(30, Math.floor(candidates.length / 2))));
+      writePref(MEM_PLACE_KEY, JSON.stringify({ day, key: place.key, recent: keep }));
+    }
+  }
+  if (place) {
+    const years = [...new Set(place.list.map((p) => +p.t.slice(0, 4)))];
+    cards.push({
+      key: "place", kind: "place", title: `Ort wiederentdecken: ${place.name}`,
+      sub: [place.country !== place.name ? place.country : "", yearRanges(years), countLabel(place.list.length)].filter(Boolean).join(" · "),
+      all: place.list, strip: bestPhotos(place.list, 12, `${day}place`),
+    });
+  }
+
+  // Reihenfolge: Geburtstage, heute, (Ordner), Wiederentdecken, Ort
+  MEM = { day, cards, soon, folders, now };
+  return MEM;
+}
+
+function memStrip(card) {
+  return el("div", { class: "mem-strip" }, ...card.strip.map((p, i) => el("button", {
+    type: "button", class: "mem-thumb", "aria-label": fmtFull.format(parseLocal(p.t)),
+    onclick: () => navigate({ v: "memories", c: card.key, viewer: { i } }),
+  }, el("img", { src: thumbUrl(p), alt: "", loading: "lazy", decoding: "async", style: focusStyle(p) }))));
+}
+
+function memCard(card) {
+  const open = card.open || { v: "memory", k: card.key };
+  return el("section", { class: `mem-card mem-${card.kind}` },
+    el("button", { type: "button", class: "mem-head", onclick: () => navigate(open) },
+      el("span", { class: "mem-titles" }, el("span", { class: "mem-title", text: card.title }), el("span", { class: "mem-sub", text: card.sub })),
+      svgNode(ICON_CHEVRON)),
+    memStrip(card));
+}
+
+function memoriesView() {
+  const M = memories();
+  const wrap = el("div", { class: "memories" });
+  const year = +M.day.slice(0, 4);
+  for (const card of M.cards.filter((c) => c.kind === "birthday")) wrap.append(memCard(card));
+  if (M.soon.length) {
+    const fmtSoon = new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "numeric", month: "long" });
+    wrap.append(el("section", { class: "mem-card mem-soon" },
+      el("div", { class: "mem-label", text: "🎂 Demnächst" }),
+      ...M.soon.map((x) => el("button", {
+        type: "button", class: "folder-row", onclick: () => navigate({ v: "person", n: x.e.key }),
+      }, el("div", { class: "name", text: `${x.e.name} wird ${x.age}` }),
+      el("div", { class: "meta", text: `${x.ahead === 1 ? "morgen" : `in ${x.ahead} Tagen`} · ${fmtSoon.format(x.date)}` })))));
+  }
+  for (const card of M.cards.filter((c) => c.kind === "today")) wrap.append(memCard(card));
+  if (M.folders.length) {
+    wrap.append(el("section", { class: "mem-card mem-folders" },
+      el("div", { class: "mem-label", text: "Diese Woche vor einigen Jahren" }),
+      ...M.folders.map((f) => {
+        const ago = year - +f.d.slice(0, 4);
+        const label = folderLabel(f);
+        const thumbs = bestPhotos(DATA.byFolder.get(f.n) || [], 4, `${M.day}${f.n}`);
+        return el("button", { type: "button", class: "mem-folder", onclick: () => navigate({ v: "folder", f: f.n }) },
+          el("span", { class: "mem-titles" },
+            el("span", { class: "mem-title", text: `Vor ${ago === 1 ? "1 Jahr" : `${ago} Jahren`}: ${label.name}` }),
+            el("span", { class: "mem-sub", text: `${label.date || f.y} · ${countLabel(f.c)}` })),
+          el("span", { class: "mem-mini" }, ...thumbs.map((p) => el("img", {
+            src: thumbUrl(p), alt: "", loading: "lazy", decoding: "async", style: focusStyle(p),
+          }))));
+      })));
+  }
+  for (const card of M.cards.filter((c) => c.kind === "stars" || c.kind === "place")) wrap.append(memCard(card));
+  if (!wrap.childNodes.length) wrap.append(el("p", { class: "center muted", text: "Heute gibt es keine Erinnerungen." }));
+  if (personsIndex().size) {
+    wrap.append(el("div", { class: "share-app" }, el("button", {
+      type: "button", class: "search-action", onclick: () => navigate({ v: "people" }),
+    }, "Alle Personen")));
+  }
+  return wrap;
+}
+
+const memoryCard = (key) => memories().cards.find((c) => c.key === key) || null;
+
+/* ---------------------------------------------------------------- Bild teilen (v0.7.16) */
+
+// Teilt das Bild selbst (z. B. an WhatsApp), nicht einen Link. Vorher wird es neu gespeichert,
+// damit GPS und Personennamen nicht mitgehen. Ohne Teilen-Funktion (z. B. PC, Firefox) wird es heruntergeladen.
+let sharedFile = null;     // { key, file } – zuletzt vorbereitetes Bild
+
+async function cleanImageFile(p) {
+  const res = await fetch(imageUrl(p), { mode: "cors" });
+  if (!res.ok) throw new Error(String(res.status));
+  const url = URL.createObjectURL(await res.blob());
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    const blob = await new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Bild"))), "image/jpeg", 0.92));
+    const name = `Fotoschatz ${p.t.slice(0, 10)} ${p.t.slice(11, 19).replace(/:/g, "-")}.jpg`;
+    return new File([blob], name, { type: "image/jpeg", lastModified: parseLocal(p.t).getTime() });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function downloadFile(file) {
+  const url = URL.createObjectURL(file);
+  const a = el("a", { href: url, download: file.name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast("Bild gespeichert (Downloads)");
+}
+
+async function shareImage(p) {
+  if (!p) return;
+  const key = `${p.id}.${p.h}`;
+  let file = sharedFile && sharedFile.key === key ? sharedFile.file : null;
+  try {
+    if (!file) {
+      toast("Bild wird vorbereitet …");
+      file = await cleanImageFile(p);
+      sharedFile = { key, file };
+    }
+  } catch (e) {
+    toast("Bild konnte nicht geladen werden – Verbindung prüfen.");
+    return;
+  }
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+    } catch (e) {
+      // Dauerte das Vorbereiten zu lange, verlangt der Browser ein neues Antippen
+      if (e && e.name === "NotAllowedError") toast("Bild ist bereit – bitte noch einmal auf Teilen tippen");
+    }
+    return;
+  }
+  downloadFile(file);
+}
+
 /* ---------------------------------------------------------------- Ansichten & Verlauf */
 
 let mounted = null;
@@ -2024,6 +2525,10 @@ function viewKey(s) {
   if (s.v === "world") return "world";
   if (s.v === "countries") return "countries";
   if (s.v === "mapgrid") return `mapgrid:${dir(oldestFirst())}`;
+  if (s.v === "memories") return `memories:${localDay()}`;
+  if (s.v === "memory") return `memory:${dir(oldestFirst())}:${localDay()}:${s.k}`;
+  if (s.v === "people") return `people:${readPref(PEOPLE_ORDER_KEY) === "name" ? "name" : "count"}`;
+  if (s.v === "person") return `person:${dir(oldestFirst())}${star}:${s.n}`;
   return `folders:${dir(foldersOldestFirst())}`;
 }
 
@@ -2047,7 +2552,11 @@ function mountView(state) {
       return;
     }
     const label = folderLabel(f);
-    setHeader(label.name, label.date ? `${label.date} · ${countLabel(f.c)}` : `${f.y} · ${countLabel(f.c)}`, true);
+    // am Handy Datum kurz (14.11.2016), damit der Untertitel neben den Knoepfen ganz passt (v0.7.16)
+    const narrow = window.matchMedia("(max-width: 599px)").matches;
+    const date = narrow && /^\d{4}-\d{2}-\d{2}$/.test(f.d || "") && label.date && !/–/.test(label.date)
+      ? `${f.d.slice(8, 10)}.${f.d.slice(5, 7)}.${f.d.slice(0, 4)}` : label.date;
+    setHeader(label.name, date ? `${date} · ${countLabel(f.c)}` : `${f.y} · ${countLabel(f.c)}`, true);
     // im Ordner: Standard aelteste zuerst, umschaltbar (gemeinsam mit Suche und Alle Bilder)
     showOrderButton(m, oldestFirst(), toggleOrder);
     showStarButton();
@@ -2061,6 +2570,8 @@ function mountView(state) {
     if (starsOnly()) $("#subtitle").textContent = `${countLabel(m.list.length)} ${starText()} · von ${f.c}`;
     if (m.list.length) m.grid = new Grid(main, m.list);
     else main.append(el("p", { class: "center muted", text: `Keine Bilder ${starText()} in diesem Ordner.` }));
+    const more = folderMoreView(f);      // deutlich abgesetzt unter dem Raster (v0.7.16)
+    if (more) main.append(more);
   } else if (state.v === "all") {
     m.list = withStars(oldestFirst() ? DATA.photos : DATA.allDesc);
     const total = starsOnly() ? `${countLabel(m.list.length)} ${starText()}` : countLabel(m.list.length);
@@ -2132,6 +2643,61 @@ function mountView(state) {
     m.grid = new Grid(main, m.list, yearOf, (year) => {
       $("#subtitle").textContent = year ? `${year} · ${MAP.shown.sub}` : MAP.shown.sub;
     });
+  } else if (state.v === "memories") {
+    const M = memories();
+    setHeader("Erinnerungen", new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "numeric", month: "long" }).format(new Date()));
+    main.append(memoriesView());
+    // Bild in einem Streifen angetippt: Betrachter mit den Bildern dieser Karte
+    m.listFor = (st) => {
+      const card = st.c && M.cards.find((c) => c.key === st.c);
+      return card ? card.strip : null;
+    };
+  } else if (state.v === "memory") {
+    const card = memoryCard(state.k);
+    if (!card || !card.all) {
+      mounted = null;
+      navigate({ v: "memories" }, true);
+      return;
+    }
+    setHeader(card.title, card.sub, true);
+    showOrderButton(m, oldestFirst(), toggleOrder);
+    m.list = card.all.slice().sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+    if (!oldestFirst()) m.list.reverse();
+    m.grid = new Grid(main, m.list, card.sectionOf || yearSectionOf(m.list), (section) => {
+      $("#subtitle").textContent = section || card.sub;
+    });
+  } else if (state.v === "people") {
+    const byName = readPref(PEOPLE_ORDER_KEY) === "name";
+    setHeader("Personen", `${personsIndex().size.toLocaleString("de-DE")} Personen`, true);
+    showHeaderAction(m, byName ? "⇅ A–Z" : "⇅ häufigste", () => {
+      writePref(PEOPLE_ORDER_KEY, byName ? "count" : "name");
+      render(history.state || { v: "people" });
+    });
+    main.append(peopleView());
+  } else if (state.v === "person") {
+    const e = personsIndex().get(state.n);
+    if (!e) {
+      mounted = null;
+      navigate({ v: "people" }, true);
+      return;
+    }
+    const birth = birthOf(e.name);
+    m.list = withStars(e.list);
+    if (!oldestFirst()) m.list = m.list.slice().reverse();
+    const sub = [starsOnly() ? `${countLabel(m.list.length)} ${starText()} · von ${e.list.length}` : countLabel(e.list.length),
+      birthLabel(birth)].filter(Boolean).join(" · ");
+    setHeader(e.name, sub, true);
+    showOrderButton(m, oldestFirst(), toggleOrder);
+    showStarButton();
+    m.toggleStars = toggleStars;
+    // je Jahr eine Ueberschrift mit dem Alter in diesem Jahr
+    if (m.list.length) {
+      m.grid = new Grid(main, m.list, yearSectionOf(m.list, birth), (section) => {
+        $("#subtitle").textContent = section || sub;
+      });
+    } else {
+      main.append(el("p", { class: "center muted", text: `Keine Bilder ${starText()} mit ${e.name}.` }));
+    }
   } else if (state.v === "search") {
     setHeader("Suche");
     showStarButton();
@@ -2154,7 +2720,8 @@ function render(state) {
   else if (mounted.apply) mounted.apply(state);
   if (!mounted) return;
   updateNav(state.v);
-  if (state.viewer && mounted.list && mounted.list.length) Viewer.show(mounted.list, state.viewer.i);
+  const list = mounted.listFor ? mounted.listFor(state) : mounted.list;
+  if (state.viewer && list && list.length) Viewer.show(list, state.viewer.i);
   else Viewer.hide();
 }
 

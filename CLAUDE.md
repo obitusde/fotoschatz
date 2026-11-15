@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.39 · 14.11.2026 (0.7.15: sync ordnet umbenannte/verschobene Ordner selbst zu; davor 0.7.14: Ordner teilen in der App, Links sammeln, Installations-Hinweis, stille Updates)
+**Dokumentversion:** v3.40 · 15.11.2026 (0.7.16: Erinnerungen, Personenseite mit Alter, Bild teilen, Weitere Ordner, kürzere Kopfzeile am Handy; davor 0.7.15: sync ordnet umbenannte/verschobene Ordner selbst zu)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -510,7 +510,7 @@ Ohne Datei gelten diese Standardwerte:
 - ✅ v0.6.3 am Handy bestätigt: nach Deinstallieren/Neuinstallieren läuft die App im Vollbild, keine Statusleiste, keine Chrome-Meldung.
 
 ### MVP-Ansichten
-- **Leiste unten:** Ordner · Alle Bilder · Suche. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
+- **Leiste unten:** Ordner · Alle Bilder · Erinnerungen (v0.7.16) · Suche · Karte. Kopfzeile oben mit Titel, Untertitel und ggf. Zurück-Pfeil.
 - **Sternefilter** (v0.6.38, Wunsch 07.10.2026: „nur Sterne an/aus, klein“; **seit v0.7.12 drei Stufen**, Wunsch 13.11.2026: „filtern für 1 und 2 Sterne“): Knopf rechts in der Kopfzeile in Ordner (Bilder), Alle Bilder und Suche, jedes Antippen eine Stufe weiter: ☆ = alle → ★ (blau) = Bilder mit ★ oder ★★ → ★★ = nur ★★ → ☆ (Feld `r` aus `XMP-xmp:Rating`; alte 3–5★ zählen wie ★★; `fotoschatz.stars` = "0"/"1"/"2", alte Einstellung "1" bleibt gültig). Untertitel „x Bilder mit ★ oder ★★“ bzw. „mit ★★“. In der Cloud im Browser getestet (30 Testbilder: 30 → 15 → 9 → 30; Suche mit Personenzahlen; keine Fehler). Eine gemeinsame Einstellung (`fotoschatz.stars`), wird gemerkt. Untertitel zeigt „x Bilder mit Sternen“; in der Suche zählen Trefferzahlen, Personen, Orte und Jahre nur Bilder mit Sternen, und „Anzeigen“ geht auch ohne Begriff (= alle Bilder mit Sternen). Nicht in der Ordnerliste. Sterne kommen nur über Lightroom: setzen → neu exportieren → `sync.bat`.
 1. **Ordner** (Startansicht):
    - **Reine Textliste, keine Titelbilder** (bewusst so entschieden – nichts zu pflegen, nichts zufällig).
@@ -549,10 +549,23 @@ Ohne Datei gelten diese Standardwerte:
    - Tippen: linkes Drittel = zurück, rechtes Drittel = weiter (sofort), Mitte = Bedienelemente aus/ein (mit ≈ 0,3 s Verzögerung wegen Doppeltippen). Wischen links/rechts blättert.
    - **Zoom** (v0.5.0): zwei Finger auf-/zuziehen (bis 4-fach); Doppeltippen in der Mitte bzw. Doppelklick = 2,5-fach an dieser Stelle, nochmal = zurück; am PC Mausrad. Vergrößert: ein Finger/Maus verschiebt den Ausschnitt (nicht über den Bildrand hinaus), Tippen = Bedienelemente, Blättern per Wischen ist aus. Blättern (Taste, Knopf) oder Drehen setzt den Zoom zurück.
    - **Präsentations-Klicker / Tastatur:** weiter = Bild ab, Pfeil rechts, Leertaste; zurück = Bild auf, Pfeil links.
+   - **Bild teilen** (v0.7.16, für alle): Knopf oben (vor Cast/ⓘ). Das große Bild wird geladen, über ein Canvas neu als JPEG (Q 0,92) gespeichert – **ohne GPS/Personen/EXIF** – und als Datei geteilt (`navigator.share({files})`, Android-Teilen-Menü, z. B. WhatsApp; Chrome Windows: Teilen-Fenster). Kann der Browser keine Dateien teilen (z. B. ⚠ Firefox Android, ungeprüft) → Download „Fotoschatz JJJJ-MM-TT hh-mm-ss.jpg“. Dauert das Vorbereiten zu lange, verlangt Chrome ein neues Antippen → Meldung „Bild ist bereit – bitte noch einmal auf Teilen tippen“ (vorbereitete Datei wird gemerkt). In der Cloud nur der Download-Weg getestet; ⚠ echtes Teilen am Handy prüfen.
    - Infos über den Knopf (i) bzw. Taste I, **jede Zeile mit Bezeichnung** (v0.6.35): Aufnahme · Ordner (voller Name wie in Lightroom, lose Bilder „JJJJ Weitere Bilder“) · Personen (**mit Alter bei der Aufnahme**, v0.6.36, aus `index.bd`: ab 18 Monaten volle Jahre „Uli (45)“, darunter „14 Monate“ / „1 Monat“, im ersten Monat „3 Wochen“ / „1 Woche“, unter 7 Tagen „neugeboren“; nur Geburtsjahr bekannt → „ca. 45“ ab 2 Jahren; vor der Geburt oder ohne Datum kein Alter; in der Cloud im Browser getestet) · Ort · Beschreibung (= Lightroom *Caption*; ausgeblendet, wenn gleich dem Ordnernamen) · Bewertung („★ gut“, „★★ sehr gut“ seit v0.7.12 – vorher „wichtig“/„Lieblingsbild“; sonst Sterne) · Datei (Originaldatei in Lightroom, Feld `o`, erst nach dem nächsten Sync mit v0.6.35); **anfangs ausgeblendet**, Einstellung wird gemerkt (`fotoschatz.info`).
    - **Kein Vollbild per Fullscreen-API am Handy** (v0.6.1/0.6.2): Chrome blendet dabei jedes Mal „zum Beenden des Vollbildmodus …“ ein. Die installierte App läuft stattdessen komplett im Vollbild (Manifest). Knopf ⛶ bzw. Taste F nur noch am PC. Zurück-Taste schließt das Bild mit einem Druck (am Handy bestätigt).
    - Zurück-Taste, ✕, Wischen nach unten und Esc schließen den Betrachter (History-API); am PC Pfeiltasten und Pfeil-Schaltflächen.
    - Erst das Vorschaubild, dann das große Bild; Nachbarbilder werden vorgeladen.
+
+7. **Erinnerungen** (v0.7.16, Wunsch 15.11.2026, Reiter unten zwischen Alle Bilder und Suche; **für alle**, aus den Bildern des jeweiligen Links; keine Benachrichtigungen, keine Zugriffs-Statistik – „erstmal lassen“): Karten mit Titel, Untertitel und waagerechtem Streifen Vorschaubilder (Antippen → Betrachter mit den Bildern des Streifens; Titel → Raster mit Jahresüberschriften bzw. Personenseite). Auswahl fest je Tag (`seeded(Datum + id)`), Reihenfolge der Bilder nach `photoScore` (★★ 3, ★ 1,5, Personen +0,5, Tages-Zufall 0–1).
+   - **🎂 Geburtstag** (nur volles Datum in `bd`): „Uli wird heute 46“, je Jahr ein Bild (das beste), Titel → Personenseite. **Demnächst** (1–7 Tage): „Petra wird 44 · in 4 Tagen · Do., 19. November“.
+   - **Heute vor X Jahren** (gleicher Tag in früheren Jahren; ohne Treffer ±3 Tage „Um diesen Tag in früheren Jahren“), Raster mit „2011 · vor 15 Jahren · 6 Bilder“.
+   - **Diese Woche vor einigen Jahren:** bis zu 3 Ereignisordner, deren Datum ±3 Tage um heute liegt (nächste zuerst, dann mehr Sterne), mit 4 Mini-Vorschauen → Ordner.
+   - **Wiederentdecken:** 12 Bilder ★★ (unter 6 → ★) des Tages.
+   - **Ort wiederentdecken:** Stadt (`ci`, mit Land) mit ≥ 10 Bildern, nicht die Stadt mit den meisten Bildern (= Wohnort); gewichtet nach √Anzahl × (1 + Anteil mit Sternen); zuletzt vorgeschlagene Orte (bis 30) kommen erst wieder, wenn alle durch sind (`fotoschatz.mem-place`).
+   - Unten „Alle Personen“.
+8. **Personenseite** (v0.7.16): Liste aller Personen (häufigste zuerst, Umschalter A–Z, `fotoschatz.people-order`) mit Anzahl und heutigem Alter; Person → Raster mit Jahresüberschrift **inkl. Alter** („2006 · 30–31 Jahre · 39 Bilder“ – Alter beim ersten und letzten Bild des Jahres, nur Geburtsjahr → „ca. 30 Jahre“, Babys in Monaten), Sternefilter und Reihenfolge wie im Ordner. Erreichbar über Suche (Personen › „Personenseite ›“) und Erinnerungen. In der Suche steht das Alter in der Jahresüberschrift, wenn genau eine Person gewählt ist („2006 · Uli 30–31 Jahre · 39 Bilder“).
+9. **Weitere Ordner** unter dem Raster eines Ordners (v0.7.16, Wunsch: „klar getrennt vom ausgewählten Ordner“ → „Ende des Ordners“, eigener Kasten mit Überschrift): Davor/Danach (zeitlich, auch „Weitere Bilder“), dann bis zu 4: gleicher Anlass (gemeinsames Wort im Namen ohne Füllwörter), gleicher Ort (Median-GPS ≤ 20 km, sonst gleiche Stadt), dieselben Personen (Personen mit ≥ 20 % im Ordner, im anderen ≥ 15 %), gleicher Monat – erst je Gruppe höchstens 2, dann auffüllen. Gäste sehen nur Ordner ihres Links.
+10. **Kopfzeile am Handy** (v0.7.16, Screenshot 15.11.2026: Titel/Untertitel im Ordner nicht mehr lesbar): Reihenfolge-Knopf unter 600 px Breite kurz „alt→neu“ / „neu→alt“ statt „⇅ älteste zuerst“, Datum im Ordner-Untertitel kurz („14.11.2016 · 10 Bilder“).
+11. **Freitext** (gab es schon seit v0.5.0): Zeile heißt seit v0.7.16 „Alle Bilder mit „fahrradtour“ (Text)“, Platzhalter „Person, Ort, Ordner, Jahr oder Text …“.
 
 ### Raster & Performance (Anforderung: flüssiges Scrollen bei 10.000 Bildern)
 - **Virtuelles Scrollen:** Nur die sichtbaren Zeilen (plus Puffer) existieren im DOM.
@@ -622,17 +635,18 @@ Ohne Datei gelten diese Standardwerte:
 - Danach Link an die Familie verteilen.
 
 ### Phase 4 – Erweiterungen (Reihenfolge nach Absprache)
-1. **Rückblick „Heute vor X Jahren"** auf dem Startbildschirm der App:
+1. ✅ **Rückblick „Heute vor X Jahren"** – seit v0.7.16 im Reiter „Erinnerungen“ (siehe Abschnitt 8, Ansicht 7). Ursprünglicher Plan:
    - Bilder mit gleichem Tag/Monat aus früheren Jahren, gruppiert nach Jahr.
    - Gibt es am Tag nichts, ±3 Tage.
    - Bevorzugt ★★ Lieblingsbilder, dann ★ wichtige.
 2. **„Überrasch mich":** zufällige Auswahl (bevorzugt gut bewertet) oder zufälliger Ordner.
 3. **Karte:** ✅ v0.7.0 (siehe Abschnitt 8, Ansicht 5), Weltkarte Länder/Jahre ✅ v0.7.3.
 4. **Umkreissuche:** ✅ v0.7.0 (Ort suchen oder lange drücken + 1/5/20/50 km, „In meiner Nähe“).
-5. **Personen-Seite:** alle Personen mit Anzahl; pro Person chronologisch („durch die Jahre").
+5. ✅ **Personen-Seite** (v0.7.16): alle Personen mit Anzahl; pro Person chronologisch mit Alter je Jahr.
 6. **Best-of-Filter** nach Bewertung (★★ Lieblingsbilder, ★ wichtig – Entscheidung 03.10.2026), kombinierbar mit Suche/Ordner. ✅ Einfache Form seit v0.6.38 (Sterne an/aus); getrennt nach ★/★★ noch offen, falls gewünscht.
 7. **Diashow:** Vollbild mit automatischem Weiterblättern, einstellbares Intervall, optional zufällig.
-8. **Teilen:** Einzelbild über das Android-Teilen-Menü (Web Share API mit Datei), z. B. an WhatsApp.
+8. ✅ **Teilen:** Einzelbild über das Android-Teilen-Menü (Web Share API mit Datei), z. B. an WhatsApp (v0.7.16, ohne GPS/Namen).
+11. **Zugriffs-Statistik** („welche Bilder wie oft angesehen“, besprochen 15.11.2026: bräuchte einen Cloudflare Worker + D1; gezählt ab 1 s im Betrachter, eigene Ansichten zählen mit, kein ♥) – **erstmal nicht**. Benachrichtigungen: **keine** (Vorschläge nur in der App).
 9. **Deep-Links** auf Ordner (und ggf. einzelne Bilder).
 10. **Statistik:** Bilder pro Jahr, häufigste Orte/Personen.
 
