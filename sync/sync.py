@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.7.15"
+__version__ = "0.7.19"
 
 import argparse
 import csv
@@ -1028,8 +1028,6 @@ def main():
     log(f"    {num(len(jpgs))} Exporte im Ordner" + (f" (davon {num(in_sub)} in Unterordnern)" if in_sub else ""))
     for name, path in doubles[:5]:
         log(f"    Hinweis: {name} liegt doppelt vor - benutzt wird {paths[name].parent.name}\\, nicht {path.parent.name}\\")
-    if severe_paths:
-        log(f"    {num(len(severe_paths))} mit unbrauchbarem Dateinamen - werden nicht hochgeladen (siehe korrekturen.csv)")
 
     # 3. Metadaten der neuen/geaenderten (und der SCHWER-Bilder fuer die Tabelle), dann Galerie-Abgleich
     step(3, "Infos aus den Bildern lesen (Personen, Ort, GPS, Beschreibung) - nur neue und geänderte")
@@ -1055,7 +1053,7 @@ def main():
 
     # Weg B: Exporte mit „_“-Ordner im Namen, deren Bild in Lightroom inzwischen in einem normalen Ordner liegt
     # (z. B. aus _Diverse zurueckgeschoben, ohne neu zu veroeffentlichen) -> doch in die Galerie
-    rescued = 0
+    rescued = set()
     for path in severe_paths:
         a = analyses[path.name]
         hard = [text for sev, text in a["problems"] if sev == regeln.SCHWER]
@@ -1070,7 +1068,7 @@ def main():
         if reason:
             skipped[path.name] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "orig": orig, "why": reason}
             continue
-        rescued += 1
+        rescued.add(path.name)
         prev = old_files.get(path.name)
         if prev and prev["size"] == stat.st_size and prev["mtime_ns"] == stat.st_mtime_ns:
             new_files[path.name] = prev
@@ -1091,10 +1089,13 @@ def main():
         if orig:
             groups[(analyses[name]["lr_folder"].casefold(), orig.casefold())].append(name)
     stale = set()
+    winners = {}            # alte Datei -> neuere Datei desselben Bildes
     for names in groups.values():
         if len(names) > 1:
             names.sort(key=lambda n: (not analyses[n].get("moved_from"), paths[n].stat().st_mtime_ns), reverse=True)
             stale.update(names[1:])
+            for old in names[1:]:
+                winners[old] = names[0]
     for name in stale:
         stat = paths[name].stat()
         skipped[name] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "orig": orig_of(name), "why": "veraltet"}
@@ -1103,6 +1104,25 @@ def main():
             counts["unveraendert"] -= 1
     to_process = [t for t in to_process if t[0].name not in stale]
     renamed = Counter(v for n, v in moved_names.items() if n not in stale)
+
+    # Die alten Dateien loescht Lightroom beim Neu-Veroeffentlichen nicht selbst (am PC gesehen 15.11.2026) ->
+    # sync loescht sie im Export-Ordner (nur dort; es sind Kopien, die Originale bleiben unberuehrt) (v0.7.16)
+    deleted_exports = set()
+    export_root = export_dir.resolve()
+    originals_root = Path(cfg["originals_dir"]).resolve()
+    for name in sorted(stale):
+        path = paths[name].resolve()
+        inside = export_root in path.parents and originals_root not in path.parents and path != originals_root
+        if not inside or path.suffix.lower() != ".jpg" or not paths[winners[name]].exists():
+            continue
+        if not dry:
+            try:
+                path.unlink()
+            except OSError as err:
+                log(f"    Hinweis: {name} ließ sich nicht löschen ({err}) - bleibt offline liegen")
+                continue
+        deleted_exports.add(name)
+        skipped.pop(name, None)
     refreshed = 0
     for path in to_refresh:
         entry = exif.get(path.name)
@@ -1110,16 +1130,32 @@ def main():
             new_files[path.name] = dict(new_files[path.name], meta=regeln.extract_metadata(entry), mv=META_VERSION)
             refreshed += 1
 
+    still_severe = [p for p in severe_paths if p.name not in deleted_exports and regeln.is_severe(analyses[p.name]["problems"])]
+    if still_severe:
+        log(f"    {num(len(still_severe))} mit unbrauchbarem Dateinamen - werden nicht hochgeladen (siehe korrekturen.csv)")
+    if deleted_exports:
+        log(f"    {num(len(deleted_exports))} doppelte alte Export{'' if len(deleted_exports) == 1 else 'e'} "
+            + ("würden im Export-Ordner gelöscht" if dry else "im Export-Ordner gelöscht")
+            + " (Lightroom hat dasselbe Bild neu veröffentlicht und die alte Datei liegen lassen)")
     why = Counter(v["why"] for v in skipped.values())
     if skipped:
         log(f"    Nicht für die Galerie (bleiben offline): {bilder(len(skipped))} - "
             + " · ".join(f"{num(n)} {SKIP_TEXT.get(k, k)}" for k, n in why.most_common()))
     keep_names = set(new_files) | {t[0].name for t in to_process}
     removed = sorted(name for name in old_files if name not in keep_names)
-    n_new = sum(1 for t in to_process if t[3] == "neu")
-    n_repl = len(to_process) - n_new
+    # Gleiches Bild, neuer Dateiname (Lightroom hat neu veroeffentlicht): online alte Datei weg, neue dazu -
+    # zaehlt nicht als Loeschung (keine Rueckfrage) und nicht als neues Bild (v0.7.16)
+    status_of = {t[0].name: t[3] for t in to_process}
+    renamed_old = {n for n in removed if n in winners}
+    renamed_new = {winners[n] for n in renamed_old if status_of.get(winners[n]) == "neu"}
+    n_new = sum(1 for t in to_process if t[3] == "neu") - len(renamed_new)
+    n_repl = sum(1 for t in to_process if t[3] == "ersetzt")
+    n_gone = len(removed) - len(renamed_old)
     log(f"    Für die Galerie: {num(n_new)} neu · {num(n_repl)} geändert (werden ersetzt) · {num(counts['unveraendert'])} unverändert"
-        f" · {num(len(removed))} nicht mehr dabei (werden online gelöscht)")
+        f" · {num(n_gone)} nicht mehr dabei (werden online gelöscht)")
+    if renamed_new:
+        log(f"    {bilder(len(renamed_new))} unter neuem Dateinamen (Lightroom hat neu veröffentlicht) -"
+            " gleiche Bilder, online wird nur die Datei getauscht")
     if to_refresh:
         log(f"    {num(len(to_refresh))} unveränderte Bilder: Infos neu gelesen (neues Format, kein neuer Bild-Upload)")
     if renamed:
@@ -1127,11 +1163,14 @@ def main():
             " zugeordnet (in Lightroom ist nichts zu tun):")
         for (old, new), count in sorted(renamed.items())[:FOLDER_LINES]:
             log(f"      „{old}“ → „{new}“ ({bilder(count)})")
-        if rescued:
-            log(f"      davon {bilder(rescued)} aus „_“-Ordnern zurückgeholt")
-    if len(removed) > cfg["max_delete"]:
-        confirm_deletions(removed, cfg["max_delete"], dry)
-        cfg["max_delete"] = len(removed)      # nur fuer diesen Lauf (auch fuer rclone --max-delete)
+        back = len(rescued - stale)
+        if back:
+            log(f"      davon {bilder(back)} aus „_“-Ordnern zurückgeholt")
+    real_removed = [n for n in removed if n not in renamed_old]
+    if len(real_removed) > cfg["max_delete"]:
+        confirm_deletions(real_removed, cfg["max_delete"], dry)
+        cfg["max_delete"] = len(real_removed)      # nur fuer diesen Lauf (auch fuer rclone --max-delete)
+    cfg["max_delete"] += len(renamed_old)          # getauschte Dateinamen zaehlen nicht zur Schutzgrenze
 
     # 4. Verarbeiten
     step(4, "Vorschaubilder erstellen (kleine Bilder fürs Raster in der App), große Bilder bereitlegen")
@@ -1173,7 +1212,8 @@ def main():
         log("    nichts zu tun")
     if unreadable:
         log(f"    {bilder(len(unreadable))} nicht lesbar - werden nicht hochgeladen (siehe korrekturen.csv)")
-    counts["neu"] = sum(1 for t in to_process if t[3] == "neu" and t[0].name not in unreadable)
+    counts["neu"] = sum(1 for t in to_process if t[3] == "neu" and t[0].name not in unreadable and t[0].name not in renamed_new)
+    counts["umbenannt"] = sum(1 for n in renamed_new if n not in unreadable)
     counts["ersetzt"] = sum(1 for t in to_process if t[3] == "ersetzt" and t[0].name not in unreadable)
 
     # 5. Hinweise aus den Metadaten, neue Stichwoerter, Korrektur-Tabelle
@@ -1198,7 +1238,7 @@ def main():
 
     rows = []
     for path in jpgs:
-        if path.name in skipped:
+        if path.name in skipped or path.name in deleted_exports:
             continue
         a = analyses[path.name]
         rec = new_files.get(path.name)
@@ -1210,8 +1250,8 @@ def main():
     write_csv(rows)
     write_keyword_file(keyword_counter, all_persons, cfg["ignore_keywords"])
     write_places_file(new_files.values())
-    severe_total = sum(1 for p in jpgs if regeln.is_severe(analyses[p.name]["problems"]))
-    hint_total = sum(1 for p in jpgs if p.name not in skipped and analyses[p.name]["problems"]
+    severe_total = sum(1 for p in jpgs if p.name not in deleted_exports and regeln.is_severe(analyses[p.name]["problems"]))
+    hint_total = sum(1 for p in jpgs if p.name not in skipped and p.name not in deleted_exports and analyses[p.name]["problems"]
                      and not regeln.is_severe(analyses[p.name]["problems"]))
     log(f"    korrekturen.csv: {bilder(severe_total)} schwer (nicht hochgeladen),"
         f" {num(hint_total)} mit Hinweis (trotzdem hochgeladen, z. B. ohne GPS)")
@@ -1230,7 +1270,8 @@ def main():
             if len(removed) > 20:
                 log(f"      ... und {num(len(removed) - 20)} weitere")
         summary(counts, removed, severe_total, hint_total, rows, started, dry=True, skipped=len(skipped),
-                per_folder=folder_changes(to_process, unreadable, removed, analyses, now))
+                per_folder=folder_changes(to_process, unreadable, removed, analyses, now, renamed_new, renamed_old),
+                renamed_old=renamed_old)
         return
 
     for name in unreadable:
@@ -1311,13 +1352,14 @@ def main():
         step(7, "Hochladen - nicht nötig, online ist schon alles aktuell")
 
     summary(counts, removed, severe_total, hint_total, rows, started, uploaded=uploaded, index=index, skipped=len(skipped),
-            per_folder=folder_changes(to_process, unreadable, removed, analyses, now))
+            per_folder=folder_changes(to_process, unreadable, removed, analyses, now, renamed_new, renamed_old),
+            renamed_old=renamed_old)
 
 
 FOLDER_LINES = 40     # so viele Ordner zeigt die Zusammenfassung hoechstens
 
 
-def folder_changes(to_process, unreadable, removed, analyses, now):
+def folder_changes(to_process, unreadable, removed, analyses, now, renamed_new=(), renamed_old=()):
     """Je Online-Ordner: wie viele Bilder neu, ersetzt, geloescht (v0.7.9, Wunsch 12.10.2026)."""
     per = defaultdict(Counter)
 
@@ -1326,9 +1368,10 @@ def folder_changes(to_process, unreadable, removed, analyses, now):
         return regeln.interpret_folder(a["lr_folder"])["online"] or a["lr_folder"] or "(unbekannt)"
     for path, _sha, _stat, status in to_process:
         if path.name not in unreadable:
-            per[folder_of(path.name)][status] += 1
+            per[folder_of(path.name)]["neuer Dateiname" if path.name in renamed_new else status] += 1
     for name in removed:
-        per[folder_of(name)]["gelöscht"] += 1
+        if name not in renamed_old:
+            per[folder_of(name)]["gelöscht"] += 1
     return per
 
 
@@ -1339,20 +1382,21 @@ def log_folder_changes(per, dry):
     names = sorted(per)
     for name in names[:FOLDER_LINES]:
         c = per[name]
-        parts = [f"{num(c[k])} {k}" for k in ("neu", "ersetzt", "gelöscht") if c[k]]
+        parts = [f"{num(c[k])} {k}" for k in ("neu", "ersetzt", "neuer Dateiname", "gelöscht") if c[k]]
         log(f"  {name}: " + " · ".join(parts))
     if len(names) > FOLDER_LINES:
         log(f"  ... und {num(len(names) - FOLDER_LINES)} weitere Ordner")
 
 
 def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=False, dry=False, index=None, skipped=0,
-            per_folder=None):
+            per_folder=None, renamed_old=()):
     log("")
     took = clock(time.time() - started)
     if dry:
         log(f"=== Probelauf fertig nach {took} - nichts wurde verändert ===")
         log(f"Beim echten Lauf: {num(counts['neu'])} neu · {num(counts['ersetzt'])} ersetzt"
-            f" · {num(len(removed))} gelöscht · {num(counts['unveraendert'])} unverändert")
+            + (f" · {num(counts['umbenannt'])} neuer Dateiname" if counts["umbenannt"] else "")
+            + f" · {num(len(removed) - len(renamed_old))} gelöscht · {num(counts['unveraendert'])} unverändert")
         log_folder_changes(per_folder or {}, dry=True)
     else:
         log(f"=== Fertig nach {took} ===")
@@ -1360,7 +1404,8 @@ def summary(counts, removed, severe_total, hint_total, rows, started, uploaded=F
             log(f"Online jetzt: {bilder(index['count'])} in {num(len(index['folders']))} Ordnern"
                 + ("" if uploaded else " (unverändert)"))
         log(f"Dieser Lauf: {num(counts['neu'])} neu · {num(counts['ersetzt'])} ersetzt"
-            f" · {num(len(removed))} gelöscht · {num(counts['unveraendert'])} unverändert")
+            + (f" · {num(counts['umbenannt'])} neuer Dateiname" if counts["umbenannt"] else "")
+            + f" · {num(len(removed) - len(renamed_old))} gelöscht · {num(counts['unveraendert'])} unverändert")
         log_folder_changes(per_folder or {}, dry=False)
     log(f"Bewusst offline (Stapel unten, Rejected, _-Ordner): {num(skipped)}")
     log(f"Nicht hochgeladen (Dateiname oder Bild unbrauchbar): {num(severe_total)}")
