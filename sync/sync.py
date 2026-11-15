@@ -11,7 +11,7 @@ Einstellungen (optional): config.local.json neben diesem Skript.
 Geheimes Praefix: aus fotoschatz-secrets.ps1 im Benutzerordner.
 """
 
-__version__ = "0.7.19"
+__version__ = "0.7.20"
 
 import argparse
 import csv
@@ -64,6 +64,8 @@ HIDE_FILE = SCRIPT_DIR / "ausblenden.txt"       # Personen und Ordner, die Gaest
 SHARE_FILE = SCRIPT_DIR / "freigaben.txt"       # nur 0.7.13 - seit 0.7.14 teilt man Ordner in der App
 KEY_FILE = SCRIPT_DIR / "schluessel.json"       # geheime Schluessel der Links (sicher aufbewahren)
 LINKS_FILE = SCRIPT_DIR / "links.txt"           # die fertigen Links zum Kopieren
+PERSON_FILE = SCRIPT_DIR / "personen_links.txt" # persoenliche Links: wer ist wer (v0.7.20)
+OWNER_LABELS = {"ich", "mein", "admin"}         # diese Zeile in personen_links.txt gilt fuer deinen eigenen Link
 APP_URL = "https://obitusde.github.io/fotoschatz/"
 KEY_RE = re.compile(r"^[A-Za-z0-9]{16,}$")
 INDEX_FILE_RE = re.compile(r"^index(-[A-Za-z0-9]+)?\.json$")
@@ -583,19 +585,47 @@ def read_name_list(path, head):
     return names
 
 
+PERSON_HEAD = [
+    "# Fotoschatz - persönliche Links (Wunsch 15.11.2026)",
+    "# Eine Zeile je Person:   Name des Links ; Name wie in Lightroom",
+    "#   z. B.   Mama ; Inge",
+    "#           Stefan ; Stefan, Petra, Max      (mehrere Personen: mit Komma trennen)",
+    "#   Für deinen eigenen Link:   ich ; <dein Name wie in Lightroom>",
+    "# Jede Person bekommt beim nächsten sync.bat einen eigenen Link (steht dann in links.txt).",
+    "# Er zeigt dasselbe wie der Gäste-Link (ohne ausblenden.txt); die Erinnerungen in der App",
+    "# zeigen zuerst Bilder, auf denen diese Person ist. Dein eigener Link zeigt weiter alles.",
+    "# Groß-/Kleinschreibung ist egal. # = Kommentar. Die Datei bleibt auf deinem PC.",
+    "",
+]
+
+
+def read_person_links():
+    """personen_links.txt: [(Linkname, [Personen])]. Fehlt sie, wird sie mit Erklaerung angelegt."""
+    out, seen = [], set()
+    for line in read_name_list(PERSON_FILE, PERSON_HEAD):
+        label, _, rest = line.partition(";")
+        label = " ".join(label.split())
+        persons = [" ".join(x.split()) for x in (rest if rest.strip() else label).split(",")]
+        persons = [x for x in persons if x]
+        if label and persons and label.casefold() not in seen:
+            seen.add(label.casefold())
+            out.append((label, persons))
+    return out
+
+
 def new_key():
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     return "".join(secrets.choice(alphabet) for _ in range(24))
 
 
-def load_keys(shares):
+def load_keys(shares, persons=()):
     """Schluessel lesen bzw. anlegen: mein, gaeste, je teilbarem Ordner einer (seit 0.7.14 automatisch fuer alle
     Online-Ordner). Ordner, die es nicht mehr gibt (z. B. umbenannt), fallen weg - ihr alter Link zeigt nichts mehr."""
     try:
         keys = json.loads(KEY_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         keys = {}
-    out = {"mein": keys.get("mein"), "gaeste": keys.get("gaeste"), "ordner": {}}
+    out = {"mein": keys.get("mein"), "gaeste": keys.get("gaeste"), "ordner": {}, "personen": {}}
     for role in ("mein", "gaeste"):
         if not (isinstance(out[role], str) and KEY_RE.match(out[role])):
             out[role] = new_key()
@@ -603,7 +633,11 @@ def load_keys(shares):
     for name in shares:
         key = old.get(name.casefold())
         out["ordner"][name.casefold()] = key if isinstance(key, str) and KEY_RE.match(key) else new_key()
-    used = [out["mein"], out["gaeste"], *out["ordner"].values()]
+    old_p = keys.get("personen") if isinstance(keys.get("personen"), dict) else {}
+    for label in persons:                    # persoenliche Links (v0.7.20); gestrichene Zeilen fallen weg
+        key = old_p.get(label.casefold())
+        out["personen"][label.casefold()] = key if isinstance(key, str) and KEY_RE.match(key) else new_key()
+    used = [out["mein"], out["gaeste"], *out["ordner"].values(), *out["personen"].values()]
     if len(set(used)) != len(used):          # praktisch ausgeschlossen, aber sicher ist sicher
         out["gaeste"] = new_key()
     if out != keys:
@@ -616,6 +650,7 @@ def build_views(new_files, analyses, paths, ignore_keywords, birthdays):
     mein = alles (dazu je Ordner sein Teilen-Schluessel und der Gaeste-Schluessel fuer „App teilen“),
     gaeste = ohne ausblenden.txt, ordner = je Online-Ordner die Gaeste-Bilder dieses Ordners mit Unterordnern."""
     hide = read_name_list(HIDE_FILE, HIDE_HEAD)
+    person_links = read_person_links()
     known = known_persons_of(new_files)
     full = build_index(new_files, analyses, ignore_keywords, birthdays, known)
     by_id = {p["id"]: p for p in full["photos"]}
@@ -665,7 +700,8 @@ def build_views(new_files, analyses, paths, ignore_keywords, birthdays):
         else:
             key = f["n"].casefold()
             names_by_folder[f["n"]] = [n for n in new_files if key in folders_of[n]]
-    keys = load_keys([n for n, names in names_by_folder.items() if any(x not in hidden for x in names)])
+    keys = load_keys([n for n, names in names_by_folder.items() if any(x not in hidden for x in names)],
+                     [label for label, _ in person_links if label.casefold() not in OWNER_LABELS])
 
     guest_names = [n for n in new_files if n not in hidden]
     views = [("mein", "Mein Link", keys["mein"], full),
@@ -685,9 +721,34 @@ def build_views(new_files, analyses, paths, ignore_keywords, birthdays):
         views.append(("ordner", f["n"], key, subset(visible)))
 
     shared = len(views) - 2
+
+    # Persoenliche Links (v0.7.20): wie der Gaeste-Link, dazu „me“ = wer die Person ist (fuer die Erinnerungen)
+    hidden_people = {e.casefold() for e, kinds, _c in hide_report if kinds.get("Person")}
+    person_notes = []
+    guest_view = views[1][3]
+    for label, persons in person_links:
+        me = [known[x.casefold()] for x in persons if x.casefold() in known]
+        missing = [x for x in persons if x.casefold() not in known]
+        owner = label.casefold() in OWNER_LABELS
+        if me and owner:
+            full["me"] = me
+        elif me:
+            view = dict(guest_view, me=me)
+            views.append(("person", label, keys["personen"][label.casefold()], view))
+        what = "dein eigener Link" if owner else "persönlicher Link"
+        line = f"      {label} ({', '.join(me) if me else '-'}) · {what}"
+        if missing:
+            line += f" · ⚠ nicht in Lightroom gefunden: {', '.join(missing)} (Tippfehler?)"
+        if not owner and any(x.casefold() in hidden_people for x in me):
+            line += " · ⚠ steht in ausblenden.txt - sieht die eigenen Bilder nicht"
+        person_notes.append(line)
+
     notes = [f"    Dein Link: {bilder(full['count'])} · Gäste-Link: {bilder(views[1][3]['count'])}"
              f" · Teilen-Links für {num(shared)} Ordner"
              + (f" ({num(blocked)} Ordner ganz ausgeblendet)" if blocked else "")]
+    if person_notes:
+        notes.append(f"    Persönliche Links ({PERSON_FILE.name}):")
+        notes += person_notes
     if hide:
         notes.append(f"    Für Gäste ausgeblendet ({HIDE_FILE.name}): {bilder(len(hidden))}")
         width = min(40, max(len(e) for e in hide))
@@ -715,6 +776,13 @@ def write_links(prefix, views):
         elif role == "gaeste":
             lines += ["GÄSTE-LINK – zum Teilen. Ohne die Personen und Ordner aus ausblenden.txt:",
                       f"  {link(key)}", f"  ({bilder(index['count'])})", ""]
+    people = [v for v in views if v[0] == "person"]
+    if people:
+        lines += ["PERSÖNLICHE LINKS (aus personen_links.txt) – wie der Gäste-Link, die Erinnerungen zeigen",
+                  "zuerst Bilder mit dieser Person:"]
+        for _role, label, key, index in people:
+            lines += [f"  {label} ({', '.join(index['me'])}):", f"    {link(key)}"]
+        lines.append("")
     lines += ["EINEN ORDNER TEILEN: in der App (mit deinem Link) den Ordner öffnen › oben auf Teilen tippen.",
               "Der Link zeigt nur diesen Ordner mit Unterordnern (ohne ausblenden.txt).",
               "Die ganze App teilen geht auch in der App: Ordnerliste ganz unten › „App teilen“.", "",
@@ -1308,13 +1376,13 @@ def main():
         path = link_dir / f"index-{key}.json"
         try:
             old = json.loads(path.read_text(encoding="utf-8"))
-            same = all(old.get(k) == view.get(k) for k in ("photos", "folders", "bd", "gk"))
+            same = all(old.get(k) == view.get(k) for k in ("photos", "folders", "bd", "gk", "me"))
         except (OSError, ValueError):
             same = False
         if not same:
             write_json_atomic(path, view, compact=True)
             index_changed = True
-        index_files.append((label if role != "ordner" else f"Freigabe {label}", path))
+        index_files.append((f"Freigabe {label}" if role == "ordner" else f"Link {label}" if role == "person" else label, path))
     for old in link_dir.glob("index-*.json"):
         if old not in [p for _l, p in index_files]:
             old.unlink()

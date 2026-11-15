@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.19";
+const APP_VERSION = "0.7.20";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -195,6 +195,7 @@ function mergeIndexes(list) {
     folders: [...folders.values()].filter((f) => f.c),
     photos: [...photos.values()],
     bd: Object.assign({}, ...list.map((ix) => ix.bd || {})),
+    me: [...new Set(list.flatMap((ix) => ix.me || []))],      // persoenlicher Link (v0.7.20)
   };
 }
 
@@ -224,6 +225,8 @@ function prepare(index) {
     byFolder,
     perYear,
     birthdays: index.bd || {},
+    me: new Set((index.me || []).map(normText)),           // wer die App nutzt (persoenlicher Link, v0.7.20)
+    meNames: index.me || [],
     bdNorm: new Map(Object.entries(index.bd || {}).map(([name, birth]) => [normText(name), birth])),
     folderByName: new Map(index.folders.map((f) => [f.n, f])),
     allDesc: photos.slice().reverse(),
@@ -312,10 +315,17 @@ function seeded(text) {
 // Wie gut sich ein Bild als Vorschlag eignet: ★★ vor ★, Personen leicht bevorzugt, dazu Tages-Zufall
 const photoScore = (p, seed) => ((p.r || 0) >= 2 ? 3 : p.r === 1 ? 1.5 : 0) + (p.p && p.p.length ? 0.5 : 0) + seeded(seed + p.id);
 
-// Die n besten Bilder, nach Aufnahmezeit sortiert; schon gezeigte (shown(p) = true) kommen zuletzt dran (v0.7.18)
+// Persoenlicher Link (v0.7.20): ist die Person, fuer die der Link gemacht ist, auf dem Bild?
+const isMine = (p) => DATA.me.size > 0 && Boolean(p.p) && p.p.some((n) => DATA.me.has(normText(n)));
+const byTime = (a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0);
+// Bilder mit der Person zuerst, sonst nach Aufnahmezeit
+const mineFirst = (list) => list.slice().sort((a, b) => (isMine(b) - isMine(a)) || byTime(a, b));
+
+// Die n besten Bilder; schon gezeigte (shown(p) = true) kommen zuletzt dran (v0.7.18),
+// beim persoenlichen Link Bilder mit der Person zuerst (v0.7.20)
 function bestPhotos(list, n, seed, shown = null) {
-  return list.map((p) => [photoScore(p, seed) - (shown && shown(p) ? 100 : 0), p]).sort((a, b) => b[0] - a[0]).slice(0, n)
-    .map((x) => x[1]).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+  return mineFirst(list.map((p) => [photoScore(p, seed) + (isMine(p) ? 50 : 0) - (shown && shown(p) ? 100 : 0), p])
+    .sort((a, b) => b[0] - a[0]).slice(0, n).map((x) => x[1]));
 }
 
 // Tage von Kalendertag b bis a ("MM-TT"), -182 … 182 (negativ = a liegt vor b), ueber den Jahreswechsel hinweg
@@ -2296,8 +2306,8 @@ function memories() {
       const strip = [...perYear.values()].map((list) => bestPhotos(list, 1, `${day}bd`)[0]);
       cards.push({
         key: `bd:${e.key}`, kind: "birthday", birth,
-        title: `🎂 ${e.name} wird heute ${age}`,
-        sub: `${perYear.size === 1 ? "1 Jahr" : `${perYear.size} Jahre`} in Bildern · je Jahr ein Bild`,
+        title: DATA.me.has(e.key) ? `🎂 Alles Gute, ${e.name}!` : `🎂 ${e.name} wird heute ${age}`,
+        sub: `${DATA.me.has(e.key) ? `${age} Jahre · ` : ""}${perYear.size === 1 ? "1 Jahr" : `${perYear.size} Jahre`} in Bildern · je Jahr ein Bild`,
         strip, open: { v: "person", n: e.key },
       });
       continue;
@@ -2337,6 +2347,25 @@ function memories() {
     });
   }
 
+  // Persoenlicher Link (v0.7.20): Bilder mit der Person aus dieser Woche (±3 Tage) in frueheren Jahren,
+  // ohne die, die schon in „Heute vor X Jahren“ stehen
+  if (DATA.me.size) {
+    const inToday = new Set((cards.find((c) => c.key === "today") || { strip: [] }).strip.map((p) => p.id));
+    const mine = past.filter((p) => isMine(p) && !inToday.has(p.id) && dayDistance(p.t.slice(5, 10), md) <= 3);
+    if (mine.length) {
+      const years = [...new Set(mine.map((p) => +p.t.slice(0, 4)))];
+      const per = new Map();
+      for (const p of mine) per.set(p.t.slice(0, 4), (per.get(p.t.slice(0, 4)) || 0) + 1);
+      const ago = (y) => (year - y === 1 ? "vor 1 Jahr" : `vor ${year - y} Jahren`);
+      cards.push({
+        key: "me", kind: "me", title: DATA.me.size > 1 ? "Mit euch – diese Woche in früheren Jahren" : "Mit dir – diese Woche in früheren Jahren",
+        sub: `${yearRanges(years)} · ${countLabel(mine.length)}`,
+        all: mine, strip: bestPhotos(mine, 12, `${day}me`, shown),
+        sectionOf: (p) => `${p.t.slice(0, 4)} · ${ago(+p.t.slice(0, 4))} · ${countLabel(per.get(p.t.slice(0, 4)))}`,
+      });
+    }
+  }
+
   // Vor X Jahren: Ordner von genau heute; ein Ordner von vor 1–3 Tagen nur, wenn er an seinem Tag
   // nicht gezeigt wurde (App nicht geoeffnet) – so steht jeder Ordner hoechstens an 1–2 Tagen da (v0.7.18)
   const folderSeen = (f) => {
@@ -2344,9 +2373,10 @@ function memories() {
     return d && d !== day && daysBetween(d, day) <= 7;
   };
   const folders = DATA.index.folders.filter((f) => !f.x && f.d && +f.d.slice(0, 4) < year)
-    .map((f) => ({ f, off: dayOffset(f.d.slice(5), md), stars: (DATA.byFolder.get(f.n) || []).filter((p) => p.r).length }))
+    .map((f) => ({ f, off: dayOffset(f.d.slice(5), md), stars: (DATA.byFolder.get(f.n) || []).filter((p) => p.r).length,
+      mine: (DATA.byFolder.get(f.n) || []).some(isMine) ? 1 : 0 }))
     .filter((x) => x.off === 0 || (x.off < 0 && x.off >= -3 && !folderSeen(x.f)))
-    .sort((a, b) => b.off - a.off || b.stars - a.stars || seeded(day + a.f.n) - seeded(day + b.f.n))
+    .sort((a, b) => b.off - a.off || b.mine - a.mine || b.stars - a.stars || seeded(day + a.f.n) - seeded(day + b.f.n))
     .slice(0, 3).map((x) => x.f);
 
   // Wiederentdecken: 12 Bilder des Tages – der Reihe nach alle ★★, dann alle ★, dann von vorn (v0.7.18)
@@ -2356,9 +2386,11 @@ function memories() {
     const shuffle = (list) => list.map((p) => [seeded(`${day}stars${p.id}`), p]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
     const take = () => {
       const out = [];
-      for (const tier of [2, 1]) {
-        const rest = shuffle(starPool.filter((p) => ((p.r || 0) >= 2 ? 2 : 1) === tier && !used(p)));
-        out.push(...rest.slice(0, 12 - out.length));
+      const tiers = DATA.me.size ? [[2, true, 8], [1, true, 8], [2, false, 12], [1, false, 12]] : [[2, null, 12], [1, null, 12]];
+      for (const [tier, mine, upto] of tiers) {
+        const rest = shuffle(starPool.filter((p) => ((p.r || 0) >= 2 ? 2 : 1) === tier && !used(p)
+          && !out.includes(p) && (mine === null || isMine(p) === mine)));
+        out.push(...rest.slice(0, Math.max(0, upto - out.length)));
         if (out.length >= 12) break;
       }
       return out;
@@ -2368,7 +2400,7 @@ function memories() {
       for (const [id, d] of Object.entries(memo.stars)) if (d !== day) delete memo.stars[id];
       pick = take();
     }
-    pick.sort((a, b) => (a.t < b.t ? -1 : 1));
+    pick = mineFirst(pick);
     const two = pick.filter((p) => (p.r || 0) >= 2).length;
     cards.push({
       key: "stars", kind: "stars", title: "Wiederentdecken",
@@ -2387,6 +2419,7 @@ function memories() {
     if (!c) cities.set(key, (c = { key, name: p.ci, country: p.co || "", list: [], stars: 0 }));
     c.list.push(p);
     if (p.r) c.stars += 1;
+    if (isMine(p)) c.mine = (c.mine || 0) + 1;
   }
   const ranked = [...cities.values()].sort((a, b) => b.list.length - a.list.length);
   const home = ranked[0];
@@ -2401,7 +2434,7 @@ function memories() {
       const fresh = candidates.filter((c) => !recent.has(c.key));
       const from = fresh.length ? fresh : candidates;
       // gewichtet: mehr Bilder und mehr Sterne = oefter an der Reihe
-      const weight = (c) => Math.sqrt(c.list.length) * (1 + c.stars / c.list.length);
+      const weight = (c) => Math.sqrt(c.list.length) * (1 + c.stars / c.list.length) * (1 + 2 * (c.mine || 0) / c.list.length);
       const total = from.reduce((sum, c) => sum + weight(c), 0);
       let r = seeded(`${day}place`) * total;
       place = from.find((c) => (r -= weight(c)) <= 0) || from[from.length - 1];
@@ -2480,7 +2513,7 @@ function memoriesView() {
       }, el("div", { class: "name", text: `${x.e.name} wird ${x.age}` }),
       el("div", { class: "meta", text: `${x.ahead === 1 ? "morgen" : `in ${x.ahead} Tagen`} · ${fmtSoon.format(x.date)}` })))));
   }
-  for (const card of M.cards.filter((c) => c.kind === "today")) wrap.append(memCard(card));
+  for (const card of M.cards.filter((c) => c.kind === "today" || c.kind === "me")) wrap.append(memCard(card));
   if (M.folders.length) {
     wrap.append(el("section", { class: "mem-card mem-folders" },
       el("div", { class: "mem-label", text: "Diese Woche vor einigen Jahren" }),
