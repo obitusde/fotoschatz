@@ -39,9 +39,10 @@ Lightroom ──Publish──> D:\Fotoschatz\Published Smart Folder ──sync.b
 
 **In der App (seit 0.7.16, für alle, die die App nutzen):**
 - **Erinnerungen** (Reiter unten): Geburtstag heute („🎂 Uli wird heute 46“, je Jahr ein Bild) und „Demnächst“ (7 Tage), Heute vor X Jahren (sonst ±3 Tage), Ordner aus dieser Woche in früheren Jahren, Wiederentdecken (12 Bilder ★★ bzw. ★), Ort wiederentdecken (eine Stadt mit mindestens 10 Bildern, nicht der Wohnort). Wechselt einmal am Tag. Geburtstage nur mit vollem Datum in `geburtstage.txt`.
-- **Personenseite** (Suche › „Personenseite ›“ oder Erinnerungen › „Alle Personen“): alle Personen mit Anzahl und heutigem Alter; je Person die Bilder nach Jahren mit dem **Alter in der Überschrift** („2006 · 30–31 Jahre · 39 Bilder“). Auch in der Suche, wenn genau eine Person gewählt ist.
+- **Personenseite** (Suche › „Personenseite ›“): alle Personen mit Anzahl und heutigem Alter; je Person die Bilder nach Jahren mit dem **Alter in der Überschrift** („2006 · 30–31 Jahre · 39 Bilder“). Auch in der Suche, wenn genau eine Person gewählt ist.
 - **Bild teilen** (Symbol im Betrachter oben): schickt das Bild selbst (z. B. an WhatsApp), ohne GPS und Namen darin; ohne Teilen-Funktion wird es heruntergeladen.
 - **Weitere Ordner** unter jedem Ordner: davor/danach, gleicher Anlass (Wort im Namen), gleicher Ort (20 km), dieselben Personen, gleicher Monat.
+- **Orte in der Suche** (seit 0.7.17) als Knöpfe mit Anzahl wie die Personen: erst Länder, dann Städte des gewählten Landes, dann Orte.
 - **Text-Suche:** Wort eintippen, Enter (oder „Alle Bilder mit „…“ (Text)“) → alle Bilder mit dem Wort in Ordnername, Beschreibung, Ort, Person oder Stichwort.
 
 **Grundregel:** Korrigiert wird **nur in Lightroom**, danach neu exportieren. Nie Dateien im Explorer umbenennen, verschieben oder ändern, sonst passt der Katalog nicht mehr.

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.16";
+const APP_VERSION = "0.7.17";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -1240,7 +1240,7 @@ function svgNode(markup) {
 // "Anzeigen" legt einen neuen Verlaufseintrag an -> Zurueck-Taste fuehrt vom Raster zur Auswahl.
 function mountSearch(main, state, m) {
   if (!SEARCH) SEARCH = buildSearch();
-  const s = { keys: [], text: "", mode: "select", panel: false, shown: null, open: new Set(), allPersons: false, pending: null };
+  const s = { keys: [], text: "", mode: "select", panel: false, shown: null, open: new Set(), allPersons: false, allPlaces: null, pending: null };
 
   const chips = el("div", { class: "chips" });
   const input = el("input", {
@@ -1355,49 +1355,27 @@ function mountSearch(main, state, m) {
     body.replaceChildren(...nodes);
   }
 
-  // Orte als Baum: Antippen klappt auf, erste Zeile "Ganz …" waehlt den ganzen Zweig
-  function placeRows(counts) {
-    const rows = [];
-    const chosen = s.keys.filter((k) => k.startsWith("o:"));
-    const walk = (parent, depth) => {
-      const kids = (SEARCH.children.get(parent) || []).filter((k) => counts.get(k))
-        .sort((a, b) => counts.get(b) - counts.get(a) || SEARCH.terms.get(a).label.localeCompare(SEARCH.terms.get(b).label, "de"));
-      for (const key of kids) {
-        const t = SEARCH.terms.get(key);
-        const n = counts.get(key);
-        const path = key.slice(2);
-        const hasKids = (SEARCH.children.get(path) || []).some((k) => counts.get(k));
-        const isChosen = chosen.includes(key);
-        const open = hasKids && (isChosen || s.open.has(key) || chosen.some((c) => c.startsWith(`${key}|`)));
-        const row = el("button", {
-          type: "button",
-          class: "tree-row" + (open ? " open" : "") + (isChosen ? " chosen" : ""),
-          style: `padding-left:${16 + depth * 20}px`,
-          "aria-expanded": hasKids ? String(open) : null,
-          onclick: () => {
-            if (isChosen) return;
-            if (!hasKids) { addKey(key); return; }
-            if (s.open.has(key)) s.open.delete(key);
-            else s.open.add(key);
-            renderFacets();
-          },
-        }, el("span", { class: "name", text: t.label }), el("span", { class: "meta", text: n.toLocaleString("de-DE") }),
-        hasKids ? svgNode(ICON_CHEVRON) : el("span", { class: "chev-space" }));
-        rows.push(row);
-        if (open) {
-          if (!isChosen) {
-            rows.push(el("button", {
-              type: "button", class: "tree-row tree-all", style: `padding-left:${16 + (depth + 1) * 20}px`,
-              onclick: () => addKey(key),
-            }, el("span", { class: "name", text: `Ganz ${t.label}` }), el("span", { class: "meta", text: n.toLocaleString("de-DE") }),
-            el("span", { class: "chev-space" })));
-          }
-          walk(path, depth + 1);
-        }
-      }
-    };
-    walk("", 0);
-    return rows;
+  // Orte wie die Personen als kleine Knoepfe mit Anzahl (v0.7.17): erst Laender, nach der Wahl eines
+  // Landes dessen Staedte, nach der Wahl einer Stadt deren Orte; die 12 haeufigsten, "alle … zeigen"
+  function placePicks(counts) {
+    const chosen = s.keys.filter((k) => k.startsWith("o:")).map((k) => k.slice(2))
+      .sort((a, b) => b.split("|").length - a.split("|").length);
+    const parent = chosen[0] || "";
+    const kids = (SEARCH.children.get(parent) || []).filter((k) => counts.get(k) && !s.keys.includes(k))
+      .sort((a, b) => counts.get(b) - counts.get(a) || SEARCH.terms.get(a).label.localeCompare(SEARCH.terms.get(b).label, "de"));
+    if (!kids.length) return [];
+    const all = s.allPlaces === parent;
+    const shown = all ? kids : kids.slice(0, PICK_LIMIT);
+    const box = el("div", { class: "picks" }, ...shown.map((k) => pick(SEARCH.terms.get(k), counts.get(k))));
+    if (kids.length > PICK_LIMIT) {
+      box.append(el("button", {
+        type: "button", class: "pick pick-more",
+        onclick: () => { s.allPlaces = all ? null : parent; renderFacets(); },
+      }, all ? "weniger" : `alle ${kids.length} zeigen`));
+    }
+    const depth = parent ? parent.split("|").length : 0;
+    const head = !parent ? "Orte" : `${depth === 1 ? "Städte" : "Orte"} in ${SEARCH.terms.get(`o:${parent}`).label}`;
+    return [el("div", { class: "sg-head", text: head }), box];
   }
 
   // Jahre (v0.6.37): aktuelles Jahrzehnt direkt, davor aufklappbare Jahrzehnte ("2010er" -> 2019 … 2010, "Ganz 2010er")
@@ -1462,8 +1440,7 @@ function mountSearch(main, state, m) {
       box.append(el("button", { type: "button", class: "pick pick-more", onclick: () => navigate({ v: "people" }) }, "Personenseite ›"));
       nodes.push(el("div", { class: "sg-head", text: "Personen" }), box);
     }
-    const places = placeRows(counts);
-    if (places.length) nodes.push(el("div", { class: "sg-head", text: "Orte" }), el("div", { class: "tree" }, ...places));
+    nodes.push(...placePicks(counts));
     const years = yearNodes(counts);
     if (years.length) nodes.push(el("div", { class: "sg-head", text: "Jahre" }), ...years);
     const keywords = ofType("k").sort(byCount).slice(0, 30);
@@ -2437,11 +2414,6 @@ function memoriesView() {
   }
   for (const card of M.cards.filter((c) => c.kind === "stars" || c.kind === "place")) wrap.append(memCard(card));
   if (!wrap.childNodes.length) wrap.append(el("p", { class: "center muted", text: "Heute gibt es keine Erinnerungen." }));
-  if (personsIndex().size) {
-    wrap.append(el("div", { class: "share-app" }, el("button", {
-      type: "button", class: "search-action", onclick: () => navigate({ v: "people" }),
-    }, "Alle Personen")));
-  }
   return wrap;
 }
 
