@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.17";
+const APP_VERSION = "0.7.18";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -312,10 +312,22 @@ function seeded(text) {
 // Wie gut sich ein Bild als Vorschlag eignet: ★★ vor ★, Personen leicht bevorzugt, dazu Tages-Zufall
 const photoScore = (p, seed) => ((p.r || 0) >= 2 ? 3 : p.r === 1 ? 1.5 : 0) + (p.p && p.p.length ? 0.5 : 0) + seeded(seed + p.id);
 
-// Die n besten Bilder, nach Aufnahmezeit sortiert
-function bestPhotos(list, n, seed) {
-  return list.map((p) => [photoScore(p, seed), p]).sort((a, b) => b[0] - a[0]).slice(0, n)
+// Die n besten Bilder, nach Aufnahmezeit sortiert; schon gezeigte (shown(p) = true) kommen zuletzt dran (v0.7.18)
+function bestPhotos(list, n, seed, shown = null) {
+  return list.map((p) => [photoScore(p, seed) - (shown && shown(p) ? 100 : 0), p]).sort((a, b) => b[0] - a[0]).slice(0, n)
     .map((x) => x[1]).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+}
+
+// Tage von Kalendertag b bis a ("MM-TT"), -182 … 182 (negativ = a liegt vor b), ueber den Jahreswechsel hinweg
+function dayOffset(a, b) {
+  const doy = (md) => {
+    const [m, d] = md.split("-").map(Number);
+    return (Date.UTC(2001, m - 1, Math.min(d, m === 2 ? 28 : d)) - Date.UTC(2001, 0, 1)) / 86400000;
+  };
+  let diff = doy(a) - doy(b);
+  if (diff > 182) diff -= 365;
+  if (diff < -182) diff += 365;
+  return diff;
 }
 
 // Abstand zweier Kalendertage ("MM-TT") in Tagen, ueber den Jahreswechsel hinweg
@@ -2228,7 +2240,33 @@ function birthLabel(birth) {
 
 // Fuer alle, die die App nutzen, aus den eigenen Bildern; wechselt einmal am Tag.
 const MEM_PLACE_KEY = "fotoschatz.mem-place";   // { day, key, recent: [...] } – zuletzt vorgeschlagene Orte
+// Was auf diesem Geraet schon gezeigt wurde (v0.7.18, damit sich Erinnerungen nicht wiederholen):
+// seen = Bild-id -> Tag (60 Tage gemerkt), stars = Bild-id -> Tag (Runde durch alle ★★/★-Bilder),
+// folders = Ordnername -> Tag. Eintraege von heute zaehlen nicht, so bleibt die Auswahl am selben Tag gleich.
+const MEM_SEEN_KEY = "fotoschatz.mem-seen";
+const MEM_SEEN_DAYS = 60;
 let MEM = null;
+
+function daysBetween(a, b) {
+  return Math.round((Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10))
+    - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10))) / 86400000);
+}
+
+function loadSeen(day) {
+  let st = {};
+  try { st = JSON.parse(readPref(MEM_SEEN_KEY) || "{}") || {}; } catch (e) { st = {}; }
+  const obj = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
+  const seen = obj(st.seen);
+  for (const [id, d] of Object.entries(seen)) {
+    if (typeof d !== "string" || daysBetween(d, day) > MEM_SEEN_DAYS) delete seen[id];
+  }
+  const today = st.today && st.today.day === day ? st.today : { day, picks: {}, folders: null };
+  return { seen, stars: obj(st.stars), folders: obj(st.folders), today };
+}
+
+function saveSeen(st) {
+  writePref(MEM_SEEN_KEY, JSON.stringify(st));
+}
 
 function memories() {
   const day = localDay();
@@ -2239,6 +2277,8 @@ function memories() {
   const cards = [];
   const soon = [];
   const persons = personsIndex();
+  const memo = loadSeen(day);
+  const shown = (p) => memo.seen[p.id] && memo.seen[p.id] !== day;   // an einem frueheren Tag gezeigt
 
   // Geburtstag heute (je Person eine Karte) und in den naechsten 7 Tagen
   for (const e of persons.values()) {
@@ -2272,12 +2312,13 @@ function memories() {
   }
   soon.sort((a, b) => a.ahead - b.ahead);
 
-  // Heute vor X Jahren (sonst ±3 Tage)
+  // Heute vor X Jahren (sonst ±1, erst dann ±3 Tage)
   const past = DATA.photos.filter((p) => +p.t.slice(0, 4) < year);
   let today = past.filter((p) => p.t.slice(5, 10) === md);
   let exact = true;
-  if (!today.length) {
-    today = past.filter((p) => dayDistance(p.t.slice(5, 10), md) <= 3);
+  for (const width of [1, 3]) {
+    if (today.length) break;
+    today = past.filter((p) => dayDistance(p.t.slice(5, 10), md) <= width);
     exact = false;
   }
   if (today.length) {
@@ -2291,32 +2332,50 @@ function memories() {
         : years.length <= 3 ? `Heute vor ${years.map((y) => year - y).sort((x, y) => x - y).join(", ").replace(/, (\d+)$/, " und $1")} Jahren`
           : "Heute in früheren Jahren",
       sub: `${yearRanges(years)} · ${countLabel(today.length)}`,
-      all: today, strip: bestPhotos(today, 12, `${day}today`),
+      all: today, strip: bestPhotos(today, 12, `${day}today`, shown),
       sectionOf: (p) => `${p.t.slice(0, 4)} · ${ago(+p.t.slice(0, 4))} · ${countLabel(per.get(p.t.slice(0, 4)))}`,
     });
   }
 
-  // Vor X Jahren: Ordner, deren Datum in diese Woche faellt
-  const folders = DATA.index.folders.filter((f) => !f.x && f.d && +f.d.slice(0, 4) < year && dayDistance(f.d.slice(5), md) <= 3)
-    .map((f) => ({ f, dist: dayDistance(f.d.slice(5), md), stars: (DATA.byFolder.get(f.n) || []).filter((p) => p.r).length }))
-    .sort((a, b) => a.dist - b.dist || b.stars - a.stars || seeded(day + a.f.n) - seeded(day + b.f.n))
+  // Vor X Jahren: Ordner von genau heute; ein Ordner von vor 1–3 Tagen nur, wenn er an seinem Tag
+  // nicht gezeigt wurde (App nicht geoeffnet) – so steht jeder Ordner hoechstens an 1–2 Tagen da (v0.7.18)
+  const folderSeen = (f) => {
+    const d = memo.folders[f.n];
+    return d && d !== day && daysBetween(d, day) <= 7;
+  };
+  const folders = DATA.index.folders.filter((f) => !f.x && f.d && +f.d.slice(0, 4) < year)
+    .map((f) => ({ f, off: dayOffset(f.d.slice(5), md), stars: (DATA.byFolder.get(f.n) || []).filter((p) => p.r).length }))
+    .filter((x) => x.off === 0 || (x.off < 0 && x.off >= -3 && !folderSeen(x.f)))
+    .sort((a, b) => b.off - a.off || b.stars - a.stars || seeded(day + a.f.n) - seeded(day + b.f.n))
     .slice(0, 3).map((x) => x.f);
 
-  // Wiederentdecken: 12 sehr gute Bilder (★★, sonst ★) des Tages
-  let pool = DATA.photos.filter((p) => (p.r || 0) >= 2);
-  let poolText = "★★";
-  if (pool.length < 6) {
-    pool = DATA.photos.filter((p) => (p.r || 0) >= 1);
-    poolText = "★";
-  }
-  if (pool.length >= 4) {
-    const pick = pool.map((p) => [seeded(`${day}stars${p.id}`), p]).sort((a, b) => a[0] - b[0]).slice(0, 12)
-      .map((x) => x[1]).sort((a, b) => (a.t < b.t ? -1 : 1));
+  // Wiederentdecken: 12 Bilder des Tages – der Reihe nach alle ★★, dann alle ★, dann von vorn (v0.7.18)
+  const starPool = DATA.photos.filter((p) => (p.r || 0) >= 1);
+  if (starPool.length >= 4) {
+    const used = (p) => memo.stars[p.id] && memo.stars[p.id] !== day;
+    const shuffle = (list) => list.map((p) => [seeded(`${day}stars${p.id}`), p]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+    const take = () => {
+      const out = [];
+      for (const tier of [2, 1]) {
+        const rest = shuffle(starPool.filter((p) => ((p.r || 0) >= 2 ? 2 : 1) === tier && !used(p)));
+        out.push(...rest.slice(0, 12 - out.length));
+        if (out.length >= 12) break;
+      }
+      return out;
+    };
+    let pick = take();
+    if (pick.length < Math.min(12, starPool.length)) {   // Runde fertig: von vorn, nur heutige bleiben gemerkt
+      for (const [id, d] of Object.entries(memo.stars)) if (d !== day) delete memo.stars[id];
+      pick = take();
+    }
+    pick.sort((a, b) => (a.t < b.t ? -1 : 1));
+    const two = pick.filter((p) => (p.r || 0) >= 2).length;
     cards.push({
       key: "stars", kind: "stars", title: "Wiederentdecken",
-      sub: `${pick.length} Bilder mit ${poolText} aus allen Jahren – jeden Tag andere`,
+      sub: `${pick.length} Bilder mit ${two === pick.length ? "★★" : two ? "★★ und ★" : "★"} – jeden Tag andere`,
       all: pick, strip: pick,
     });
+    for (const p of pick) memo.stars[p.id] = day;
   }
 
   // Ort wiederentdecken: eine Stadt mit mindestens 10 Bildern, nicht der Wohnort, laenger nicht vorgeschlagen
@@ -2356,9 +2415,35 @@ function memories() {
     cards.push({
       key: "place", kind: "place", title: `Ort wiederentdecken: ${place.name}`,
       sub: [place.country !== place.name ? place.country : "", yearRanges(years), countLabel(place.list.length)].filter(Boolean).join(" · "),
-      all: place.list, strip: bestPhotos(place.list, 12, `${day}place`),
+      all: place.list, strip: bestPhotos(place.list, 12, `${day}place`, shown),
     });
   }
+
+  // Am selben Tag (App neu geoeffnet) genau dieselbe Auswahl wie beim ersten Oeffnen
+  const byId = new Map(DATA.photos.map((p) => [p.id, p]));
+  const again = (ids) => (Array.isArray(ids) && ids.length && ids.every((id) => byId.has(id)) ? ids.map((id) => byId.get(id)) : null);
+  for (const card of cards) {
+    const kept = again(memo.today.picks[card.key]);
+    if (kept) {
+      card.strip = kept;
+      if (card.kind === "stars") card.all = kept;
+    }
+    memo.today.picks[card.key] = card.strip.map((p) => p.id);
+  }
+  const folderByName = DATA.folderByName;
+  if (Array.isArray(memo.today.folders) && memo.today.folders.every((n) => folderByName.has(n))) {
+    folders.splice(0, folders.length, ...memo.today.folders.map((n) => folderByName.get(n)));
+  }
+  memo.today.folders = folders.map((f) => f.n);
+
+  // Gezeigtes merken (Streifen und Ordner), damit es die naechsten Tage nicht wiederkommt
+  for (const card of cards) {
+    if (card.kind === "birthday") continue;
+    for (const p of card.strip) memo.seen[p.id] = day;
+  }
+  for (const f of folders) memo.folders[f.n] = day;
+  for (const [n, d] of Object.entries(memo.folders)) if (daysBetween(d, day) > 30) delete memo.folders[n];
+  saveSeen(memo);
 
   // Reihenfolge: Geburtstage, heute, (Ordner), Wiederentdecken, Ort
   MEM = { day, cards, soon, folders, now };
