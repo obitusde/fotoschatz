@@ -13,8 +13,10 @@ Scans (Aufnahme vor 2000, meist Ersatzdatum) kommen nicht in die Spur - nur in d
 Lightroom zieht bei Auto-Tag ueber JEDE Luecke eine gerade Linie (am PC gesehen 16.11.2026) - deshalb: Luecken mit
 Ort davor und danach <= 5 km (bis 24 h) werden ueberbrueckt (ungefaehr), alle anderen Fotos bleiben offen, und die
 Auswahl in Lightroom geht ueber eine Liste der Dateinamen (nur gute und ungefaehre Fotos).
+Seit 0.7.25 eine GPX-Datei je Ordner (gpx\\nachtragen\\<Ordner>.gpx, Spur heisst wie der Ordner, alle Tage in
+einer Spur) - so sieht man auf der Karte, was man an diesen Tagen gemacht hat.
 """
-__version__ = "0.7.24"
+__version__ = "0.7.25"
 
 import json
 import struct
@@ -32,7 +34,8 @@ import gps_test
 SCRIPT_DIR = Path(__file__).resolve().parent
 GARMIN_DIR = SCRIPT_DIR / "garmin"
 GOOGLE_DIR = SCRIPT_DIR / "google"
-GPX_FILE = SCRIPT_DIR / "gpx" / "ohne_gps.gpx"
+GPX_FILE = SCRIPT_DIR / "gpx" / "ohne_gps.gpx"         # bis 0.7.24 eine Datei fuer alles - wird geloescht
+GPX_DIR = SCRIPT_DIR / "gpx" / "nachtragen"             # seit 0.7.25 eine Datei je Ordner
 OUT_FILE = SCRIPT_DIR / "gps_nachtragen.txt"
 DEFAULTS = {"catalog": katalog.DEFAULT_CATALOG, "originals_dir": r"D:\Bilder - Raw"}
 
@@ -48,6 +51,7 @@ SOURCE_ORDER = ["Garmin", "Handyfoto", "Zeitachse", "Lücke aufgefüllt"]
 BRIDGE_TIME = timedelta(hours=24)    # Luecke so lang und ...
 BRIDGE_DIST = 5000                   # ... Ort davor und danach hoechstens so weit auseinander -> ueberbruecken (ungefaehr)
 PICK_CHUNK = 40                      # so viele Dateinamen je Zeile fuer den Lightroom-Filter
+FILE_CONTEXT = timedelta(hours=3)    # Spur je Ordner: Punkte so weit um seine Fotos herum
 
 lines = []
 
@@ -219,25 +223,36 @@ def pc_offset(local):
         return local.replace(year=2000).astimezone().utcoffset()
 
 
-def write_gpx(path, points):
+def xml_text(text):
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def safe_name(text):
+    """Dateiname fuer Windows: verbotene Zeichen ersetzen."""
+    out_ = "".join("_" if ch in '<>:"/\\|?*' or ord(ch) < 32 else ch for ch in text).strip(" .")
+    return out_ or "Ordner"
+
+
+def write_gpx(path, points, name):
     """GPS-Spur; Zeiten = Ortszeit der Fotos, umgerechnet ueber die PC-Zeitzone (so liest Lightroom die
     Aufnahmezeit - am PC bestaetigt 01.10.2026 mit gps_test). Neuer Abschnitt nach Luecken > SEGMENT_GAP."""
     path.parent.mkdir(exist_ok=True)
     w = ['<?xml version="1.0" encoding="UTF-8"?>',
-         '<gpx version="1.1" creator="Fotoschatz gps_nachtragen" xmlns="http://www.topografix.com/GPX/1/1">']
+         '<gpx version="1.1" creator="Fotoschatz gps_nachtragen" xmlns="http://www.topografix.com/GPX/1/1">',
+         f"<trk><name>{xml_text(name)}</name>"]                   # eine Spur je Ordner, alle Tage zusammen
     last, nseg = None, 0
     for local, lat, lng, _src in points:
-        if last is None or local - last > SEGMENT_GAP:          # jeder Abschnitt eine eigene Spur
+        if last is None or local - last > SEGMENT_GAP:
             if last is not None:
-                w.append("</trkseg></trk>")
+                w.append("</trkseg>")
             nseg += 1
-            w.append(f"<trk><name>Fotoschatz {nseg}</name><trkseg>")
+            w.append("<trkseg>")
         utc = local - pc_offset(local)                  # naive = PC-Zeitzone
         w.append(f'<trkpt lat="{lat:.6f}" lon="{lng:.6f}"><time>{utc:%Y-%m-%dT%H:%M:%SZ}</time></trkpt>')
         last = local
     if last is not None:
-        w.append("</trkseg></trk>")
-    w.append("</gpx>")
+        w.append("</trkseg>")
+    w.append("</trk></gpx>")
     path.write_text("\n".join(w), encoding="utf-8")
     return nseg
 
@@ -416,7 +431,8 @@ def main():
     open_list = defaultdict(list)
     gap_rows = defaultdict(list)          # Ordner -> (Foto, Luecke, km, Art) fuer Fotos zwischen zwei Abschnitten
     bridges = set()
-    pick = []                             # Dateinamen (ohne Endung) fuer die Auswahl in Lightroom
+    pick = defaultdict(list)              # Ordner -> Dateinamen (ohne Endung) fuer die Auswahl in Lightroom
+    folder_times = defaultdict(list)      # Ordner -> Aufnahmezeiten seiner Fotos ohne GPS
     for i in sorted(targets, key=lambda x: x["time"]):
         t = i["time"]
         j = nearest(times, t)
@@ -443,7 +459,8 @@ def main():
         if kind == "offen":
             open_list[folder].append(i)
         else:
-            pick.append(Path(i["file"]).stem)
+            pick[folder].append(Path(i["file"]).stem)
+        folder_times[folder].append(t)
         result[kind] += 1
         by_folder[folder][kind] += 1
 
@@ -524,28 +541,58 @@ def main():
     if not warned:
         out("   keine Hinweise auf eine falsche Kamera-Uhr")
 
-    # --- 6. GPX schreiben
-    if points:
-        nseg = write_gpx(GPX_FILE, points)
-        out(f"\n== 6. GPS-Spur: {len(points)} Punkte in {nseg} Abschnitten → _sync\\gpx\\{GPX_FILE.name} (bleibt auf dem PC)")
-    else:
-        out("\n== 6. Keine Punkte – keine GPS-Spur geschrieben.")
+    # --- 6. GPX je Ordner schreiben
+    GPX_DIR.mkdir(parents=True, exist_ok=True)
+    for old in GPX_DIR.glob("*.gpx"):                 # nur eigene, alte Dateien dieses Unterordners
+        old.unlink()
+    if GPX_FILE.exists():                             # alte Gesamt-Datei (bis 0.7.24)
+        GPX_FILE.unlink()
+    ptimes = [p[0] for p in points]
+    files, used = {}, set()
+    for folder in sorted(pick):
+        sel = []
+        for a, b in windows_merge(folder_times[folder], FILE_CONTEXT):
+            sel += points[bisect_left(ptimes, a):bisect_right(ptimes, b)]
+        if not sel:
+            continue
+        label = folder.replace("/", "\\").split("\\")[-1]
+        fname = safe_name(label)
+        n = 2
+        while fname.lower() in used:
+            fname = f"{safe_name(label)} ({n})"
+            n += 1
+        used.add(fname.lower())
+        write_gpx(GPX_DIR / f"{fname}.gpx", sel, label)
+        files[folder] = f"{fname}.gpx"
+    out(f"\n== 6. GPS-Spuren: {len(files)} Dateien, je Ordner eine → _sync\\gpx\\nachtragen\\ (bleiben auf dem PC)")
 
-    chunks = [pick[k:k + PICK_CHUNK] for k in range(0, len(pick), PICK_CHUNK)]
-    out("\n== So geht's in Lightroom")
-    out("   Wichtig: NICHT alle Fotos ohne GPS markieren – Lightroom zieht über jede Lücke eine gerade Linie.")
-    out("   Markiert werden nur die Fotos mit gutem oder ungefährem Ort, über die Liste unten.")
-    out("   1. Library › Catalog › All Photographs › Photo › Stacking › Expand All Stacks")
-    out("   2. Library Filter (Taste \\) › Text › Filename › Contains › Zeile „Auswahl 1“ unten kopieren und einfügen")
-    out("      → unten im Filmstreifen sollte etwa die genannte Anzahl stehen (mehr = Dateiname kommt doppelt vor, meist harmlos)")
-    out("   3. Map-Modul › Map › Tracklog › Load Tracklog… › _sync\\gpx\\ohne_gps.gpx · im Track-Menü unten „All Tracks“")
-    out("   4. Strg+A › Map › Tracklog › Auto-Tag Photos – auf der Karte prüfen (sonst Strg+Z)")
-    out("   5. Gibt es mehrere Auswahl-Zeilen: Schritt 2 und 4 mit der nächsten Zeile wiederholen")
-    out("   6. gps_nachtragen.bat noch einmal: zeigt, was noch offen ist. Danach Publish und sync.bat.")
+    out("\n== So geht's in Lightroom – je Ordner")
+    out("   Wichtig: nur die Fotos markieren, die unten genannt sind. Lightroom zieht sonst über jede Lücke eine")
+    out("   gerade Linie und rät den Ort.")
+    out("   1. Library › Folders › den Ordner anklicken")
+    out("   2. Fotos markieren:")
+    out("      „alle ohne GPS“ → Library Filter (Taste \\) › Metadata › GPS Data › No Coordinates › Strg+A")
+    out("      sonst          → Library Filter › Text › Filename › Contains › die Zeile mit den Namen einfügen › Strg+A")
+    out("                       (unten im Filmstreifen sollte etwa die genannte Anzahl stehen)")
+    out("   3. Map-Modul › Map › Tracklog › Load Tracklog… › die Datei des Ordners (Spur heißt wie der Ordner)")
+    out("   4. Map › Tracklog › Auto-Tag Photos – auf der Karte prüfen (sonst Strg+Z)")
+    out("   Zum Schluss gps_nachtragen.bat noch einmal (zeigt, was offen ist), dann Publish und sync.bat.")
     out("   Offene Fotos: in Lightroom auf die Karte ziehen oder Stichwort ort-egal.")
-    for n, chunk in enumerate(chunks, 1):
-        out(f"\n   Auswahl {n} von {len(chunks)} ({len(chunk)} Fotos):")
-        out("   " + " ".join(chunk))
+    for folder in sorted(files):
+        c_ = by_folder[folder]
+        good = sum(c_[x] for x in SOURCE_ORDER)
+        approx = c_["ungefähr"] + c_["überbrückt"]
+        out(f"\n   ▸ {folder}  ({good} gut, {approx} ungefähr, {c_['offen']} offen)")
+        out(f"     Spur: _sync\\gpx\\nachtragen\\{files[folder]}")
+        names = pick[folder]
+        if not c_["offen"]:
+            out(f"     Markieren: alle ohne GPS ({len(names)} Fotos)")
+        else:
+            chunks = [names[k:k + PICK_CHUNK] for k in range(0, len(names), PICK_CHUNK)]
+            for n, chunk in enumerate(chunks, 1):
+                part = f" – Teil {n} von {len(chunks)}" if len(chunks) > 1 else ""
+                out(f"     Markieren ({len(chunk)} Fotos{part}), Filename › Contains:")
+                out("     " + " ".join(chunk))
 
     if open_list:
         out(f"\n== Offen ({result['offen']}) – Dateien je Ordner")
