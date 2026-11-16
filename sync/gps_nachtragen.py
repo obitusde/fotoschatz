@@ -10,8 +10,11 @@ Liegt vor und nach einer Luecke (bis 3 h) derselbe Ort (<= 1 km), wird sie aufge
 Ergebnis: gpx\\ohne_gps.gpx (bleibt auf dem PC) und gps_nachtragen.txt (Anzahlen, Ordner, Dateinamen - keine
 Koordinaten). Schreibt nie in Fotos, Katalog oder Originale.
 Scans (Aufnahme vor 2000, meist Ersatzdatum) kommen nicht in die Spur - nur in die Liste zum Selbst-Zuordnen.
+Lightroom zieht bei Auto-Tag ueber JEDE Luecke eine gerade Linie (am PC gesehen 16.11.2026) - deshalb: Luecken mit
+Ort davor und danach <= 5 km (bis 24 h) werden ueberbrueckt (ungefaehr), alle anderen Fotos bleiben offen, und die
+Auswahl in Lightroom geht ueber eine Liste der Dateinamen (nur gute und ungefaehre Fotos).
 """
-__version__ = "0.7.23"
+__version__ = "0.7.24"
 
 import json
 import struct
@@ -34,7 +37,7 @@ OUT_FILE = SCRIPT_DIR / "gps_nachtragen.txt"
 DEFAULTS = {"catalog": katalog.DEFAULT_CATALOG, "originals_dir": r"D:\Bilder - Raw"}
 
 NEAR = timedelta(hours=1)            # Garmin-Aktivitaet hoechstens so weit vor/nach einem Foto -> laden
-CONTEXT = timedelta(hours=3)         # Handyfotos/Zeitachse so weit um die Fotos herum in die Spur nehmen
+CONTEXT = timedelta(hours=24)        # Handyfotos/Zeitachse so weit um die Fotos herum (fuer Luecken: Punkt davor/danach)
 SEGMENT_GAP = timedelta(hours=1)     # laengere Luecke (nicht aufgefuellt) = Spur unterbrochen -> Foto bleibt offen
 GARMIN_STEP = 10                     # Garmin-Punkte hoechstens alle 10 s (Datei bleibt klein, genau genug)
 GOOD = timedelta(minutes=15)         # Punkt so nah am Foto -> Ort gut
@@ -42,6 +45,9 @@ MAX_OPEN_LIST = 300                  # so viele offene Fotos werden mit Dateinam
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
 SCAN_BEFORE = datetime(2000, 1, 1)    # aelter = Scan (Aufnahmezeit meist Ersatzdatum) -> nicht ueber die Spur
 SOURCE_ORDER = ["Garmin", "Handyfoto", "Zeitachse", "Lücke aufgefüllt"]
+BRIDGE_TIME = timedelta(hours=24)    # Luecke so lang und ...
+BRIDGE_DIST = 5000                   # ... Ort davor und danach hoechstens so weit auseinander -> ueberbruecken (ungefaehr)
+PICK_CHUNK = 40                      # so viele Dateinamen je Zeile fuer den Lightroom-Filter
 
 lines = []
 
@@ -218,21 +224,20 @@ def write_gpx(path, points):
     Aufnahmezeit - am PC bestaetigt 01.10.2026 mit gps_test). Neuer Abschnitt nach Luecken > SEGMENT_GAP."""
     path.parent.mkdir(exist_ok=True)
     w = ['<?xml version="1.0" encoding="UTF-8"?>',
-         '<gpx version="1.1" creator="Fotoschatz gps_nachtragen" xmlns="http://www.topografix.com/GPX/1/1">',
-         "<trk><name>Fotoschatz ohne GPS</name>"]
+         '<gpx version="1.1" creator="Fotoschatz gps_nachtragen" xmlns="http://www.topografix.com/GPX/1/1">']
     last, nseg = None, 0
     for local, lat, lng, _src in points:
-        if last is None or local - last > SEGMENT_GAP:
+        if last is None or local - last > SEGMENT_GAP:          # jeder Abschnitt eine eigene Spur
             if last is not None:
-                w.append("</trkseg>")
-            w.append("<trkseg>")
+                w.append("</trkseg></trk>")
             nseg += 1
+            w.append(f"<trk><name>Fotoschatz {nseg}</name><trkseg>")
         utc = local - pc_offset(local)                  # naive = PC-Zeitzone
         w.append(f'<trkpt lat="{lat:.6f}" lon="{lng:.6f}"><time>{utc:%Y-%m-%dT%H:%M:%SZ}</time></trkpt>')
         last = local
     if last is not None:
-        w.append("</trkseg>")
-    w.append("</trk></gpx>")
+        w.append("</trkseg></trk>")
+    w.append("</gpx>")
     path.write_text("\n".join(w), encoding="utf-8")
     return nseg
 
@@ -378,7 +383,7 @@ def main():
         return k >= 0 and t <= garmin_spans[k][1]
 
     refs = [(t, lat, lng, "Handyfoto") for t, lat, lng, _f in phone if inside(ctx_win, t) and not in_garmin(t)]
-    out(f"   Fotos mit GPS im Umfeld (±3 h): {len(refs)}")
+    out(f"   Fotos mit GPS im Umfeld (±24 h): {len(refs)}")
     files = sorted(GOOGLE_DIR.glob("*.json")) if GOOGLE_DIR.is_dir() else []
     tl_count = 0
     if not files:
@@ -409,6 +414,9 @@ def main():
     result = Counter()
     by_folder = defaultdict(Counter)
     open_list = defaultdict(list)
+    gap_rows = defaultdict(list)          # Ordner -> (Foto, Luecke, km, Art) fuer Fotos zwischen zwei Abschnitten
+    bridges = set()
+    pick = []                             # Dateinamen (ohne Endung) fuer die Auswahl in Lightroom
     for i in sorted(targets, key=lambda x: x["time"]):
         t = i["time"]
         j = nearest(times, t)
@@ -419,17 +427,45 @@ def main():
         elif gap is not None and covered(t):
             kind = "ungefähr"
         else:
-            kind = "offen"
+            # zwischen zwei Abschnitten: Lightroom wuerde eine gerade Linie ziehen - taugt das?
+            k = bisect_right(times, t)
+            if 0 < k < len(points):
+                a, b = points[k - 1], points[k]
+                span = b[0] - a[0]
+                dist = gps_test.distance_m(a[1], a[2], b[1], b[2])
+                kind = "überbrückt" if span <= BRIDGE_TIME and dist <= BRIDGE_DIST else "offen"
+                if kind == "überbrückt":
+                    bridges.add((k - 1, k))
+                gap_rows[folder].append((i, span, dist, kind))
+            else:
+                kind = "offen"
+                gap_rows[folder].append((i, None, None, kind))
+        if kind == "offen":
             open_list[folder].append(i)
+        else:
+            pick.append(Path(i["file"]).stem)
         result[kind] += 1
         by_folder[folder][kind] += 1
+
+    # ueberbrueckte Luecken als Punkte in die Spur (alle 10 min, gerade Linie wie Lightroom)
+    extra = []
+    for k0, k1 in sorted(bridges):
+        a, b = points[k0], points[k1]
+        span, n = b[0] - a[0], 1
+        while a[0] + gps_test.STAY_STEP * n < b[0]:
+            f = (gps_test.STAY_STEP * n) / span
+            extra.append((a[0] + gps_test.STAY_STEP * n, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f,
+                          "Lücke überbrückt"))
+            n += 1
+    points = sorted(points + extra)
 
     ok = sum(result[s] for s in SOURCE_ORDER)
     out(f"\n== 4. Ergebnis für {len(targets)} Fotos ohne GPS")
     out(f"   Ort gut (Punkt ≤ 15 min daneben): {ok}"
         + (" – " + ", ".join(f"{s} {result[s]}" for s in SOURCE_ORDER if result[s]) if ok else ""))
-    out(f"   ungefähr (zwischen zwei Punkten bis 1 h, Lightroom rechnet dazwischen – auf der Karte prüfen): {result['ungefähr']}")
-    out(f"   offen (keine Spur in der Nähe): {result['offen']}")
+    out(f"   ungefähr: {result['ungefähr'] + result['überbrückt']} – zwischen zwei Punkten bis 1 h: {result['ungefähr']}, "
+        f"Lücke überbrückt (Ort davor und danach ≤ 5 km, bis 24 h): {result['überbrückt']}")
+    out(f"   offen (keine Spur in der Nähe oder Ort davor/danach weit auseinander): {result['offen']}")
     if gaps:
         out(f"   Lücken aufgefüllt: {gaps} (Ort davor und danach ≤ 1 km, Lücke ≤ 3 h)")
 
@@ -437,7 +473,30 @@ def main():
     for folder, c_ in sorted(by_folder.items(), key=lambda x: (-sum(x[1][s] for s in SOURCE_ORDER), x[0])):
         good = sum(c_[s] for s in SOURCE_ORDER)
         src = ", ".join(f"{s} {c_[s]}" for s in SOURCE_ORDER if c_[s])
-        out(f"     {folder}: {good} · {c_['ungefähr']} · {c_['offen']} · von {sum(c_.values())}" + (f"  ({src})" if src else ""))
+        out(f"     {folder}: {good} · {c_['ungefähr'] + c_['überbrückt']} · {c_['offen']} · von {sum(c_.values())}"
+            + (f"  ({src})" if src else ""))
+
+    if gap_rows:
+        out("\n   Fotos zwischen zwei Abschnitten der Spur – Lightroom würde hier eine gerade Linie ziehen:")
+        out("   (Lücke = Zeit zwischen dem Punkt davor und danach · Abstand = wie weit diese beiden Punkte auseinanderliegen)")
+        shown = 0
+        for folder in sorted(gap_rows):
+            out(f"   {folder}")
+            for i, span, dist, kind in gap_rows[folder]:
+                if shown >= MAX_OPEN_LIST:
+                    break
+                shown += 1
+                if span is None:
+                    why = "vor dem ersten bzw. nach dem letzten Punkt der Spur → offen"
+                else:
+                    h = span.total_seconds() / 3600
+                    lucke = f"{h:.1f} h".replace(".", ",") if h < 48 else f"{h / 24:.0f} Tage"
+                    km = f"{dist / 1000:.1f} km".replace(".", ",")
+                    why = f"Lücke {lucke}, Abstand {km} → " + (
+                        "überbrückt (ungefähr richtig)" if kind == "überbrückt" else
+                        "offen (zu weit auseinander – Lightroom würde raten)" if span <= BRIDGE_TIME else
+                        "offen (Lücke zu lang)")
+                out(f"     {i['file']}  ({i['time']:%d.%m.%Y %H:%M}): {why}")
 
     # --- 5. Kamera-Uhr (wie gps_test): falsche Uhr -> Spur passt nicht
     out("\n== 5. Kamera-Uhr")
@@ -472,14 +531,21 @@ def main():
     else:
         out("\n== 6. Keine Punkte – keine GPS-Spur geschrieben.")
 
+    chunks = [pick[k:k + PICK_CHUNK] for k in range(0, len(pick), PICK_CHUNK)]
     out("\n== So geht's in Lightroom")
+    out("   Wichtig: NICHT alle Fotos ohne GPS markieren – Lightroom zieht über jede Lücke eine gerade Linie.")
+    out("   Markiert werden nur die Fotos mit gutem oder ungefährem Ort, über die Liste unten.")
     out("   1. Library › Catalog › All Photographs › Photo › Stacking › Expand All Stacks")
-    out("   2. Library Filter (Taste \\) › Metadata › eine Spalte auf „GPS Data“ stellen › „No Coordinates“")
+    out("   2. Library Filter (Taste \\) › Text › Filename › Contains › Zeile „Auswahl 1“ unten kopieren und einfügen")
+    out("      → unten im Filmstreifen sollte etwa die genannte Anzahl stehen (mehr = Dateiname kommt doppelt vor, meist harmlos)")
     out("   3. Map-Modul › Map › Tracklog › Load Tracklog… › _sync\\gpx\\ohne_gps.gpx · im Track-Menü unten „All Tracks“")
-    out("   4. Erst 5–10 Fotos markieren › Map › Tracklog › Auto-Tag Selected Photos › auf der Karte prüfen (sonst Strg+Z)")
-    out("   5. Dann Strg+A › Auto-Tag Selected Photos")
+    out("   4. Strg+A › Map › Tracklog › Auto-Tag Photos – auf der Karte prüfen (sonst Strg+Z)")
+    out("   5. Gibt es mehrere Auswahl-Zeilen: Schritt 2 und 4 mit der nächsten Zeile wiederholen")
     out("   6. gps_nachtragen.bat noch einmal: zeigt, was noch offen ist. Danach Publish und sync.bat.")
     out("   Offene Fotos: in Lightroom auf die Karte ziehen oder Stichwort ort-egal.")
+    for n, chunk in enumerate(chunks, 1):
+        out(f"\n   Auswahl {n} von {len(chunks)} ({len(chunk)} Fotos):")
+        out("   " + " ".join(chunk))
 
     if open_list:
         out(f"\n== Offen ({result['offen']}) – Dateien je Ordner")
