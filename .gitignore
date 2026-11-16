@@ -44,4 +44,5 @@ sync/freigaben.txt
 # Garmin (v0.7.21): API-Schluessel und Garmin-Daten bleiben auf dem PC
 sync/garmin_api_key.txt
 sync/garmin_test.txt
+sync/gps_nachtragen.txt
 sync/garmin/

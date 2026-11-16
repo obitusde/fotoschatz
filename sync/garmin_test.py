@@ -8,7 +8,7 @@ Prueft, ob Garmin-Aktivitaeten (GPS-Uhr) Fotos ohne GPS einen Ort geben koennen:
 Ergebnis: garmin_test.txt (nur Anzahlen, Jahre, Ordnernamen - keine Koordinaten, kein Schluessel).
 Schreibt nie in Fotos, Katalog oder Originale.
 """
-__version__ = "0.7.21"
+__version__ = "0.7.22"
 
 import io
 import json
@@ -117,6 +117,55 @@ def request(method, path, headers, params=None, accept="application/json"):
         raise GarminError(f"Keine Verbindung zu Garmin ({err.reason})")
 
 
+def login(key):
+    """API-Schluessel -> Kopfzeile mit Zugangsschein (JWT, ca. 24 h gueltig, wird nicht gespeichert)."""
+    token = request("POST", TOKEN_PATH, {"Authorization": f"ApiKey {key}"}, accept="*/*").decode("ascii", "replace").strip()
+    if token.count(".") != 2:
+        raise GarminError(f"Garmin hat keinen gültigen Zugangsschein geschickt (Antwort {len(token)} Zeichen)")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def list_activities(auth, progress=True):
+    """Alle Aktivitaeten (Zusammenfassungen), seitenweise bis keine mehr kommen. -> (Liste, Anzahl Abfragen)"""
+    acts, seen, start, pages = [], set(), 0, 0
+    try:
+        while pages < MAX_PAGES:
+            data = json.loads(request("GET", LIST_PATH, auth, {"start": start, "limit": PAGE}) or b"[]")
+            pages += 1
+            if isinstance(data, dict):                    # falls in einer Huelle geliefert
+                data = data.get("activities") or data.get("activityList") or []
+            if not data:
+                break
+            new = [a for a in data if isinstance(a, dict) and a.get("activityId") not in seen]
+            if not new:
+                break
+            for a in new:
+                seen.add(a.get("activityId"))
+            acts.extend(new)
+            start += len(data)
+            if progress:
+                print(f"\r  Aktivitäten geholt: {len(acts)} …", end="", flush=True)
+    except json.JSONDecodeError as err:
+        raise GarminError(f"unlesbare Antwort nach {len(acts)} Aktivitäten ({err})")
+    finally:
+        if progress:
+            print()
+    return acts, pages
+
+
+def download_fit(auth, activity_id):
+    """Original-Datei einer Aktivitaet -> Inhalt der FIT-Datei (aus dem ZIP) oder None."""
+    blob = request("GET", DOWNLOAD_PATH.format(int(activity_id)), auth,
+                   accept="application/zip, application/x-zip-compressed, application/octet-stream")
+    if blob[:2] == b"PK":
+        with zipfile.ZipFile(io.BytesIO(blob)) as z:
+            for info in z.infolist():
+                if info.filename.lower().endswith(".fit"):
+                    return z.read(info.filename)
+        return None
+    return blob if blob[8:12] == b".FIT" else None
+
+
 def parse_local(value):
     """'2023-05-08 07:43:01' oder '2023-05-08T07:43:01.0' -> datetime"""
     try:
@@ -151,42 +200,19 @@ def main():
 
     # --- 2. Anmelden + Aktivitaeten
     try:
-        token = request("POST", TOKEN_PATH, {"Authorization": f"ApiKey {key}"}, accept="*/*").decode("ascii", "replace").strip()
+        auth = login(key)
     except GarminError as err:
         out(f"\nFEHLER bei der Anmeldung: {err}")
         out("Schlüssel abgelaufen, gelöscht oder falsch kopiert? In Garmin Connect prüfen.")
         save_and_exit(1)
-    if token.count(".") != 2:
-        out(f"\nFEHLER: Garmin hat keinen gültigen Zugangsschein geschickt (Antwort {len(token)} Zeichen).")
-        save_and_exit(1)
     out("== 2. Anmeldung bei Garmin: ok")
-    auth = {"Authorization": f"Bearer {token}"}
 
-    acts, seen, start, pages = [], set(), 0, 0
-    first_keys = []
     try:
-        while pages < MAX_PAGES:
-            data = json.loads(request("GET", LIST_PATH, auth, {"start": start, "limit": PAGE}) or b"[]")
-            pages += 1
-            if isinstance(data, dict):                    # falls in einer Huelle geliefert
-                data = data.get("activities") or data.get("activityList") or []
-            if not data:
-                break
-            new = [a for a in data if isinstance(a, dict) and a.get("activityId") not in seen]
-            if not new:
-                break
-            if not first_keys:
-                first_keys = sorted(new[0].keys())
-            for a in new:
-                seen.add(a.get("activityId"))
-            acts.extend(new)
-            start += len(data)
-            print(f"\r  Aktivitäten geholt: {len(acts)} …", end="", flush=True)
-    except (GarminError, json.JSONDecodeError) as err:
-        print()
-        out(f"\nFEHLER beim Holen der Aktivitäten (nach {len(acts)}): {err}")
+        acts, pages = list_activities(auth)
+    except GarminError as err:
+        out(f"\nFEHLER beim Holen der Aktivitäten: {err}")
         save_and_exit(1)
-    print()
+    first_keys = sorted(acts[0].keys()) if acts else []
     out(f"   Aktivitäten gesamt: {len(acts)} ({pages} Abfragen)")
     if not acts:
         out("   Garmin liefert keine Aktivitäten – nichts zu tun.")
