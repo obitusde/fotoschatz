@@ -9,8 +9,9 @@ in Lightroom (Map > Tracklog > Auto-Tag). Quellen, beste zuerst:
 Liegt vor und nach einer Luecke (bis 3 h) derselbe Ort (<= 1 km), wird sie aufgefuellt (z. B. Kaffee nach der Tour).
 Ergebnis: gpx\\ohne_gps.gpx (bleibt auf dem PC) und gps_nachtragen.txt (Anzahlen, Ordner, Dateinamen - keine
 Koordinaten). Schreibt nie in Fotos, Katalog oder Originale.
+Scans (Aufnahme vor 2000, meist Ersatzdatum) kommen nicht in die Spur - nur in die Liste zum Selbst-Zuordnen.
 """
-__version__ = "0.7.22"
+__version__ = "0.7.23"
 
 import json
 import struct
@@ -39,6 +40,7 @@ GARMIN_STEP = 10                     # Garmin-Punkte hoechstens alle 10 s (Datei
 GOOD = timedelta(minutes=15)         # Punkt so nah am Foto -> Ort gut
 MAX_OPEN_LIST = 300                  # so viele offene Fotos werden mit Dateinamen aufgezaehlt
 FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
+SCAN_BEFORE = datetime(2000, 1, 1)    # aelter = Scan (Aufnahmezeit meist Ersatzdatum) -> nicht ueber die Spur
 SOURCE_ORDER = ["Garmin", "Handyfoto", "Zeitachse", "Lücke aufgefüllt"]
 
 lines = []
@@ -202,6 +204,15 @@ def segments(points):
     return segs
 
 
+def pc_offset(local):
+    """UTC-Abstand der PC-Zeitzone fuer eine Ortszeit ohne Zeitzone (so liest Lightroom die Aufnahmezeit).
+    Windows kann das vor 1970 nicht (OSError 22) -> dann derselbe Kalendertag im Jahr 2000."""
+    try:
+        return local.astimezone().utcoffset()
+    except (OSError, OverflowError, ValueError):
+        return local.replace(year=2000).astimezone().utcoffset()
+
+
 def write_gpx(path, points):
     """GPS-Spur; Zeiten = Ortszeit der Fotos, umgerechnet ueber die PC-Zeitzone (so liest Lightroom die
     Aufnahmezeit - am PC bestaetigt 01.10.2026 mit gps_test). Neuer Abschnitt nach Luecken > SEGMENT_GAP."""
@@ -216,7 +227,7 @@ def write_gpx(path, points):
                 w.append("</trkseg>")
             w.append("<trkseg>")
             nseg += 1
-        utc = local.astimezone(timezone.utc)            # naive = PC-Zeitzone
+        utc = local - pc_offset(local)                  # naive = PC-Zeitzone
         w.append(f'<trkpt lat="{lat:.6f}" lon="{lng:.6f}"><time>{utc:%Y-%m-%dT%H:%M:%SZ}</time></trkpt>')
         last = local
     if last is not None:
@@ -230,6 +241,20 @@ def nearest(times, t):
     i = bisect_left(times, t)
     cands = [j for j in (i - 1, i) if 0 <= j < len(times)]
     return min(cands, key=lambda j: abs(times[j] - t)) if cands else None
+
+
+def list_scans(scans):
+    if not scans:
+        return
+    import lightroom_pruefen
+    out(f"\n== Scans vor 2000 ({len(scans)}) – von Hand auf die Karte ziehen oder Stichwort ort-egal")
+    by = defaultdict(list)
+    for i in scans:
+        by[lightroom_pruefen.show(i["folder"])].append(i)
+    for folder in sorted(by):
+        out(f"   {folder}")
+        for i in sorted(by[folder], key=lambda x: x["time"]):
+            out(f"     {i['file']}  ({i['time']:%d.%m.%Y %H:%M}, {i['model']})")
 
 
 # ---------------------------------------------------------------- Ablauf
@@ -253,14 +278,20 @@ def main():
     imgs = [i for i in c["images"] if i["time"]]
     targets = [i for i in imgs if i["gallery"] and i["pick"] != -1 and not i["gps"] and not i["ok"]]
     out(f"   Fotos ohne GPS (Galerie, ohne ort-egal): {len(targets)}")
+    scans = [i for i in targets if i["time"] < SCAN_BEFORE]
+    targets = [i for i in targets if i["time"] >= SCAN_BEFORE]
+    if scans:
+        out(f"   davon Scans (Aufnahme vor 2000): {len(scans)} – nicht über die Spur (Datum meist geschätzt), "
+            "Liste unten")
     if not targets:
         out("   Nichts zu tun.")
+        list_scans(scans)
         save_and_exit(0)
     first_t, last_t = min(i["time"] for i in targets), max(i["time"] for i in targets)
     near_win = windows_merge([i["time"] for i in targets], NEAR)
     ctx_win = windows_merge([i["time"] for i in targets], CONTEXT)
     phone = sorted((i["time"], float(i["lat"]), float(i["lng"]), i["file"]) for i in imgs
-                   if i["gps"] and i["lat"] is not None and i["lng"] is not None)
+                   if i["gps"] and i["lat"] is not None and i["lng"] is not None and i["time"] >= SCAN_BEFORE)
 
     # --- 2. Garmin
     out("\n== 2. Garmin (GPS-Uhr)")
@@ -420,7 +451,7 @@ def main():
         delta = None
         near = [o for t0, o in garmin_offsets if abs(t0 - mid) <= timedelta(days=1)]
         if near:
-            home = mid.astimezone().utcoffset()
+            home = pc_offset(mid)
             delta = round((near[0] - home).total_seconds() / 3600)
         res = gps_test.clock_check(group, phone_files, delta)
         if res["kind"] in ("shift", "odd", "weak"):
@@ -462,6 +493,8 @@ def main():
                 shown += 1
         if result["offen"] > shown:
             out(f"   … und {result['offen'] - shown} weitere")
+
+    list_scans(scans)
 
     out(f"\nFertig in {time.time() - started:.0f} s. Diese Datei (gps_nachtragen.txt) kann an Claude – keine Koordinaten.")
     save_and_exit(0)
