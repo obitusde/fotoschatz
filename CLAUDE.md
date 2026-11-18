@@ -1,6 +1,6 @@
 # Fotoschatz – Projektgrundlage für Claude Code
 
-**Dokumentversion:** v3.49 · 16.11.2026 (0.7.25: `gps_nachtragen` – eine GPX-Datei je Ordner; 0.7.24: `gps_nachtragen` – Lücken überbrücken ≤ 5 km, Auswahl-Liste für Lightroom; 0.7.23: `gps_nachtragen` – Absturz unter Windows bei Scans vor 1970 behoben, Scans vor 2000 nicht mehr über die Spur; 0.7.22: eine GPS-Spur für alle Fotos ohne GPS, mit Garmin; 0.7.21: Garmin-Test)
+**Dokumentversion:** v3.50 · 18.11.2026 (0.7.26: Deep-Link `?f=<Ordner>&b=<Bild-id>` für die Sport-App; 0.7.25: `gps_nachtragen` – eine GPX-Datei je Ordner; 0.7.24: `gps_nachtragen` – Lücken überbrücken ≤ 5 km, Auswahl-Liste für Lightroom; 0.7.23: `gps_nachtragen` – Absturz unter Windows bei Scans vor 1970 behoben, Scans vor 2000 nicht mehr über die Spur; 0.7.22: eine GPS-Spur für alle Fotos ohne GPS, mit Garmin; 0.7.21: Garmin-Test)
 **Repo:** `obitusde/fotoschatz` · **Pages:** `https://obitusde.github.io/fotoschatz/`
 **Projekt:** Fotoschatz – private Online-Fotogalerie für ca. 23.000 Lightroom-Bilder – Eigenbau mit Cloudflare R2 + installierbarer PWA (GitHub Pages)
 
@@ -519,7 +519,7 @@ Ohne Datei gelten diese Standardwerte:
 - Beim späteren Start (z. B. über das installierte App-Symbol): Geheimnis aus `localStorage` lesen.
 - Kein Geheimnis vorhanden → neutrale Seite „Bitte den Link verwenden, den du bekommen hast". Keine Hinweise auf den Bucket.
 - ⚠ Verifizieren: Die installierte PWA (Chrome Android) teilt `localStorage` mit dem Browser-Tab, in dem der Link geöffnet wurde.
-- Deep-Links (Phase 3): `#<SECRET>/f/<ordner>` öffnet direkt einen Ordner.
+- **Deep-Links (v0.7.26):** Format `https://obitusde.github.io/fotoschatz/?f=<Ordnername>&b=<Bild-id>#<Präfix>-<Schlüssel>` (siehe Phase 4, Punkt 9). Der frühere Plan `#<SECRET>/f/<ordner>` gilt nicht.
 
 ### Installierbarkeit (Android/Chrome) – v0.6.0
 - `manifest.webmanifest`: `name`/`short_name` „Fotoschatz“, `id`/`start_url`/`scope` `./`, **`display: "fullscreen"`** (seit v0.6.2, siehe unten), Icons 192 und 512 (+ maskable), Symbol: weißer Bilderrahmen mit Berg und Sonne auf Blau (`docs/icons/`).
@@ -671,7 +671,7 @@ Ohne Datei gelten diese Standardwerte:
 7. **Diashow:** Vollbild mit automatischem Weiterblättern, einstellbares Intervall, optional zufällig.
 8. ✅ **Teilen:** Einzelbild über das Android-Teilen-Menü (Web Share API mit Datei), z. B. an WhatsApp (v0.7.16, ohne GPS/Namen).
 11. **Zugriffs-Statistik** („welche Bilder wie oft angesehen“, besprochen 15.11.2026: bräuchte einen Cloudflare Worker + D1; gezählt ab 1 s im Betrachter, eigene Ansichten zählen mit, kein ♥) – **erstmal nicht**. Benachrichtigungen: **keine** (Vorschläge nur in der App).
-9. **Deep-Links** auf Ordner (und ggf. einzelne Bilder).
+9. ✅ **Deep-Links** auf Ordner und Bild (v0.7.26, Wunsch 18.11.2026): **Format `?f=<Ordnername>&b=<Bild-id>#<Präfix>-<Schlüssel>`** – `f` = Ordnername genau wie in `index.json` (`folders[].n` bzw. `photos[].f`), URL-kodiert; `b` = Bild-id (`photos[].id`), optional; der Hash ist wie bisher der Link (ohne Hash gilt der gespeicherte Link). **Die Sport-App (Repo `obitusde/sport`, `docs/fotos.js`) nutzt dieses Format** auf Tour- und Aktivitätsseiten. App: `takeDeepLink()` liest `f`/`b` **vor** `takeLinks()` und entfernt sie per `history.replaceState` aus der Adresse (Neuladen springt nicht wieder); nach dem Laden öffnet `openDeepLink()` wie von Hand Ordnerliste → Ordner → Bild (Zurück: Bild → Ordner → Ordnerliste). Nur `b` → Bild in seinem Ordner. Unbekannter/für den Link ausgeblendeter Ordner → Ordnerliste + Meldung „Ordner nicht gefunden“; unbekanntes Bild → „Bild nicht gefunden“ (bei bekanntem Ordner bleibt der Ordner offen, auch wenn `b` in einem anderen Ordner liegt). Versteckt der Sternefilter das Bild, wird er auf „alle“ gestellt. Service Worker unverändert: Seitenaufrufe auf `./` bzw. `index.html` bekommen die gespeicherte Startseite unabhängig von `?…` – offline geprüft. In der Cloud im Browser getestet (eigener Link mit Ordner+Bild, Zurück 2×, Neuladen; gespeicherter Link nur Ordner; nur `b`; Bild aus anderem Ordner; unbekannter Ordner/Bild; Sternefilter ★★; Gäste-Link: ganz ausgeblendeter Ordner und ausgeblendetes Bild → Meldung, sichtbarer Ordner+Bild ok; offline mit `?f=&b=` und `index.html?f=`; keine Fehler).
 10. **Statistik:** Bilder pro Jahr, häufigste Orte/Personen.
 
 ---
