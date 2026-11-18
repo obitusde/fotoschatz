@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.25";
+const APP_VERSION = "0.7.26";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -64,6 +64,47 @@ function takeLinks() {
   }
   saveLinks(list);
   return list;
+}
+
+/* Deep-Link (v0.7.26): ?f=<Ordnername>&b=<Bild-id>#<Link>, z. B. aus der Sport-App (obitusde/sport).
+   Wird vor takeLinks() gelesen und aus der Adresse entfernt, damit Neuladen nicht wieder springt. */
+function takeDeepLink() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("f") && !q.has("b")) return null;
+  const f = (q.get("f") || "").trim();
+  const b = (q.get("b") || "").trim();
+  q.delete("f");
+  q.delete("b");
+  const rest = q.toString();
+  history.replaceState(history.state, "", location.pathname + (rest ? `?${rest}` : "") + location.hash);
+  return f || b ? { f, b } : null;
+}
+
+// Nach dem Laden: Ordner (und Bild) oeffnen wie von Hand - Zurueck fuehrt zum Ordner, dann zur Ordnerliste
+function openDeepLink({ f, b }) {
+  let folder = f ? DATA.folderByName.get(f) : null;
+  let photo = b ? DATA.photos.find((p) => p.id === b) || null : null;
+  if (f && !folder) {
+    toast("Ordner nicht gefunden");
+    return;
+  }
+  if (!folder) {
+    folder = photo ? DATA.folderByName.get(photo.f) : null;
+    if (!folder) {
+      toast("Bild nicht gefunden");
+      return;
+    }
+  }
+  if (photo && photo.f !== folder.n) photo = null;
+  if (photo && !passStars(photo)) writePref(STARS_KEY, "0");   // Sternefilter wuerde das Bild verstecken
+  navigate({ v: "folder", f: folder.n });
+  if (!b) return;
+  const i = photo && mounted && mounted.list ? mounted.list.indexOf(photo) : -1;
+  if (i < 0) {
+    toast("Bild nicht gefunden");
+    return;
+  }
+  openViewer(i);
 }
 
 function dropLink(link) {
@@ -3031,6 +3072,7 @@ async function start() {
     btn.addEventListener("click", () => switchTab(btn.dataset.view));
   }
 
+  const deep = takeDeepLink();
   const links = takeLinks();
   if (!links.length) {
     showNeutral("Bitte den Link verwenden, den du bekommen hast.");
@@ -3074,6 +3116,7 @@ async function start() {
   window.addEventListener("popstate", (e) => render(e.state || { v: "folders" }));
   history.replaceState({ v: "folders" }, "");
   render({ v: "folders" });
+  if (deep) openDeepLink(deep);
 }
 
 start();
