@@ -50,3 +50,5 @@ sync/garmin/
 # Bildbeschreibungen mit Ollama (v0.7.27) - enthalten Namen, bleiben auf dem PC
 sync/beschreibungen/
 sync/beschreiben.txt
+# Modellvergleich (v0.7.29)
+sync/modellvergleich.txt
