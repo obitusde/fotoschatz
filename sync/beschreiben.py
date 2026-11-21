@@ -1,22 +1,25 @@
 """Fotoschatz - Bildbeschreibungen mit einem lokalen KI-Modell (Ollama), Test fuer EINEN Ordner.
 
 Nimmt nur die Lightroom-Exporte (D:\\Fotoschatz, 2048 px - nie die Originale), liest dazu den Kontext aus den
-Exporten selbst (Ordnername, Aufnahmezeit, Personen von links nach rechts, Ort, vorhandene Beschreibung) und laesst
-das Modell je Bild 1-3 Saetze und Suchbegriffe schreiben. Misst, wie lange das dauert, und rechnet hoch.
+Exporten selbst (Ordnername, Aufnahmezeit, Personen von links nach rechts mit Alter, Ort, vorhandene Beschreibung,
+schwarz-weiss ja/nein) und laesst das Modell je Bild 1-3 Saetze und Suchbegriffe schreiben. Misst, wie lange das
+dauert, und rechnet hoch.
 
-Ergebnis (bleibt auf dem PC): beschreibungen\\<Ordner>.html (Uebersicht mit Vorschaubildern) und .json,
+Ergebnis (bleibt auf dem PC): beschreibungen\\<Ordner> (<Modell>).html (Uebersicht mit Vorschaubildern) und .json,
 beschreiben.txt (nur Zeiten und Anzahlen, ohne Namen und Beschreibungen - die kann an Claude).
 Aendert nichts an Fotos, Katalog, Exporten oder online. Lightroom darf dabei offen sein.
 
-Aufruf: python beschreiben.py [Teil des Ordnernamens]   (ohne: sucht selbst einen Ordner mit 30-50 Bildern)
+Aufruf: python beschreiben.py [--modell 9b] [Teil des Ordnernamens]
+        (ohne Ordner: sucht selbst einen Ordner mit 30-50 Bildern; ohne Modell: qwen3.5:4b bzw. config.local.json)
 """
-__version__ = "0.7.27"
+__version__ = "0.7.28"
 
 import base64
 import hashlib
 import html
 import io
 import json
+import re
 import statistics
 import sys
 import time
@@ -32,6 +35,7 @@ import regeln
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUT_DIR = SCRIPT_DIR / "beschreibungen"
 TXT_FILE = SCRIPT_DIR / "beschreiben.txt"
+BIRTHDAY_FILE = SCRIPT_DIR / "geburtstage.txt"      # von sync.py gepflegt, bleibt auf dem PC
 DEFAULTS = {
     "export_dir": str(SCRIPT_DIR.parent),
     "work_dir": str(SCRIPT_DIR / "work"),
@@ -42,6 +46,7 @@ DEFAULTS = {
 MIN_PICK, MAX_PICK, TARGET = 30, 50, 40
 THUMB_PX = 360
 TIMEOUT = 600
+SCAN_BEFORE = 2000           # aelter = meist Scan mit Ersatzdatum: kein Wochentag, keine Uhrzeit, kein Alter
 WEEKDAYS = ["Mo.", "Di.", "Mi.", "Do.", "Fr.", "Sa.", "So."]
 
 SCHEMA = {
@@ -51,6 +56,30 @@ SCHEMA = {
         "stichwoerter": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["beschreibung", "stichwoerter"],
+}
+
+# Lightroom schreibt Orte englisch - fuer das Modell und die Suche auf Deutsch (nur gaengige Namen)
+PLACE_DE = {
+    "Germany": "Deutschland", "Switzerland": "Schweiz", "Austria": "Österreich", "France": "Frankreich",
+    "Italy": "Italien", "Spain": "Spanien", "Netherlands": "Niederlande", "Belgium": "Belgien",
+    "Luxembourg": "Luxemburg", "United Kingdom": "Vereinigtes Königreich", "Scotland": "Schottland",
+    "Ireland": "Irland", "Poland": "Polen", "Czechia": "Tschechien", "Czech Republic": "Tschechien",
+    "Slovakia": "Slowakei", "Hungary": "Ungarn", "Croatia": "Kroatien", "Slovenia": "Slowenien",
+    "Greece": "Griechenland", "Turkey": "Türkei", "Denmark": "Dänemark", "Sweden": "Schweden",
+    "Norway": "Norwegen", "Finland": "Finnland", "Iceland": "Island", "Russia": "Russland",
+    "Lithuania": "Litauen", "Latvia": "Lettland", "Estonia": "Estland", "India": "Indien",
+    "Singapore": "Singapur", "Indonesia": "Indonesien", "Egypt": "Ägypten", "Morocco": "Marokko",
+    "Tunisia": "Tunesien", "Canada": "Kanada", "Mexico": "Mexiko", "Brazil": "Brasilien",
+    "Argentina": "Argentinien", "Australia": "Australien", "New Zealand": "Neuseeland",
+    "South Africa": "Südafrika", "United States": "USA", "United States of America": "USA",
+    "North Rhine-Westphalia": "Nordrhein-Westfalen", "Bavaria": "Bayern", "Lower Saxony": "Niedersachsen",
+    "Saxony": "Sachsen", "Saxony-Anhalt": "Sachsen-Anhalt", "Thuringia": "Thüringen", "Hesse": "Hessen",
+    "Rhineland-Palatinate": "Rheinland-Pfalz", "Mecklenburg-Western Pomerania": "Mecklenburg-Vorpommern",
+    "Baden-Wuerttemberg": "Baden-Württemberg",
+    "Munich": "München", "Cologne": "Köln", "Nuremberg": "Nürnberg", "Vienna": "Wien", "Zurich": "Zürich",
+    "Geneva": "Genf", "Prague": "Prag", "Rome": "Rom", "Venice": "Venedig", "Florence": "Florenz",
+    "Milan": "Mailand", "Lisbon": "Lissabon", "Copenhagen": "Kopenhagen", "Brussels": "Brüssel",
+    "Warsaw": "Warschau", "Moscow": "Moskau", "Athens": "Athen", "Hanover": "Hannover",
 }
 
 lines = []
@@ -112,7 +141,7 @@ def ollama(cfg, path, body=None, timeout=30):
         raise ConnectionError(str(getattr(err, "reason", err))) from None
 
 
-def choose_model(cfg):
+def choose_model(cfg, wanted=""):
     try:
         tags = ollama(cfg, "/api/tags")
     except ConnectionError as err:
@@ -120,18 +149,25 @@ def choose_model(cfg):
              "   Ollama starten (Startmenü › Ollama) und noch einmal versuchen.")
     names = [m.get("name", "") for m in tags.get("models", [])]
     out(f"   installierte Modelle: {', '.join(names) or '(keine)'}")
-    wanted = cfg.get("ollama_model") or ""
+    wanted = (wanted or cfg.get("ollama_model") or "").strip()
     if wanted:
-        if wanted not in names:
-            stop(f"FEHLER: Modell „{wanted}“ (config.local.json › ollama_model) ist nicht installiert.")
-        return wanted
+        if wanted in names:
+            return wanted
+        hits = [n for n in names if wanted.lower() in n.lower()]          # z. B. „9b“ -> qwen3.5:9b
+        if len(hits) > 1:
+            hits = [n for n in hits if "qwen" in n.lower()] or hits
+        if len(hits) == 1:
+            return hits[0]
+        stop(f"FEHLER: Modell „{wanted}“ "
+             + ("passt auf mehrere installierte Modelle – bitte genauer angeben." if hits else "ist nicht installiert."))
     for test in (lambda n: "qwen3.5" in n and "4b" in n, lambda n: "qwen3.5" in n,
                  lambda n: "qwen" in n and "vl" in n):
         hits = [n for n in names if test(n.lower())]
         if hits:
             return hits[0]
     stop("FEHLER: kein passendes Modell gefunden (erwartet z. B. qwen3.5:4b).\n"
-         "   Name in config.local.json eintragen: \"ollama_model\": \"<Name aus der Liste oben>\"")
+         "   Beim Start den Modellnamen eintippen oder in config.local.json eintragen: "
+         "\"ollama_model\": \"<Name aus der Liste oben>\"")
 
 
 def check_vision(cfg, model):
@@ -200,21 +236,86 @@ def pick_folder(folders, search):
     return sorted(cands, key=score)[0]
 
 
-def context_for(entry, meta, taken, folder):
+def read_birthdays():
+    """geburtstage.txt (Name ; TT.MM.JJJJ | JJJJ-MM-TT | JJJJ) -> {name klein: (Jahr, Monat, Tag)}; Monat/Tag None = nur Jahr."""
+    if not BIRTHDAY_FILE.exists():
+        return {}
+    raw = BIRTHDAY_FILE.read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252", errors="replace")
+    result = {}
+    for line in text.splitlines():
+        name, _, date = line.split("#", 1)[0].partition(";")
+        name, date = " ".join(name.split()), date.strip()
+        if not name or not date:
+            continue
+        m = re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", date)
+        parts = (int(m[3]), int(m[2]), int(m[1])) if m else None
+        if not parts:
+            m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", date)
+            parts = (int(m[1]), int(m[2]), int(m[3])) if m else None
+        if not parts and re.fullmatch(r"\d{4}", date):
+            parts = (int(date), None, None)
+        if not parts:
+            continue
+        try:
+            if parts[1]:
+                datetime(*parts)
+        except ValueError:
+            continue
+        result.setdefault(name.casefold(), parts)
+    return result
+
+
+def age_text(birth, taken):
+    """Alter bei der Aufnahme als Text fuer das Modell, sonst None."""
+    year, month, day = birth
+    if month is None:
+        years = taken.year - year
+        return f"ca. {years} Jahre alt" if years >= 2 else None
+    if taken < datetime(year, month, day):
+        return None
+    months = (taken.year - year) * 12 + taken.month - month - (1 if taken.day < day else 0)
+    if months < 1:
+        return "wenige Wochen alt"
+    if months < 24:
+        return f"{months} Monate alt"
+    return f"{months // 12} Jahre alt"
+
+
+def german_place(meta):
+    parts = [meta.get(k) for k in ("sl", "ci", "st", "co")]
+    return ", ".join(PLACE_DE.get(p, p) for p in parts if p)
+
+
+def context_for(entry, meta, taken, folder, birthdays):
     """Kontext-Zeilen fuer das Modell: alles, was Lightroom schon sicher weiss."""
     regions = sorted((r for r in regeln.face_regions(entry) if r["name"]), key=lambda r: r["x"])
     persons = []
     for name in [r["name"] for r in regions] + list(meta.get("p") or []):
         if name and name not in persons:
             persons.append(name)
-    place = ", ".join(x for x in (meta.get("sl"), meta.get("ci"), meta.get("st"), meta.get("co")) if x)
-    info = interpret(folder)
-    ctx = {"ordner": info}
-    if taken:
+    place = german_place(meta)
+    ctx = {"ordner": interpret(folder)}
+    scan = bool(taken) and taken.year < SCAN_BEFORE
+    if scan:
+        ctx["aufnahme"] = "altes Foto (Scan), Datum und Uhrzeit unsicher"
+    elif taken:
         ctx["aufnahme"] = f"{WEEKDAYS[taken.weekday()]} {taken:%d.%m.%Y, %H:%M} Uhr"
     if persons:
         ctx["personen"] = persons
         ctx["personen_reihenfolge"] = bool(regions) and len(regions) == len(persons)
+        if taken and not scan:
+            ages = {}
+            for name in persons:
+                birth = birthdays.get(name.casefold())
+                text = age_text(birth, taken) if birth else None
+                if text:
+                    ages[name] = text
+            if ages:
+                ctx["alter"] = ages
     if place:
         ctx["ort"] = place
     if meta.get("de") and meta["de"].strip().lower() != folder.strip().lower():
@@ -238,34 +339,77 @@ def prompt_for(ctx):
         rows.append(f"- Aufgenommen: {ctx['aufnahme']}")
     if ctx.get("ort"):
         rows.append(f"- Ort: {ctx['ort']}")
-    if ctx.get("personen"):
-        how = " (von links nach rechts)" if ctx.get("personen_reihenfolge") else ""
-        rows.append(f"- Personen auf dem Bild{how}: {', '.join(ctx['personen'])}")
+    persons = ctx.get("personen") or []
+    if persons:
+        how = " (von links nach rechts)" if ctx.get("personen_reihenfolge") and len(persons) > 1 else ""
+        names = ", ".join(f"{p} ({ctx['alter'][p]})" if p in (ctx.get("alter") or {}) else p for p in persons)
+        rows.append(f"- Personen auf dem Bild{how}: {names}")
     else:
         rows.append("- Personen: keine Namen bekannt")
+    if ctx.get("bildart"):
+        rows.append(f"- Bildart: {ctx['bildart']}")
     if ctx.get("beschreibung_lightroom"):
         rows.append(f"- Vorhandene Beschreibung: {ctx['beschreibung_lightroom']}")
     if ctx.get("stichwoerter_lightroom"):
         rows.append(f"- Stichwörter: {', '.join(ctx['stichwoerter_lightroom'])}")
+
+    if persons:
+        names_rule = (f"Nenne jede der oben genannten Personen in der Beschreibung beim Namen (zum Beispiel: "
+                      f"„{persons[0]} sitzt am Tisch und malt.“) statt nur „ein Junge“ oder „eine Frau“. ")
+        if ctx.get("personen_reihenfolge") and len(persons) > 1:
+            names_rule += "Die Namen stehen von links nach rechts – ordne sie den Personen im Bild in dieser Reihenfolge zu. "
+        if ctx.get("alter"):
+            names_rule += "Das Alter hilft bei der Zuordnung; du musst es nicht nennen. "
+        names_rule += "Weitere Personen ohne Namen beschreibst du allgemein (z. B. „eine ältere Frau“). "
+    else:
+        names_rule = "Personen ohne bekannten Namen beschreibst du allgemein (z. B. „ein Kind“). "
+    kind_rule = (f"Das Foto ist laut Analyse: {ctx['bildart']} – erwähne das kurz in der Beschreibung. "
+                 if ctx.get("bildart") else "")
     return (
         "Du beschreibst Fotos aus einem privaten Familien-Fotoarchiv, damit man sie später per Textsuche findet.\n\n"
         "Bekannt aus Lightroom (stimmt sicher):\n" + "\n".join(rows) + "\n\n"
         "Aufgabe:\n"
         "1. „beschreibung“: 1 bis 3 sachliche Sätze auf Deutsch, was auf dem Bild zu sehen ist – Personen und was "
-        "sie tun, Umgebung, auffällige Gegenstände, Tageszeit oder Wetter, falls erkennbar. Nenne Personen nur mit "
-        "den oben angegebenen Namen; sind keine Namen bekannt, beschreibe sie allgemein (z. B. „ein Kind“). "
-        "Erfinde keine Namen, Orte oder Anlässe.\n"
-        "2. „stichwoerter“: 5 bis 10 einzelne deutsche Suchbegriffe für das, was zu sehen ist "
-        "(z. B. Strand, Fahrrad, Geburtstagskuchen, Schnee), ohne Personennamen und ohne den Ort.\n"
+        "sie tun, Umgebung, auffällige Gegenstände, Tageszeit oder Wetter, falls erkennbar. "
+        + names_rule + kind_rule +
+        "Ortsnamen schreibst du auf Deutsch. Erfinde keine Namen, Orte oder Anlässe.\n"
+        "2. „stichwoerter“: 5 bis 8 einzelne deutsche Suchbegriffe für das, was wirklich zu sehen ist – konkret "
+        "statt allgemein (z. B. Geburtstagskuchen statt Essen, Fahrrad statt Fahrzeug), keine Oberbegriffe wie "
+        "Bild, Foto oder Person, keine Personennamen, kein Ortsname.\n"
         "Antworte nur als JSON."
     )
 
 
-def image_b64(path, max_px):
+def color_kind(im, year):
+    """'schwarz-weiß' (kaum Farbe), 'Sepia / einfarbig getönt' (nur alte Fotos: fast ein Farbton) oder None."""
+    small = im.copy()
+    small.thumbnail((120, 120))
+    h, s, v = small.convert("HSV").split()
+    hp, sp, vp = h.tobytes(), s.tobytes(), v.tobytes()
+    n = len(sp)
+    if not n:
+        return None
+    mean_s = sum(sp) / n
+    if mean_s < 18:
+        return "schwarz-weiß"
+    if year is None or year < SCAN_BEFORE:
+        pts = [hh for hh, ss, vv in zip(hp, sp, vp) if ss > 40 and vv > 40]
+        if len(pts) >= 0.4 * n and mean_s < 130:
+            counts = [0] * 256
+            for x in pts:
+                counts[x] += 1
+            best = max(sum(counts[(i + d) % 256] for d in range(-14, 15)) for i in range(256))
+            if best / len(pts) > 0.9:
+                return "Sepia / einfarbig getönt"
+    return None
+
+
+def image_b64(path, max_px, year):
     from PIL import Image, ImageOps
     t0 = time.time()
     with Image.open(path) as im:
         im = ImageOps.exif_transpose(im).convert("RGB")
+        kind = color_kind(im, year)
         big = im.copy()
         big.thumbnail((max_px, max_px))
         buf = io.BytesIO()
@@ -275,7 +419,7 @@ def image_b64(path, max_px):
         tbuf = io.BytesIO()
         thumb.save(tbuf, "JPEG", quality=75)
     return (base64.b64encode(buf.getvalue()).decode("ascii"), base64.b64encode(tbuf.getvalue()).decode("ascii"),
-            big.size, time.time() - t0)
+            kind, time.time() - t0)
 
 
 def describe(cfg, model, prompt, img, think_ok):
@@ -318,6 +462,21 @@ def describe(cfg, model, prompt, img, think_ok):
     return desc, kws, stats
 
 
+def add_kind_keyword(kws, kind):
+    """Schwarz-weiss/Sepia sicher als Suchbegriff - Python hat es gemessen, das Modell muss es nicht raten."""
+    if not kind:
+        return kws
+    word = "schwarz-weiß" if kind.startswith("schwarz") else "sepia"
+    if any(word.split("-")[0] in k.lower() for k in kws):
+        return kws
+    return kws + [word]
+
+
+def name_in_text(ctx, text):
+    low = text.lower()
+    return any(p.lower() in low for p in (ctx.get("personen") or []))
+
+
 # ---------------------------------------------------------------- Ausgabe
 
 def fmt_s(sec):
@@ -339,9 +498,14 @@ def write_html(path, folder, model, rows, summary):
         if ctx.get("ort"):
             facts.append(esc(ctx["ort"]))
         if ctx.get("personen"):
-            facts.append("👤 " + esc(", ".join(ctx["personen"])))
+            ages = ctx.get("alter") or {}
+            facts.append("👤 " + esc(", ".join(f"{p} ({ages[p]})" if p in ages else p for p in ctx["personen"])))
+        if ctx.get("bildart"):
+            facts.append("◐ " + esc(ctx["bildart"]))
         if ctx.get("beschreibung_lightroom"):
             facts.append("Lightroom: " + esc(ctx["beschreibung_lightroom"]))
+        if ctx.get("personen") and r.get("beschreibung") and not r.get("name_im_text"):
+            facts.append("<span class='err'>⚠ Name nicht im Text</span>")
         kws = "".join(f"<span class='kw'>{esc(k)}</span>" for k in r["stichwoerter"])
         err = f"<p class='err'>Fehler: {esc(r['fehler'])}</p>" if r.get("fehler") else ""
         st = r.get("zeit") or {}
@@ -383,10 +547,16 @@ def main():
     out("Lässt ein lokales KI-Modell (Ollama) beschreiben, was auf den Bildern eines Ordners zu sehen ist.")
     out("Nimmt nur die Lightroom-Exporte. Ändert nichts – alles bleibt auf dem PC.")
     cfg = load_config()
-    search = " ".join(sys.argv[1:]).strip()
+    args = sys.argv[1:]
+    model_arg = ""
+    if "--modell" in args:
+        i = args.index("--modell")
+        model_arg = args[i + 1] if i + 1 < len(args) else ""
+        del args[i:i + 2]
+    search = " ".join(args).strip()
 
     out("\n== 1. Ollama")
-    model = choose_model(cfg)
+    model = choose_model(cfg, model_arg)
     out(f"   Modell: {model}")
     _vision, think_ok = check_vision(cfg, model)
 
@@ -399,6 +569,9 @@ def main():
     how = f"enthält „{search}“" if search else f"automatisch gewählt: {MIN_PICK}–{MAX_PICK} Bilder, viel Kontext"
     out(f"   {folder} – {len(items)} Bilder ({how})")
     out(f"   Exporte insgesamt (Galerie): {total}")
+    birthdays = read_birthdays()
+    out(f"   geburtstage.txt: {len(birthdays)} Personen mit Geburtsdatum" if BIRTHDAY_FILE.exists()
+        else "   geburtstage.txt nicht gefunden – ohne Alter")
 
     exiftool = regeln.find_exiftool()
     exif = regeln.read_exif(exiftool, [it["path"] for it in items])
@@ -409,14 +582,17 @@ def main():
         p = it["path"]
         entry = exif.get(p.name) or {}
         meta = regeln.extract_metadata(entry) if entry else it["meta"]
-        ctx = context_for(entry, meta, it["taken"], folder)
+        ctx = context_for(entry, meta, it["taken"], folder, birthdays)
         row = {"datei": p.name, "id": photo_id(p.name), "kontext": ctx, "beschreibung": "", "stichwoerter": []}
         try:
-            img, thumb, size, prep = image_b64(p, int(cfg["beschreiben_px"]))
+            img, thumb, kind, prep = image_b64(p, int(cfg["beschreiben_px"]), it["taken"].year if it["taken"] else None)
             row["_thumb"] = thumb
             prep_times.append(prep)
+            if kind:
+                ctx["bildart"] = kind
             desc, kws, stats = describe(cfg, model, prompt_for(ctx), img, think_ok)
-            row.update(beschreibung=desc, stichwoerter=kws, zeit=stats)
+            row.update(beschreibung=desc, stichwoerter=add_kind_keyword(kws, kind), zeit=stats,
+                       name_im_text=name_in_text(ctx, desc))
             times.append(stats)
             first = " (inkl. Modell laden)" if n == 1 and stats["laden_s"] > 1 else ""
             print(f"   {n:>3}/{len(items)} {p.name[-30:]:<30} {fmt_s(stats['sekunden']):>7}{first}", flush=True)
@@ -447,25 +623,34 @@ def main():
         f"Lesen {read:.0f} Token/s · Schreiben {gen:.1f} Token/s".replace(".", ","))
     out(f"   Bild vorbereiten (verkleinern): {fmt_s(statistics.median(prep_times))} je Bild")
     out(f"   Hochrechnung: 1.000 Bilder ≈ {fmt_s(med * 1000)} · alle {total} Exporte ≈ {fmt_s(med * total)}")
+
+    out("\n== 5. Qualität (nur Zählungen)")
     lengths = [len(r["beschreibung"]) for r in rows if r["beschreibung"]]
     kwn = [len(r["stichwoerter"]) for r in rows if r["beschreibung"]]
     if lengths:
         out(f"   Beschreibung im Mittel {statistics.mean(lengths):.0f} Zeichen, "
             f"{statistics.mean(kwn):.1f} Suchbegriffe".replace(".", ","))
-    with_p = sum(1 for r in rows if r["kontext"].get("personen"))
+    with_p = [r for r in rows if r["kontext"].get("personen") and r["beschreibung"]]
     with_o = sum(1 for r in rows if r["kontext"].get("ort"))
-    out(f"   Kontext mitgegeben: {with_p} mit Personen, {with_o} mit Ort")
+    with_a = sum(1 for r in rows if r["kontext"].get("alter"))
+    out(f"   Kontext mitgegeben: {len(with_p)} mit Personen, {with_o} mit Ort, {with_a} mit Alter")
+    out(f"   Namen im Text: {sum(1 for r in with_p if r['name_im_text'])} von {len(with_p)} Bildern mit Personen")
+    kinds = defaultdict(int)
+    for r in rows:
+        if r["kontext"].get("bildart"):
+            kinds[r["kontext"]["bildart"]] += 1
+    out("   Bildart erkannt: " + (", ".join(f"{k} {v}" for k, v in kinds.items()) if kinds else "alles Farbe"))
 
     # Dateien
     OUT_DIR.mkdir(exist_ok=True)
-    base = safe_name(folder.replace("\\", "/").split("/")[-1])
+    base = f"{safe_name(folder.replace(chr(92), '/').split('/')[-1])} ({safe_name(model)})"
     summary = (f"{len(ok)} Bilder · Median {fmt_s(med)} je Bild · gesamt {fmt_s(time.time() - started)} · "
                f"{time.strftime('%d.%m.%Y %H:%M')}")
     write_html(OUT_DIR / f"{base}.html", folder, model, rows, summary)
     data = {"version": __version__, "modell": model, "ordner": folder, "erstellt": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "bilder": [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]}
     (OUT_DIR / f"{base}.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    out(f"\n== 5. Ergebnis (bleibt auf dem PC)")
+    out("\n== 6. Ergebnis (bleibt auf dem PC)")
     out(f"   _sync\\beschreibungen\\{base}.html – Übersicht mit Bildern, Beschreibungen und Kontext")
     out(f"   _sync\\beschreibungen\\{base}.json – dasselbe als Daten (für später)")
     out(f"\nFertig in {fmt_s(time.time() - started)}. beschreiben.txt kann an Claude – nur Zeiten und Anzahlen, "
