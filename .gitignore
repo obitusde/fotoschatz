@@ -46,3 +46,7 @@ sync/garmin_api_key.txt
 sync/garmin_test.txt
 sync/gps_nachtragen.txt
 sync/garmin/
+
+# Bildbeschreibungen mit Ollama (v0.7.27) - enthalten Namen, bleiben auf dem PC
+sync/beschreibungen/
+sync/beschreiben.txt
