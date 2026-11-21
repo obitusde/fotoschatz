@@ -12,7 +12,7 @@ Aendert nichts an Fotos, Katalog, Exporten oder online. Lightroom darf dabei off
 Aufruf: python beschreiben.py [--modell 9b] [Teil des Ordnernamens]
         (ohne Ordner: sucht selbst einen Ordner mit 30-50 Bildern; ohne Modell: qwen3.5:4b bzw. config.local.json)
 """
-__version__ = "0.7.28"
+__version__ = "0.7.29"
 
 import base64
 import hashlib
@@ -422,12 +422,13 @@ def image_b64(path, max_px, year):
             kind, time.time() - t0)
 
 
-def describe(cfg, model, prompt, img, think_ok):
+def ask(cfg, model, prompt, img, think_ok, schema=None):
+    """Ein Bild ans Modell: gibt (Antwort als Wörterbuch oder None, Rohtext, Messwerte) zurueck."""
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt, "images": [img]}],
         "stream": False,
-        "format": SCHEMA,
+        "format": schema or SCHEMA,
         "options": {"temperature": 0.2},
         "keep_alive": "10m",
     }
@@ -446,10 +447,10 @@ def describe(cfg, model, prompt, img, think_ok):
     text = ((res.get("message") or {}).get("content") or "").strip()
     try:
         data = json.loads(text)
-        desc = str(data.get("beschreibung", "")).strip()
-        kws = [str(k).strip() for k in data.get("stichwoerter") or [] if str(k).strip()]
+        if not isinstance(data, dict):
+            data = None
     except ValueError:
-        desc, kws = text, []
+        data = None
     ns = 1e9
     stats = {
         "sekunden": round(wall, 2),
@@ -459,6 +460,15 @@ def describe(cfg, model, prompt, img, think_ok):
         "ausgabe_tokens": res.get("eval_count") or 0,
         "ausgabe_s": round((res.get("eval_duration") or 0) / ns, 2),
     }
+    return data, text, stats
+
+
+def describe(cfg, model, prompt, img, think_ok):
+    data, text, stats = ask(cfg, model, prompt, img, think_ok)
+    if data is None:
+        return text, [], stats
+    desc = str(data.get("beschreibung", "")).strip()
+    kws = [str(k).strip() for k in data.get("stichwoerter") or [] if str(k).strip()]
     return desc, kws, stats
 
 
