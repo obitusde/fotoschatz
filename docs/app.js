@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.3";
+const APP_VERSION = "0.8.4";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -2929,6 +2929,9 @@ const VPlayer = {
   init() {
     if (this.node) return;
     this.video = el("video", { class: "vp-video", controls: true, playsinline: true, preload: "auto" });
+    // Handy: kein eigenes Vollbild des Players (v0.8.4) – sonst geht Chrome beim Kippen von selbst ins Vollbild, zeigt
+    // „Ziehe zum Beenden …“ und die App verliert ihren Vollbild-Modus (weisser Balken). Im Querformat fuellt das Video ohnehin alles.
+    if (isPhone()) this.video.setAttribute("controlslist", "nofullscreen");
     this.title = el("div", { class: "vp-title" });
     this.meta = el("div", { class: "vp-meta" });
     this.note = el("p", { class: "vp-note" });
