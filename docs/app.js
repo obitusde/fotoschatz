@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.4";
+const APP_VERSION = "0.8.5";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -2605,14 +2605,14 @@ async function cleanImageFile(p) {
   }
 }
 
-function downloadFile(file) {
+function downloadFile(file, msg = "Bild gespeichert (Downloads)") {
   const url = URL.createObjectURL(file);
   const a = el("a", { href: url, download: file.name });
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
-  toast("Bild gespeichert (Downloads)");
+  toast(msg);
 }
 
 async function shareImage(p) {
@@ -2681,6 +2681,7 @@ function cleanVideos(data) {
       ort,
       ereignis,
       personen: persons,
+      sterne: Number(v.sterne) === 2 ? 2 : Number(v.sterne) === 1 ? 1 : 0,     // nur in deinem Verzeichnis (v0.8.5)
       // Die Beschreibung wird nicht angezeigt, zaehlt aber fuer die Suche (v0.8.1)
       _s: normText([v.titel, v.beschreibung, kw.join(" "), persons.join(" "), ort, ereignis, datum].filter(Boolean).join(" ")),
       _p: new Set(persons.map(normText)),
@@ -2705,11 +2706,172 @@ async function loadVideos(loaded, own) {
       }
     } catch (e) { /* kein Verzeichnis: kein Tab */ }
   }
+  if (OWNER) { VEdit.load(); VEdit.prune(); }
   const btn = $('#nav button[data-view="videos"]');
   if (btn) btn.hidden = !(VIDEOS || OWNER);
 }
 
-const VFILTER = { q: "", y: "", p: "", e: "", open: false };
+const VFILTER = { q: "", y: "", p: "", e: "", s: "", open: false };
+
+/* ---- Eigene Aenderungen (v0.8.5, nur mit deinem Link): Sterne und Loeschwuensche liegen auf dem Handy; die App darf im
+   Bucket nichts aendern. „Aenderungen“ erzeugt eine Datei, die der PC (Videoschatz, aenderungen.bat) verarbeitet. ---- */
+const VEDIT_KEY = "fotoschatz.video-edits";
+const VEdit = {
+  stars: {},          // id -> 0|1|2, nur Abweichungen vom Verzeichnis
+  del: {},            // id -> Titel (zum Loeschen vorgemerkt)
+  load() {
+    try {
+      const d = JSON.parse(readPref(VEDIT_KEY) || "{}");
+      this.stars = d && d.stars && typeof d.stars === "object" ? d.stars : {};
+      this.del = d && d.del && typeof d.del === "object" ? d.del : {};
+    } catch (e) { this.stars = {}; this.del = {}; }
+    // Browser bitten, die Daten dauerhaft zu behalten (sonst koennten sie bei Platzmangel verloren gehen)
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* egal */ }
+  },
+  save() { writePref(VEDIT_KEY, JSON.stringify({ stars: this.stars, del: this.del })); },
+  level(v) { return Object.prototype.hasOwnProperty.call(this.stars, v.id) ? this.stars[v.id] : v.sterne; },
+  setStar(v, n) {
+    if (n === v.sterne) delete this.stars[v.id]; else this.stars[v.id] = n;
+    this.save();
+  },
+  markDelete(v) { this.del[v.id] = v.titel; this.save(); },
+  undoDelete(id) { delete this.del[id]; this.save(); },
+  // Was der PC schon uebernommen hat, faellt weg: Sterne gleich dem Verzeichnis, geloeschte Videos nicht mehr im Verzeichnis
+  prune() {
+    if (!VIDEOS) return;
+    for (const id of Object.keys(this.del)) if (!VIDEOS.byId.has(id)) delete this.del[id];
+    for (const id of Object.keys(this.stars)) {
+      const v = VIDEOS.byId.get(id);
+      if (!v || this.stars[id] === v.sterne) delete this.stars[id];
+    }
+    this.save();
+  },
+  starChanges() {
+    if (!VIDEOS) return [];
+    return Object.entries(this.stars).filter(([id]) => VIDEOS.byId.has(id) && !this.del[id]);
+  },
+  count() { return Object.keys(this.del).filter((id) => VIDEOS && VIDEOS.byId.has(id)).length + this.starChanges().length; },
+};
+
+const VView = { refresh: null };       // zeichnet die Videoliste neu (gesetzt von videosView)
+
+function closeSheet() {
+  const n = $("#vsheet");
+  if (!n) return;
+  n.remove();
+  if (mounted && mounted.grid && mounted.grid.autoplay) mounted.grid.render();       // Vorschau oben geht weiter
+}
+
+function openSheet(build) {
+  closeSheet();
+  stopPreview();
+  VAuto.sync([]);
+  const sheet = el("div", { class: "vsheet" });
+  const back = el("div", { id: "vsheet", class: "vsheet-back" }, sheet);
+  back.addEventListener("click", (e) => { if (e.target === back) closeSheet(); });
+  back.addEventListener("contextmenu", (e) => e.preventDefault());
+  build(sheet, closeSheet);
+  document.body.append(back);
+}
+
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
+
+// Langes Druecken auf ein Video (nur du): Sterne vergeben oder zum Loeschen vormerken
+function videoMenu(v) {
+  openSheet((sheet, close) => {
+    const lvl = VEdit.level(v);
+    const done = (msg) => { close(); if (msg) toast(msg); if (VView.refresh) VView.refresh(); };
+    const star = (n, label) => el("button", {
+      type: "button", class: `vs-btn${lvl === n ? " on" : ""}`, text: label,
+      onclick: () => { VEdit.setStar(v, lvl === n ? 0 : n); done(); },
+    });
+    sheet.append(el("div", { class: "vs-title", text: v.titel }), star(1, "★ gut"), star(2, "★★ sehr gut"));
+    if (lvl) sheet.append(el("button", { type: "button", class: "vs-btn", text: "Stern entfernen",
+      onclick: () => { VEdit.setStar(v, 0); done(); } }));
+    sheet.append(
+      el("button", { type: "button", class: "vs-btn danger", text: "Video löschen",
+        onclick: () => { VEdit.markDelete(v); done("Zum Löschen vorgemerkt – unter „Änderungen“ zurücknehmen"); } }),
+      el("button", { type: "button", class: "vs-btn", text: "Abbrechen", onclick: close }));
+  });
+}
+
+function editsFile() {
+  const ok = (id) => /^[0-9a-f]{16}$/.test(id);
+  const loeschen = Object.entries(VEdit.del)
+    .filter(([id]) => ok(id) && VIDEOS.byId.has(id)).map(([id, titel]) => ({ id, titel: String(titel) }));
+  const sterne = {};
+  for (const [id, n] of VEdit.starChanges()) if (ok(id)) sterne[id] = n;
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, "0");
+  const name = `videoschatz-aenderungen-${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}.json`;
+  const doc = { version: 1, erstellt: d.toISOString().replace(/\.\d{3}Z$/, "Z"), loeschen, sterne };
+  return { name, text: JSON.stringify(doc, null, 2) };
+}
+
+async function shareEdits() {
+  const { name, text } = editsFile();
+  // Android erlaubt nicht jede Dateiart im Teilen-Menue: erst JSON, sonst als Text mit demselben Namen, sonst Download
+  for (const type of ["application/json", "text/plain"]) {
+    const file = new File([text], name, { type });
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] });
+      } catch (e) { /* abgebrochen */ }
+      return;
+    }
+  }
+  downloadFile(new File([text], name, { type: "application/json" }), "Datei gespeichert (Downloads)");
+}
+
+function editsSheet() {
+  openSheet((sheet, close) => {
+    const dels = Object.entries(VEdit.del).filter(([id]) => VIDEOS.byId.has(id));
+    const stars = VEdit.starChanges();
+    sheet.append(
+      el("div", { class: "vs-title", text: "Änderungen für den PC" }),
+      el("p", { class: "vs-note", text: `${dels.length} zum Löschen vorgemerkt · ${stars.length} Sterne geändert` }));
+    for (const [id, titel] of dels) {
+      sheet.append(el("div", { class: "vs-row" },
+        el("span", { class: "vs-name", text: titel }),
+        el("button", { type: "button", class: "vs-small", text: "zurücknehmen",
+          onclick: () => { VEdit.undoDelete(id); close(); if (VView.refresh) VView.refresh(); } })));
+    }
+    sheet.append(
+      el("button", { type: "button", class: "vs-btn on", text: "Datei erzeugen und teilen", onclick: shareEdits }),
+      el("p", { class: "vs-note", text: "Am PC: aenderungen.bat in D:\\Coding\\videoschatz. Vorgemerktes bleibt hier, bis der PC es verarbeitet hat und die App neu geladen wurde." }),
+      el("button", { type: "button", class: "vs-btn", text: "Schließen", onclick: close }));
+  });
+}
+
+// Vorschau in der obersten sichtbaren Zeile laeuft von selbst (lautlos, Schleife)
+const VAuto = {
+  nodes: new Map(),        // Vorschaubild-Element -> <video>
+  sync(thumbs) {
+    for (const [thumb, node] of this.nodes) {
+      if (thumbs.includes(thumb) && thumb.isConnected) continue;
+      node.pause();
+      node.removeAttribute("src");
+      node.load();
+      node.remove();
+      this.nodes.delete(thumb);
+    }
+    for (const thumb of thumbs) {
+      if (this.nodes.has(thumb) || !thumb._v) continue;
+      stopPreview();
+      const node = el("video", { loop: true, playsinline: true, class: "vprev" });
+      node.muted = true;
+      node.src = videoUrl(thumb._v, "preview.mp4");
+      thumb.append(node);
+      this.nodes.set(thumb, node);
+      const p = node.play();
+      if (p && p.catch) p.catch(() => {});
+    }
+  },
+};
+
+document.addEventListener("visibilitychange", () => {
+  if (mounted && mounted.grid && mounted.grid.autoplay) mounted.grid.autoplay();
+});
 
 // Vorschau in der Kachel: lange druecken (Handy) bzw. kurz darueber verweilen (PC), lautlos, immer nur eine
 const VPrev = { node: null, timer: 0, suppress: false };
@@ -2727,6 +2889,7 @@ function stopPreview() {
 
 function startPreview(thumb, v) {
   stopPreview();
+  if (VAuto.nodes.has(thumb)) return;
   const node = el("video", { loop: true, playsinline: true, class: "vprev" });
   node.muted = true;
   node.src = videoUrl(v, "preview.mp4");
@@ -2774,10 +2937,28 @@ class VideoGrid extends Grid {
   render() {
     super.render();
     if (VPrev.node && !VPrev.node.isConnected) stopPreview();     // Kachel ist weggescrollt
+    clearTimeout(this.autoTimer);
+    this.autoTimer = setTimeout(() => this.autoplay(), 250);      // erst wenn das Scrollen kurz ruht
+  }
+
+  // v0.8.5: die Kacheln der obersten sichtbaren Zeile spielen ihre Vorschau von selbst
+  autoplay() {
+    if (!this.rows || !this.root.isConnected || document.hidden || $("#vsheet") || document.body.classList.contains("vp-open")) {
+      VAuto.sync([]);
+      return;
+    }
+    const bar = $(".search-bar");
+    const edge = window.scrollY - this.originY() + $("#top").offsetHeight + (bar ? bar.offsetHeight : 0) + 30;
+    let r = 0;
+    while (r < this.rows.length && (this.rows[r].type !== "r" || this.rows[r].top + this.rows[r].h <= edge)) r++;
+    const node = this.mounted.get(r);
+    VAuto.sync(node ? [...node.querySelectorAll(".vthumb")] : []);
   }
 
   destroy() {
+    clearTimeout(this.autoTimer);
     stopPreview();
+    VAuto.sync([]);
     super.destroy();
   }
 
@@ -2798,6 +2979,11 @@ class VideoGrid extends Grid {
     const thumb = el("span", { class: "vthumb" },
       el("img", { src: videoUrl(v, "poster.webp"), alt: "", loading: "lazy", decoding: "async", draggable: "false" }),
       el("span", { class: "vdur", text: fmtDuration(v.dauer) }));
+    thumb._v = v;
+    if (OWNER) {
+      const lvl = VEdit.level(v);
+      if (lvl) thumb.append(el("span", { class: "vstar", text: lvl === 2 ? "★★" : "★" }));
+    }
     const tile = el("button", { type: "button", class: "vtile", "aria-label": `${v.titel}, ${fmtDuration(v.dauer)}` },
       thumb,
       el("span", { class: "vtitle", text: v.titel }),
@@ -2810,7 +2996,8 @@ class VideoGrid extends Grid {
       clearTimeout(VPrev.timer);
       VPrev.timer = setTimeout(() => {
         VPrev.suppress = true;           // der Klick nach dem Loslassen soll das Video nicht oeffnen
-        startPreview(thumb, v);
+        if (OWNER && e.pointerType !== "mouse") videoMenu(v);      // bei dir: Menue statt Vorschau
+        else startPreview(thumb, v);
       }, 450);
     });
     tile.addEventListener("pointermove", (e) => {
@@ -2825,7 +3012,13 @@ class VideoGrid extends Grid {
       VPrev.timer = setTimeout(() => startPreview(thumb, v), 450);
     });
     tile.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") end(); });
-    tile.addEventListener("contextmenu", (e) => e.preventDefault());       // kein Android-Menue beim langen Druecken
+    tile.addEventListener("contextmenu", (e) => {          // kein Android-Menue beim langen Druecken
+      e.preventDefault();
+      if (!OWNER) return;
+      clearTimeout(VPrev.timer);
+      if (start) VPrev.suppress = true;
+      if (!$("#vsheet")) videoMenu(v);                     // PC: Rechtsklick
+    });
     tile.addEventListener("click", (e) => {
       if (VPrev.suppress) {
         VPrev.suppress = false;
@@ -2872,13 +3065,27 @@ function videosView(main, m) {
     mkSelect("Alle Personen", people, byCount(people), "p"),
     mkSelect("Alle Ereignisse", events, byCount(events), "e"),
     mkSelect("Alle Jahre", years, [...years.keys()].sort().reverse(), "y"));
+  if (OWNER) {
+    const sel = el("select", { class: "vid-sel", "aria-label": "Sterne" },
+      el("option", { value: "", text: "Alle Sterne" }),
+      el("option", { value: "1", text: "★ und ★★" }),
+      el("option", { value: "2", text: "Nur ★★" }));
+    sel.value = VFILTER.s;
+    sel.addEventListener("change", () => { VFILTER.s = sel.value; changed(); });
+    panel.append(sel);
+  }
+  const editBtn = el("button", { type: "button", class: "vid-filter-btn on vid-edit-btn", hidden: true, onclick: editsSheet });
   const bar = el("div", { class: "search-bar vid-bar" },
-    el("div", { class: "vid-bar-row" }, el("div", { class: "search-field" }, input), filterBtn), panel);
+    el("div", { class: "vid-bar-row" }, el("div", { class: "search-field" }, input), filterBtn), panel,
+    OWNER ? el("div", { class: "vid-edit-row" }, editBtn) : "");
   const host = el("div", { class: "vid-host" });
   main.append(bar, host);
 
   const updateFilterBtn = () => {
-    const n = ["p", "e", "y"].filter((k) => VFILTER[k]).length;
+    const n = ["p", "e", "y", ...(OWNER ? ["s"] : [])].filter((k) => VFILTER[k]).length;
+    const pend = OWNER ? VEdit.count() : 0;
+    editBtn.hidden = !pend;
+    editBtn.textContent = `Änderungen (${pend})`;
     filterBtn.textContent = n ? `Filter (${n})` : "Filter";
     filterBtn.classList.toggle("on", n > 0);
     filterBtn.setAttribute("aria-expanded", String(VFILTER.open));
@@ -2891,11 +3098,14 @@ function videosView(main, m) {
     host.replaceChildren();
     const ws = normText(VFILTER.q).split(" ").filter(Boolean);
     const pn = VFILTER.p ? normText(VFILTER.p) : "";
-    let list = VIDEOS.list.filter((v) => (!VFILTER.y || v.t.startsWith(VFILTER.y))
-      && (!VFILTER.e || v.ereignis === VFILTER.e) && (!pn || v._p.has(pn)) && ws.every((w) => v._s.includes(w)));
+    const sv = OWNER && VFILTER.s ? Number(VFILTER.s) : 0;
+    const all = OWNER ? VIDEOS.list.filter((v) => !VEdit.del[v.id]) : VIDEOS.list;      // zum Loeschen vorgemerkte sind weg
+    let list = all.filter((v) => (!VFILTER.y || v.t.startsWith(VFILTER.y))
+      && (!VFILTER.e || v.ereignis === VFILTER.e) && (!pn || v._p.has(pn)) && (!sv || VEdit.level(v) >= sv)
+      && ws.every((w) => v._s.includes(w)));
     if (!asc) list = list.slice().reverse();
-    const sub = list.length === VIDEOS.list.length ? videoCount(list.length)
-      : `${videoCount(list.length)} · von ${VIDEOS.list.length.toLocaleString("de-DE")}`;
+    const sub = list.length === all.length ? videoCount(list.length)
+      : `${videoCount(list.length)} · von ${all.length.toLocaleString("de-DE")}`;
     $("#subtitle").textContent = sub;
     if (!list.length) {
       host.append(el("p", { class: "center muted", text: "Keine Videos gefunden." }));
@@ -2912,6 +3122,7 @@ function videosView(main, m) {
     clearTimeout(timer);
     timer = setTimeout(() => { VFILTER.q = input.value; window.scrollTo(0, 0); apply(); }, 150);
   });
+  VView.refresh = () => { if (host.isConnected) { updateFilterBtn(); apply(); } };
   updateFilterBtn();
   apply();
 }
@@ -2973,6 +3184,7 @@ const VPlayer = {
     this.video.style.aspectRatio = v.breite && v.hoehe ? `${v.breite} / ${v.hoehe}` : "";
     this.video.poster = videoUrl(v, "poster.webp");
     this.video.src = videoUrl(v, "video.mp4");
+    VAuto.sync([]);
     this.node.hidden = false;
     document.body.classList.add("vp-open");
     const p = this.video.play();
@@ -2988,6 +3200,7 @@ const VPlayer = {
     this.video.load();          // Verbindung freigeben
     this.node.hidden = true;
     document.body.classList.remove("vp-open");
+    if (mounted && mounted.grid && mounted.grid.autoplay) mounted.grid.render();      // Vorschau oben geht weiter
   },
 };
 

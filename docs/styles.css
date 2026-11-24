@@ -645,3 +645,31 @@ body.vp-open { overflow: hidden; }
   .vp-top, .vp-info { display: none; }
   .vp-video { flex: 1; width: 100%; height: 100%; max-height: none; aspect-ratio: auto !important; }
 }
+
+/* ---------- Videos: Menue, Sterne, Aenderungen (v0.8.5, nur mit deinem Link) ---------- */
+.vstar {
+  position: absolute; left: 6px; top: 6px; padding: 1px 6px; border-radius: 4px;
+  background: rgba(0,0,0,.7); color: #ffd54a; font-size: .78rem; letter-spacing: 1px;
+}
+.vid-edit-row { margin-top: 8px; }
+.vid-edit-row .vid-filter-btn[hidden] { display: none; }
+.vsheet-back {
+  position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,.5);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.vsheet {
+  width: 100%; max-width: 520px; max-height: 80%; overflow: auto; background: var(--surface); color: var(--text);
+  border-radius: 16px 16px 0 0; padding: 14px 14px calc(var(--safe-bottom) + 14px);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.vs-title { font-weight: 600; line-height: 1.3; padding: 2px 2px 6px; }
+.vs-note { margin: 0; font-size: .85rem; color: var(--muted); }
+.vs-btn {
+  min-height: 46px; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); color: inherit; font: inherit; font-size: 16px; text-align: left;
+}
+.vs-btn.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.vs-btn.danger { color: #d93025; }
+.vs-row { display: flex; align-items: center; gap: 8px; }
+.vs-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-small { flex: none; height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: inherit; font: inherit; font-size: 14px; }
