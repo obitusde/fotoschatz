@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.1";
+const APP_VERSION = "0.8.2";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -2918,13 +2918,14 @@ function videosView(main, m) {
 
 const isPhone = () => window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 
-// Player: kurz getippt startet das ganze Video sofort (Handy: Vollbild; Querformat-Video: Bildschirm auf
-// Querformat gesperrt, dreht also von selbst). Kein Cache fuer Videos.
+// Player: kurz getippt startet das ganze Video sofort. Die installierte App laeuft schon im Vollbild (Manifest) –
+// der Fullscreen-Befehl und damit Chromes Hinweis „Ziehe zum Beenden …“ entfallen (v0.8.2). Querformat-Videos
+// sperren den Bildschirm auf Querformat (dreht von selbst); der Knopf ⟳ gibt die Drehung frei bzw. sperrt wieder.
 const VPlayer = {
   node: null,
   video: null,
   cur: null,
-  ownFs: false,
+  locked: false,
 
   init() {
     if (this.node) return;
@@ -2932,11 +2933,15 @@ const VPlayer = {
     this.title = el("div", { class: "vp-title" });
     this.meta = el("div", { class: "vp-meta" });
     this.note = el("p", { class: "vp-note" });
+    this.rot = el("button", {
+      type: "button", class: "icon-btn vp-rot", "aria-label": "Drehung sperren / freigeben", hidden: true,
+      onclick: () => this.toggleLock(),
+    }, "⟳");
     this.node = el("div", { id: "vplayer", hidden: true },
       el("div", { class: "vp-top" },
         el("button", { type: "button", class: "icon-btn", "aria-label": "Schließen", onclick: () => history.back() },
           svgNode(ICON_X)),
-        this.title),
+        this.title, this.rot),
       this.video,
       el("div", { class: "vp-info" }, this.meta, this.note));
     document.body.append(this.node);
@@ -2944,26 +2949,41 @@ const VPlayer = {
       this.note.textContent = "Dieses Video lässt sich auf diesem Gerät nicht abspielen (die Videos sind im Format AV1).";
     });
     this.video.addEventListener("loadedmetadata", () => {         // echte Abmessungen, falls das Manifest sie nicht kennt
-      if (this.ownFs && this.video.videoWidth) this.lock(this.video.videoWidth > this.video.videoHeight);
+      if (this.video.videoWidth && !this.unknownAspect) return;
+      if (this.video.videoWidth) this.setLock(this.video.videoWidth > this.video.videoHeight);
     });
     document.addEventListener("keydown", (e) => {
       if (this.cur && e.key === "Escape") history.back();
     });
-    document.addEventListener("fullscreenchange", () => {         // Vollbild per Geste beendet -> Player zu
-      if (!document.fullscreenElement && this.ownFs && this.cur) {
-        this.ownFs = false;
-        history.back();
-      }
-    });
   },
 
-  lock(wide) {
+  // wide = true: auf Querformat sperren; false: Drehung frei (Sensor)
+  setLock(wide) {
+    this.locked = false;
     try {
       const o = screen.orientation;
-      if (!o) return;
-      if (wide && o.lock) o.lock("landscape").catch(() => {});
-      else if (o.unlock) o.unlock();
+      if (o && wide && o.lock) {
+        o.lock("landscape").then(() => { this.locked = true; this.updateRot(); }).catch(() => {});
+      } else if (o && o.unlock) {
+        o.unlock();
+      }
     } catch (e) { /* Geraet kann es nicht */ }
+    this.updateRot();
+  },
+
+  toggleLock() {
+    if (this.locked) {
+      try { screen.orientation.unlock(); } catch (e) { /* egal */ }
+      this.locked = false;
+      this.updateRot();
+    } else {
+      this.setLock(true);
+    }
+  },
+
+  updateRot() {
+    this.rot.classList.toggle("on", this.locked);
+    this.rot.title = this.locked ? "Querformat gesperrt – antippen: Drehung frei" : "Drehung frei – antippen: Querformat sperren";
   },
 
   sync(state) {
@@ -2984,10 +3004,11 @@ const VPlayer = {
     this.video.src = videoUrl(v, "video.mp4");
     this.node.hidden = false;
     document.body.classList.add("vp-open");
-    if (isPhone() && this.node.requestFullscreen) {
-      this.ownFs = true;
-      const wide = v.breite && v.hoehe ? v.breite > v.hoehe : false;
-      this.node.requestFullscreen({ navigationUI: "hide" }).then(() => this.lock(wide)).catch(() => { this.ownFs = false; });
+    const phone = isPhone();
+    this.rot.hidden = !phone;
+    if (phone) {
+      this.unknownAspect = !(v.breite && v.hoehe);
+      this.setLock(v.breite && v.hoehe ? v.breite > v.hoehe : false);
     }
     const p = this.video.play();
     if (p && p.catch) p.catch(() => {});          // ohne Antippen (z. B. Vorwaerts im Verlauf) startet der Browser evtl. nicht
@@ -3002,10 +3023,9 @@ const VPlayer = {
     this.video.load();          // Verbindung freigeben
     this.node.hidden = true;
     document.body.classList.remove("vp-open");
-    if (this.ownFs) {
-      this.ownFs = false;
-      this.lock(false);
-      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    if (this.locked || isPhone()) {
+      this.locked = false;
+      try { screen.orientation.unlock(); } catch (e) { /* egal */ }
     }
   },
 };
