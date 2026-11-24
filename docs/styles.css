@@ -673,3 +673,16 @@ body.vp-open { overflow: hidden; }
 .vs-row { display: flex; align-items: center; gap: 8px; }
 .vs-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vs-small { flex: none; height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: inherit; font: inherit; font-size: 14px; }
+
+/* ---------- Videos: Chromecast (v0.8.6) ---------- */
+.vp-cast-btn { margin-left: auto; color: #fff; flex: none; }
+.vp-cast-btn[hidden] { display: none; }
+.vp-cast-btn.on, .vp-cast-btn.on:hover { background: #2f6fdb; }
+.vp-cast-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.vp-remote { flex: none; padding: 8px 14px 10px; background: #14171c; }
+.vp-remote[hidden] { display: none; }
+.vp-rlabel { font-size: .8rem; color: #b8bdc6; margin-bottom: 4px; }
+.vp-rrow { display: flex; align-items: center; gap: 10px; }
+.vp-rplay { flex: none; width: 44px; height: 44px; border-radius: 50%; background: #2f6fdb; color: #fff; font-size: 18px; }
+.vp-rseek { flex: 1; min-width: 0; height: 44px; accent-color: #2f6fdb; }
+.vp-rtime { flex: none; font-size: .8rem; color: #b8bdc6; font-variant-numeric: tabular-nums; }
