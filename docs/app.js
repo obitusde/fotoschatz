@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.0";
+const APP_VERSION = "0.8.1";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -2668,16 +2668,22 @@ function cleanVideos(data) {
     const datum = /^\d{4}-\d{2}-\d{2}$/.test(v.datum || "") ? v.datum : "1900-01-01";
     const zeit = /^\d{2}:\d{2}$/.test(v.zeit || "") ? v.zeit : "00:00";
     const kw = Array.isArray(v.stichwoerter) ? v.stichwoerter.map(String) : [];
+    const persons = Array.isArray(v.personen) ? v.personen.map(String).filter(Boolean) : [];
+    const ort = v.ort ? String(v.ort) : "";
+    const ereignis = v.ereignis ? String(v.ereignis) : "";
     list.push({
       id: v.id,
       titel: String(v.titel || "Ohne Titel"),
       t: `${datum}T${zeit}`,
       dauer: Number(v.dauer) || 0,
-      ort: v.ort ? String(v.ort) : "",
-      personen: Array.isArray(v.personen) ? v.personen.map(String) : [],
-      beschreibung: v.beschreibung ? String(v.beschreibung) : "",
-      stichwoerter: kw,
-      _s: normText([v.titel, v.beschreibung, kw.join(" ")].filter(Boolean).join(" ")),
+      breite: Number(v.breite) || 0,
+      hoehe: Number(v.hoehe) || 0,
+      ort,
+      ereignis,
+      personen: persons,
+      // Die Beschreibung wird nicht angezeigt, zaehlt aber fuer die Suche (v0.8.1)
+      _s: normText([v.titel, v.beschreibung, kw.join(" "), persons.join(" "), ort, ereignis, datum].filter(Boolean).join(" ")),
+      _p: new Set(persons.map(normText)),
     });
   }
   list.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
@@ -2703,7 +2709,32 @@ async function loadVideos(loaded, own) {
   if (btn) btn.hidden = !(VIDEOS || OWNER);
 }
 
-const VFILTER = { q: "", y: "" };
+const VFILTER = { q: "", y: "", p: "", e: "", open: false };
+
+// Vorschau in der Kachel: lange druecken (Handy) bzw. kurz darueber verweilen (PC), lautlos, immer nur eine
+const VPrev = { node: null, timer: 0, suppress: false };
+
+function stopPreview() {
+  clearTimeout(VPrev.timer);
+  const node = VPrev.node;
+  VPrev.node = null;
+  if (!node) return;
+  node.pause();
+  node.removeAttribute("src");
+  node.load();
+  node.remove();
+}
+
+function startPreview(thumb, v) {
+  stopPreview();
+  const node = el("video", { loop: true, playsinline: true, class: "vprev" });
+  node.muted = true;
+  node.src = videoUrl(v, "preview.mp4");
+  thumb.append(node);
+  VPrev.node = node;
+  const p = node.play();
+  if (p && p.catch) p.catch(() => {});
+}
 
 class VideoGrid extends Grid {
   layout() {
@@ -2740,6 +2771,16 @@ class VideoGrid extends Grid {
     this.render();
   }
 
+  render() {
+    super.render();
+    if (VPrev.node && !VPrev.node.isConnected) stopPreview();     // Kachel ist weggescrollt
+  }
+
+  destroy() {
+    stopPreview();
+    super.destroy();
+  }
+
   renderRow(row) {
     if (row.type === "h") {
       return el("div", { class: "grid-head", style: `top:${row.top}px;height:${row.h}px` }, row.label);
@@ -2748,20 +2789,53 @@ class VideoGrid extends Grid {
       class: "grid-row vid-row",
       style: `top:${row.top}px;height:${row.h}px;grid-template-columns:repeat(${this.cols},1fr)`,
     });
-    for (const i of row.items) {
-      const v = this.list[i];
-      const day = fmtDay.format(parseLocal(v.t));
-      node.append(el("button", {
-        type: "button", class: "vtile", "aria-label": `${v.titel}, ${fmtDuration(v.dauer)}`,
-        onclick: () => navigate({ v: "videos", vid: v.id }),
-      },
-      el("span", { class: "vthumb" },
-        el("img", { src: videoUrl(v, "poster.webp"), alt: "", loading: "lazy", decoding: "async" }),
-        el("span", { class: "vdur", text: fmtDuration(v.dauer) })),
-      el("span", { class: "vtitle", text: v.titel }),
-      el("span", { class: "vmeta", text: v.ort ? `${day} · ${v.ort}` : day })));
-    }
+    for (const i of row.items) node.append(this.tileFor(this.list[i]));
     return node;
+  }
+
+  tileFor(v) {
+    const day = fmtDay.format(parseLocal(v.t));
+    const thumb = el("span", { class: "vthumb" },
+      el("img", { src: videoUrl(v, "poster.webp"), alt: "", loading: "lazy", decoding: "async", draggable: "false" }),
+      el("span", { class: "vdur", text: fmtDuration(v.dauer) }));
+    const tile = el("button", { type: "button", class: "vtile", "aria-label": `${v.titel}, ${fmtDuration(v.dauer)}` },
+      thumb,
+      el("span", { class: "vtitle", text: v.titel }),
+      el("span", { class: "vmeta", text: v.ort ? `${day} · ${v.ort}` : day }));
+    let start = null;
+    tile.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      start = { x: e.clientX, y: e.clientY };
+      VPrev.suppress = false;
+      clearTimeout(VPrev.timer);
+      VPrev.timer = setTimeout(() => {
+        VPrev.suppress = true;           // der Klick nach dem Loslassen soll das Video nicht oeffnen
+        startPreview(thumb, v);
+      }, 450);
+    });
+    tile.addEventListener("pointermove", (e) => {
+      if (start && !VPrev.node && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) clearTimeout(VPrev.timer);
+    });
+    const end = () => { start = null; clearTimeout(VPrev.timer); stopPreview(); };
+    tile.addEventListener("pointerup", end);
+    tile.addEventListener("pointercancel", end);
+    tile.addEventListener("pointerenter", (e) => {          // PC: kurz darueber verweilen
+      if (e.pointerType !== "mouse") return;
+      clearTimeout(VPrev.timer);
+      VPrev.timer = setTimeout(() => startPreview(thumb, v), 450);
+    });
+    tile.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") end(); });
+    tile.addEventListener("contextmenu", (e) => e.preventDefault());       // kein Android-Menue beim langen Druecken
+    tile.addEventListener("click", (e) => {
+      if (VPrev.suppress) {
+        VPrev.suppress = false;
+        e.preventDefault();
+        return;
+      }
+      stopPreview();
+      navigate({ v: "videos", vid: v.id });          // kurz tippen: ganzes Video sofort
+    });
+    return tile;
   }
 }
 
@@ -2773,25 +2847,52 @@ function videosView(main, m) {
     main.append(el("p", { class: "center muted", text: "Noch keine Videos online. Sobald welche hochgeladen sind, erscheinen sie hier." }));
     return;
   }
-  const years = new Map();
-  for (const v of VIDEOS.list) years.set(v.t.slice(0, 4), (years.get(v.t.slice(0, 4)) || 0) + 1);
-  const select = el("select", { class: "vid-year", "aria-label": "Jahr" },
-    el("option", { value: "", text: "Alle Jahre" }),
-    ...[...years.keys()].sort().reverse().map((y) => el("option", { value: y, text: `${y} (${years.get(y)})` })));
-  select.value = years.has(VFILTER.y) ? VFILTER.y : "";
-  VFILTER.y = select.value;
-  const input = el("input", { type: "search", placeholder: "Titel, Beschreibung, Stichwort …", value: VFILTER.q,
-    autocomplete: "off", enterkeyhint: "search", "aria-label": "Videos durchsuchen" });
+  const count = (get) => {
+    const map = new Map();
+    for (const v of VIDEOS.list) for (const k of get(v)) map.set(k, (map.get(k) || 0) + 1);
+    return map;
+  };
+  const people = count((v) => v.personen);
+  const events = count((v) => (v.ereignis ? [v.ereignis] : []));
+  const years = count((v) => [v.t.slice(0, 4)]);
+  const byCount = (map) => [...map.keys()].sort((a, b) => map.get(b) - map.get(a) || a.localeCompare(b, "de"));
+  const mkSelect = (label, map, keys, key) => {
+    const sel = el("select", { class: "vid-sel", "aria-label": label },
+      el("option", { value: "", text: label }),
+      ...keys.map((k) => el("option", { value: k, text: `${k} (${map.get(k)})` })));
+    sel.value = map.has(VFILTER[key]) ? VFILTER[key] : "";
+    VFILTER[key] = sel.value;
+    sel.addEventListener("change", () => { VFILTER[key] = sel.value; changed(); });
+    return sel;
+  };
+  const input = el("input", { type: "search", placeholder: "Person, Ort, Ereignis, Jahr …",
+    value: VFILTER.q, autocomplete: "off", enterkeyhint: "search", "aria-label": "Videos durchsuchen" });
+  const filterBtn = el("button", { type: "button", class: "vid-filter-btn", "aria-expanded": "false" });
+  const panel = el("div", { class: "vid-panel", hidden: !VFILTER.open },
+    mkSelect("Alle Personen", people, byCount(people), "p"),
+    mkSelect("Alle Ereignisse", events, byCount(events), "e"),
+    mkSelect("Alle Jahre", years, [...years.keys()].sort().reverse(), "y"));
   const bar = el("div", { class: "search-bar vid-bar" },
-    el("div", { class: "search-field" }, input), select);
+    el("div", { class: "vid-bar-row" }, el("div", { class: "search-field" }, input), filterBtn), panel);
   const host = el("div", { class: "vid-host" });
   main.append(bar, host);
+
+  const updateFilterBtn = () => {
+    const n = ["p", "e", "y"].filter((k) => VFILTER[k]).length;
+    filterBtn.textContent = n ? `Filter (${n})` : "Filter";
+    filterBtn.classList.toggle("on", n > 0);
+    filterBtn.setAttribute("aria-expanded", String(VFILTER.open));
+    panel.hidden = !VFILTER.open;
+  };
+  filterBtn.addEventListener("click", () => { VFILTER.open = !VFILTER.open; updateFilterBtn(); });
 
   const apply = () => {
     if (m.grid) { m.grid.destroy(); m.grid = null; }
     host.replaceChildren();
     const ws = normText(VFILTER.q).split(" ").filter(Boolean);
-    let list = VIDEOS.list.filter((v) => (!VFILTER.y || v.t.startsWith(VFILTER.y)) && ws.every((w) => v._s.includes(w)));
+    const pn = VFILTER.p ? normText(VFILTER.p) : "";
+    let list = VIDEOS.list.filter((v) => (!VFILTER.y || v.t.startsWith(VFILTER.y))
+      && (!VFILTER.e || v.ereignis === VFILTER.e) && (!pn || v._p.has(pn)) && ws.every((w) => v._s.includes(w)));
     if (!asc) list = list.slice().reverse();
     const sub = list.length === VIDEOS.list.length ? videoCount(list.length)
       : `${videoCount(list.length)} · von ${VIDEOS.list.length.toLocaleString("de-DE")}`;
@@ -2805,44 +2906,64 @@ function videosView(main, m) {
     m.grid = new VideoGrid(host, list, (v) => `${v.t.slice(0, 4)} · ${videoCount(perYear.get(v.t.slice(0, 4)))}`,
       (section) => { $("#subtitle").textContent = section || sub; });
   };
+  const changed = () => { updateFilterBtn(); window.scrollTo(0, 0); apply(); };
   let timer = 0;
   input.addEventListener("input", () => {
     clearTimeout(timer);
     timer = setTimeout(() => { VFILTER.q = input.value; window.scrollTo(0, 0); apply(); }, 150);
   });
-  select.addEventListener("change", () => { VFILTER.y = select.value; window.scrollTo(0, 0); apply(); });
+  updateFilterBtn();
   apply();
 }
 
-// Player: erst die kurze Vorschau, per Knopf das ganze Video; kein Autoplay, nichts wird gecacht
+const isPhone = () => window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+
+// Player: kurz getippt startet das ganze Video sofort (Handy: Vollbild; Querformat-Video: Bildschirm auf
+// Querformat gesperrt, dreht also von selbst). Kein Cache fuer Videos.
 const VPlayer = {
   node: null,
   video: null,
   cur: null,
-  full: false,
+  ownFs: false,
 
   init() {
     if (this.node) return;
-    this.video = el("video", { class: "vp-video", controls: true, playsinline: true, preload: "metadata" });
+    this.video = el("video", { class: "vp-video", controls: true, playsinline: true, preload: "auto" });
     this.title = el("div", { class: "vp-title" });
     this.meta = el("div", { class: "vp-meta" });
-    this.desc = el("p", { class: "vp-desc" });
     this.note = el("p", { class: "vp-note" });
-    this.btn = el("button", { type: "button", class: "search-action vp-full", onclick: () => this.toggleFull() });
     this.node = el("div", { id: "vplayer", hidden: true },
       el("div", { class: "vp-top" },
         el("button", { type: "button", class: "icon-btn", "aria-label": "Schließen", onclick: () => history.back() },
           svgNode(ICON_X)),
         this.title),
       this.video,
-      el("div", { class: "vp-info" }, this.meta, this.desc, el("div", { class: "vp-actions" }, this.btn), this.note));
+      el("div", { class: "vp-info" }, this.meta, this.note));
     document.body.append(this.node);
     this.video.addEventListener("error", () => {
       this.note.textContent = "Dieses Video lässt sich auf diesem Gerät nicht abspielen (die Videos sind im Format AV1).";
     });
+    this.video.addEventListener("loadedmetadata", () => {         // echte Abmessungen, falls das Manifest sie nicht kennt
+      if (this.ownFs && this.video.videoWidth) this.lock(this.video.videoWidth > this.video.videoHeight);
+    });
     document.addEventListener("keydown", (e) => {
       if (this.cur && e.key === "Escape") history.back();
     });
+    document.addEventListener("fullscreenchange", () => {         // Vollbild per Geste beendet -> Player zu
+      if (!document.fullscreenElement && this.ownFs && this.cur) {
+        this.ownFs = false;
+        history.back();
+      }
+    });
+  },
+
+  lock(wide) {
+    try {
+      const o = screen.orientation;
+      if (!o) return;
+      if (wide && o.lock) o.lock("landscape").catch(() => {});
+      else if (o.unlock) o.unlock();
+    } catch (e) { /* Geraet kann es nicht */ }
   },
 
   sync(state) {
@@ -2855,37 +2976,21 @@ const VPlayer = {
     this.init();
     if (this.cur === v) return;
     this.cur = v;
-    this.full = false;
     this.note.textContent = "";
     this.title.textContent = v.titel;
-    const bits = [fmtFull.format(parseLocal(v.t)), fmtDuration(v.dauer), v.ort, v.personen.join(", ")].filter(Boolean);
-    this.meta.textContent = bits.join(" · ");
-    this.desc.textContent = v.beschreibung;
-    this.desc.hidden = !v.beschreibung;
+    this.meta.textContent = [fmtFull.format(parseLocal(v.t)), fmtDuration(v.dauer), v.ort, v.personen.join(", ")]
+      .filter(Boolean).join(" · ");
     this.video.poster = videoUrl(v, "poster.webp");
-    this.video.src = videoUrl(v, "preview.mp4");
-    this.btn.textContent = "Ganzes Video abspielen";
+    this.video.src = videoUrl(v, "video.mp4");
     this.node.hidden = false;
     document.body.classList.add("vp-open");
-    try {
-      if (window.MediaSource === undefined && !this.video.canPlayType('video/mp4; codecs="av01.0.05M.08"')) {
-        this.note.textContent = "Dieser Browser spielt das Videoformat (AV1) vermutlich nicht ab.";
-      }
-    } catch (e) { /* egal */ }
-  },
-
-  toggleFull() {
-    if (!this.cur) return;
-    const at = this.video.currentTime || 0;
-    const wasPlaying = !this.video.paused;
-    this.full = !this.full;
-    this.note.textContent = "";
-    this.video.src = videoUrl(this.cur, this.full ? "video.mp4" : "preview.mp4");
-    this.btn.textContent = this.full ? "Zurück zur Vorschau" : "Ganzes Video abspielen";
-    this.video.addEventListener("loadedmetadata", () => {
-      try { if (at && at < this.video.duration) this.video.currentTime = at; } catch (e) { /* egal */ }
-      if (wasPlaying) this.video.play().catch(() => {});
-    }, { once: true });
+    if (isPhone() && this.node.requestFullscreen) {
+      this.ownFs = true;
+      const wide = v.breite && v.hoehe ? v.breite > v.hoehe : false;
+      this.node.requestFullscreen({ navigationUI: "hide" }).then(() => this.lock(wide)).catch(() => { this.ownFs = false; });
+    }
+    const p = this.video.play();
+    if (p && p.catch) p.catch(() => {});          // ohne Antippen (z. B. Vorwaerts im Verlauf) startet der Browser evtl. nicht
   },
 
   hide() {
@@ -2897,6 +3002,11 @@ const VPlayer = {
     this.video.load();          // Verbindung freigeben
     this.node.hidden = true;
     document.body.classList.remove("vp-open");
+    if (this.ownFs) {
+      this.ownFs = false;
+      this.lock(false);
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    }
   },
 };
 
