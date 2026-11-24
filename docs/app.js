@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.29";
+const APP_VERSION = "0.8.0";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -11,6 +11,7 @@ const INSTALL_KEY = "fotoschatz.install-hidden";
 const ORDER_KEY = "fotoschatz.order";   // Bilder (Suche, Alle Bilder, im Ordner): "asc" = aelteste zuerst (Standard), "desc" = neueste zuerst
 const STARS_KEY = "fotoschatz.stars";   // "0" alle, "1" = ★ und ★★, "2" = nur ★★ (Ordner, Alle Bilder, Suche; v0.7.15)
 const FOLDER_ORDER_KEY = "fotoschatz.folder-order";   // Ordnerliste: "desc" = neueste zuerst (Standard), "asc" = aelteste zuerst
+const VORDER_KEY = "fotoschatz.video-order";   // Videos: "asc" = aelteste zuerst, sonst neueste zuerst (v0.8.0)
 const HEADER_H = 44;
 const GAP = 2;
 const MAX_ZOOM = 4;
@@ -2640,6 +2641,265 @@ async function shareImage(p) {
   downloadFile(file);
 }
 
+/* ---------------------------------------------------------------- Videos (v0.8.0) */
+
+// Videos liegen im selben Bucket: <Praefix>/videos/<ID>/{video.mp4, preview.mp4, poster.webp}. Das Verzeichnis
+// <Praefix>/videos/index-<Schluessel>.json erzeugt ein separates Projekt (Videoschatz) je Link-Schluessel – wer keine
+// Datei hat (Ordner-Freigaben, Gaeste vor der Freigabe), sieht den Tab nicht. Die App filtert nichts selbst.
+let VIDEOS = null;      // { list (aelteste zuerst), byId, years }
+
+const videoUrl = (v, name) => `${BASE}/videos/${v.id}/${name}`;
+
+function fmtDuration(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${r}` : `${m}:${r}`;
+}
+
+const videoCount = (n) => (n === 1 ? "1 Video" : `${n.toLocaleString("de-DE")} Videos`);
+
+function cleanVideos(data) {
+  const raw = data && Array.isArray(data.videos) ? data.videos : [];
+  const list = [];
+  for (const v of raw) {
+    if (!v || typeof v.id !== "string" || !/^[A-Za-z0-9]{8,64}$/.test(v.id)) continue;
+    const datum = /^\d{4}-\d{2}-\d{2}$/.test(v.datum || "") ? v.datum : "1900-01-01";
+    const zeit = /^\d{2}:\d{2}$/.test(v.zeit || "") ? v.zeit : "00:00";
+    const kw = Array.isArray(v.stichwoerter) ? v.stichwoerter.map(String) : [];
+    list.push({
+      id: v.id,
+      titel: String(v.titel || "Ohne Titel"),
+      t: `${datum}T${zeit}`,
+      dauer: Number(v.dauer) || 0,
+      ort: v.ort ? String(v.ort) : "",
+      personen: Array.isArray(v.personen) ? v.personen.map(String) : [],
+      beschreibung: v.beschreibung ? String(v.beschreibung) : "",
+      stichwoerter: kw,
+      _s: normText([v.titel, v.beschreibung, kw.join(" ")].filter(Boolean).join(" ")),
+    });
+  }
+  list.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+  return { list, byId: new Map(list.map((v) => [v.id, v])) };
+}
+
+// Nach dem Start im Hintergrund: eigener Link zuerst, sonst der erste Link mit Videoverzeichnis
+async function loadVideos(loaded, own) {
+  for (const r of own ? [own] : loaded) {
+    const key = r.link.split("-")[1];
+    if (!key) continue;
+    try {
+      const res = await fetch(`${BASE}/videos/index-${key}.json`, { cache: "no-cache" });
+      if (!res.ok) continue;
+      const found = cleanVideos(await res.json());
+      if (found.list.length) {
+        VIDEOS = found;
+        break;
+      }
+    } catch (e) { /* kein Verzeichnis: kein Tab */ }
+  }
+  const btn = $('#nav button[data-view="videos"]');
+  if (btn) btn.hidden = !(VIDEOS || OWNER);
+}
+
+const VFILTER = { q: "", y: "" };
+
+class VideoGrid extends Grid {
+  layout() {
+    this.width = this.root.clientWidth || window.innerWidth;
+    this.cols = this.width < 600 ? 2 : Math.max(3, Math.round(this.width / 260));
+    const gap = 8;
+    this.tile = (this.width - 16 - gap * (this.cols - 1)) / this.cols;     // Kachelbreite
+    const rowH = Math.round(this.tile * 9 / 16) + 62 + gap;
+    this.rows = [];
+    let y = 0;
+    let section = null;
+    let current = [];
+    const flush = () => {
+      if (!current.length) return;
+      this.rows.push({ type: "r", items: current, top: y, h: rowH, section });
+      y += rowH;
+      current = [];
+    };
+    this.list.forEach((v, i) => {
+      const s = this.sectionOf ? this.sectionOf(v) : null;
+      if (this.sectionOf && s !== section) {
+        flush();
+        section = s;
+        this.rows.push({ type: "h", label: s, top: y, h: HEADER_H, section: s });
+        y += HEADER_H;
+      }
+      current.push(i);
+      if (current.length === this.cols) flush();
+    });
+    flush();
+    this.root.style.height = `${y}px`;
+    for (const node of this.mounted.values()) node.remove();
+    this.mounted.clear();
+    this.render();
+  }
+
+  renderRow(row) {
+    if (row.type === "h") {
+      return el("div", { class: "grid-head", style: `top:${row.top}px;height:${row.h}px` }, row.label);
+    }
+    const node = el("div", {
+      class: "grid-row vid-row",
+      style: `top:${row.top}px;height:${row.h}px;grid-template-columns:repeat(${this.cols},1fr)`,
+    });
+    for (const i of row.items) {
+      const v = this.list[i];
+      const day = fmtDay.format(parseLocal(v.t));
+      node.append(el("button", {
+        type: "button", class: "vtile", "aria-label": `${v.titel}, ${fmtDuration(v.dauer)}`,
+        onclick: () => navigate({ v: "videos", vid: v.id }),
+      },
+      el("span", { class: "vthumb" },
+        el("img", { src: videoUrl(v, "poster.webp"), alt: "", loading: "lazy", decoding: "async" }),
+        el("span", { class: "vdur", text: fmtDuration(v.dauer) })),
+      el("span", { class: "vtitle", text: v.titel }),
+      el("span", { class: "vmeta", text: v.ort ? `${day} · ${v.ort}` : day })));
+    }
+    return node;
+  }
+}
+
+function videosView(main, m) {
+  const asc = readPref(VORDER_KEY) === "asc";
+  setHeader("Videos", "");
+  showOrderButton(m, asc, () => writePref(VORDER_KEY, asc ? "desc" : "asc"));
+  if (!VIDEOS || !VIDEOS.list.length) {
+    main.append(el("p", { class: "center muted", text: "Noch keine Videos online. Sobald welche hochgeladen sind, erscheinen sie hier." }));
+    return;
+  }
+  const years = new Map();
+  for (const v of VIDEOS.list) years.set(v.t.slice(0, 4), (years.get(v.t.slice(0, 4)) || 0) + 1);
+  const select = el("select", { class: "vid-year", "aria-label": "Jahr" },
+    el("option", { value: "", text: "Alle Jahre" }),
+    ...[...years.keys()].sort().reverse().map((y) => el("option", { value: y, text: `${y} (${years.get(y)})` })));
+  select.value = years.has(VFILTER.y) ? VFILTER.y : "";
+  VFILTER.y = select.value;
+  const input = el("input", { type: "search", placeholder: "Titel, Beschreibung, Stichwort …", value: VFILTER.q,
+    autocomplete: "off", enterkeyhint: "search", "aria-label": "Videos durchsuchen" });
+  const bar = el("div", { class: "search-bar vid-bar" },
+    el("div", { class: "search-field" }, input), select);
+  const host = el("div", { class: "vid-host" });
+  main.append(bar, host);
+
+  const apply = () => {
+    if (m.grid) { m.grid.destroy(); m.grid = null; }
+    host.replaceChildren();
+    const ws = normText(VFILTER.q).split(" ").filter(Boolean);
+    let list = VIDEOS.list.filter((v) => (!VFILTER.y || v.t.startsWith(VFILTER.y)) && ws.every((w) => v._s.includes(w)));
+    if (!asc) list = list.slice().reverse();
+    const sub = list.length === VIDEOS.list.length ? videoCount(list.length)
+      : `${videoCount(list.length)} · von ${VIDEOS.list.length.toLocaleString("de-DE")}`;
+    $("#subtitle").textContent = sub;
+    if (!list.length) {
+      host.append(el("p", { class: "center muted", text: "Keine Videos gefunden." }));
+      return;
+    }
+    const perYear = new Map();
+    for (const v of list) perYear.set(v.t.slice(0, 4), (perYear.get(v.t.slice(0, 4)) || 0) + 1);
+    m.grid = new VideoGrid(host, list, (v) => `${v.t.slice(0, 4)} · ${videoCount(perYear.get(v.t.slice(0, 4)))}`,
+      (section) => { $("#subtitle").textContent = section || sub; });
+  };
+  let timer = 0;
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { VFILTER.q = input.value; window.scrollTo(0, 0); apply(); }, 150);
+  });
+  select.addEventListener("change", () => { VFILTER.y = select.value; window.scrollTo(0, 0); apply(); });
+  apply();
+}
+
+// Player: erst die kurze Vorschau, per Knopf das ganze Video; kein Autoplay, nichts wird gecacht
+const VPlayer = {
+  node: null,
+  video: null,
+  cur: null,
+  full: false,
+
+  init() {
+    if (this.node) return;
+    this.video = el("video", { class: "vp-video", controls: true, playsinline: true, preload: "metadata" });
+    this.title = el("div", { class: "vp-title" });
+    this.meta = el("div", { class: "vp-meta" });
+    this.desc = el("p", { class: "vp-desc" });
+    this.note = el("p", { class: "vp-note" });
+    this.btn = el("button", { type: "button", class: "search-action vp-full", onclick: () => this.toggleFull() });
+    this.node = el("div", { id: "vplayer", hidden: true },
+      el("div", { class: "vp-top" },
+        el("button", { type: "button", class: "icon-btn", "aria-label": "Schließen", onclick: () => history.back() },
+          svgNode(ICON_X)),
+        this.title),
+      this.video,
+      el("div", { class: "vp-info" }, this.meta, this.desc, el("div", { class: "vp-actions" }, this.btn), this.note));
+    document.body.append(this.node);
+    this.video.addEventListener("error", () => {
+      this.note.textContent = "Dieses Video lässt sich auf diesem Gerät nicht abspielen (die Videos sind im Format AV1).";
+    });
+    document.addEventListener("keydown", (e) => {
+      if (this.cur && e.key === "Escape") history.back();
+    });
+  },
+
+  sync(state) {
+    const v = state.v === "videos" && state.vid && VIDEOS ? VIDEOS.byId.get(state.vid) : null;
+    if (v) this.show(v);
+    else this.hide();
+  },
+
+  show(v) {
+    this.init();
+    if (this.cur === v) return;
+    this.cur = v;
+    this.full = false;
+    this.note.textContent = "";
+    this.title.textContent = v.titel;
+    const bits = [fmtFull.format(parseLocal(v.t)), fmtDuration(v.dauer), v.ort, v.personen.join(", ")].filter(Boolean);
+    this.meta.textContent = bits.join(" · ");
+    this.desc.textContent = v.beschreibung;
+    this.desc.hidden = !v.beschreibung;
+    this.video.poster = videoUrl(v, "poster.webp");
+    this.video.src = videoUrl(v, "preview.mp4");
+    this.btn.textContent = "Ganzes Video abspielen";
+    this.node.hidden = false;
+    document.body.classList.add("vp-open");
+    try {
+      if (window.MediaSource === undefined && !this.video.canPlayType('video/mp4; codecs="av01.0.05M.08"')) {
+        this.note.textContent = "Dieser Browser spielt das Videoformat (AV1) vermutlich nicht ab.";
+      }
+    } catch (e) { /* egal */ }
+  },
+
+  toggleFull() {
+    if (!this.cur) return;
+    const at = this.video.currentTime || 0;
+    const wasPlaying = !this.video.paused;
+    this.full = !this.full;
+    this.note.textContent = "";
+    this.video.src = videoUrl(this.cur, this.full ? "video.mp4" : "preview.mp4");
+    this.btn.textContent = this.full ? "Zurück zur Vorschau" : "Ganzes Video abspielen";
+    this.video.addEventListener("loadedmetadata", () => {
+      try { if (at && at < this.video.duration) this.video.currentTime = at; } catch (e) { /* egal */ }
+      if (wasPlaying) this.video.play().catch(() => {});
+    }, { once: true });
+  },
+
+  hide() {
+    if (!this.node || !this.cur) return;
+    this.cur = null;
+    this.video.pause();
+    this.video.removeAttribute("src");
+    this.video.removeAttribute("poster");
+    this.video.load();          // Verbindung freigeben
+    this.node.hidden = true;
+    document.body.classList.remove("vp-open");
+  },
+};
+
 /* ---------------------------------------------------------------- Ansichten & Verlauf */
 
 let mounted = null;
@@ -2656,6 +2916,7 @@ function viewKey(s) {
   if (s.v === "world") return "world";
   if (s.v === "countries") return "countries";
   if (s.v === "mapgrid") return `mapgrid:${dir(oldestFirst())}`;
+  if (s.v === "videos") return `videos:${readPref(VORDER_KEY) === "asc" ? "asc" : "desc"}`;
   if (s.v === "memories") return `memories:${localDay()}`;
   if (s.v === "memory") return `memory:${dir(oldestFirst())}:${localDay()}:${s.k}`;
   if (s.v === "people") return `people:${readPref(PEOPLE_ORDER_KEY) === "name" ? "name" : "count"}`;
@@ -2721,6 +2982,8 @@ function mountView(state) {
     } else {
       main.append(el("p", { class: "center muted", text: `Noch keine Bilder ${starText()} – in Lightroom Sterne setzen, Publish, sync.bat.` }));
     }
+  } else if (state.v === "videos") {
+    videosView(main, m);
   } else if (state.v === "map") {
     const M = mapView();
     const without = DATA.photos.length - M.points.length;
@@ -2854,6 +3117,7 @@ function render(state) {
   const list = mounted.listFor ? mounted.listFor(state) : mounted.list;
   if (state.viewer && list && list.length) Viewer.show(list, state.viewer.i);
   else Viewer.hide();
+  VPlayer.sync(state);
 }
 
 function navigate(state, replace = false) {
@@ -3117,6 +3381,7 @@ async function start() {
   history.replaceState({ v: "folders" }, "");
   render({ v: "folders" });
   if (deep) openDeepLink(deep);
+  loadVideos(loaded, own);        // Videos-Tab erst zeigen, wenn es ein Verzeichnis gibt (v0.8.0)
 }
 
 start();
