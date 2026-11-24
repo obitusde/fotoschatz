@@ -99,3 +99,5 @@ Die `.py`-Dateien gehören zu den `.bat`-Dateien (`regeln.py` und `katalog.py` s
 - [ ] Link an die Familie schicken.
 - [x] In der App: Chromecast (0.7.12), Erinnerungen mit „Heute vor X Jahren“, Personen-Seite, Bild teilen (0.7.16).
 - [ ] Später in der App: Diashow, Zugriffs-Statistik (erstmal nicht, Entscheidung 15.11.2026) (Liste in `CLAUDE.md`, Abschnitt 10).
+
+**Videos (v0.8.0):** Die App hat einen Tab „Videos“. Sie liest `<Präfix>/videos/index-<Schlüssel>.json`, das Videoschatz je Link-Schlüssel schreibt (mein Schlüssel: alle, Gäste-Schlüssel erst nach meiner Freigabe). Ohne diese Datei sehen Gäste den Tab nicht. Videodateien werden nie zwischengespeichert.
