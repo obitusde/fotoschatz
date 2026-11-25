@@ -686,3 +686,9 @@ body.vp-open { overflow: hidden; }
 .vp-rplay { flex: none; width: 44px; height: 44px; border-radius: 50%; background: #2f6fdb; color: #fff; font-size: 18px; }
 .vp-rseek { flex: 1; min-width: 0; height: 44px; accent-color: #2f6fdb; }
 .vp-rtime { flex: none; font-size: .8rem; color: #b8bdc6; font-variant-numeric: tabular-nums; }
+
+/* ---------- Videos: Fernseher-Test (v0.8.8, nur mit deinem Link) ---------- */
+.vp-test { margin-top: 16px; padding-top: 10px; border-top: 1px solid #333; }
+.vp-test-label { font-size: .8rem; color: #b8bdc6; margin-bottom: 6px; }
+.vp-test-row { display: flex; gap: 8px; }
+.vp-test-btn { flex: 1; height: 40px; border-radius: 20px; border: 1px solid #555; background: #1c2027; color: #fff; font: inherit; font-size: 15px; }
