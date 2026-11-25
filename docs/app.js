@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.7";
+const APP_VERSION = "0.8.8";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -1077,6 +1077,28 @@ const Cast = {
     const cf = cast.framework;
     try {
       this.ctx = cf.CastContext.getInstance();
+    } catch (e) {
+      this.state = "off";
+      return;
+    }
+    // Erst alle Zuhoerer anmelden, dann setOptions (v0.8.8): setOptions kann eine alte Verbindung sofort wieder
+    // aufnehmen (ORIGIN_SCOPED) – vorher kam diese Meldung zu frueh, die App wusste nichts davon, der Fernseher
+    // spielte weiter und am Handy fehlte die Fernbedienung.
+    this.ctx.addEventListener(cf.CastContextEventType.CAST_STATE_CHANGED, () => this.update());
+    this.rp = new cf.RemotePlayer();
+    this.rc = new cf.RemotePlayerController(this.rp);
+    this.rc.addEventListener(cf.RemotePlayerEventType.ANY_CHANGE, () => VPlayer.castSync());
+    this.ctx.addEventListener(cf.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
+      if (e.sessionState === cf.SessionState.SESSION_STARTED || e.sessionState === cf.SessionState.SESSION_RESUMED) {
+        this.joined();
+      }
+      if (e.sessionState === cf.SessionState.SESSION_ENDED) {
+        this.sent = "";
+        VPlayer.castEnded();                                                     // Video geht am Handy weiter
+      }
+      this.update();
+    });
+    try {
       this.ctx.setOptions({
         receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
         autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
@@ -1085,25 +1107,33 @@ const Cast = {
       this.state = "off";
       return;
     }
-    this.ctx.addEventListener(cf.CastContextEventType.CAST_STATE_CHANGED, () => this.update());
-    this.rp = new cf.RemotePlayer();
-    this.rc = new cf.RemotePlayerController(this.rp);
-    this.rc.addEventListener(cf.RemotePlayerEventType.ANY_CHANGE, () => VPlayer.castSync());
-    this.ctx.addEventListener(cf.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
-      if (e.sessionState === cf.SessionState.SESSION_STARTED || e.sessionState === cf.SessionState.SESSION_RESUMED) {
-        this.sent = "";
-        this.videoOk = true;
-        if (VPlayer.cur) VPlayer.castStart(VPlayer.video.currentTime || 0);      // Video-Player offen: Video auf den Fernseher
-        else this.send(true);
-      }
-      if (e.sessionState === cf.SessionState.SESSION_ENDED) {
-        this.sent = "";
-        VPlayer.castEnded();                                                     // Video geht am Handy weiter
-      }
-      this.update();
-    });
     this.state = "ready";
+    if (this.connected()) this.joined();        // Verbindung stand schon, bevor die App zuhoerte
     this.update();
+  },
+
+  // Verbunden (neu oder wieder aufgenommen): was gerade offen ist, auf den Fernseher
+  joined() {
+    this.sent = "";
+    this.videoOk = true;
+    if (VPlayer.cur) {
+      if (!VPlayer.casting) VPlayer.castStart(VPlayer.video.currentTime || 0);   // Video-Player offen
+    } else this.send(true);
+  },
+
+  // Testclip (v0.8.8, nur mit deinem Link): gleicher Inhalt einmal in H.264, einmal in AV1, liegt bei der App
+  pushTest(kind) {
+    const session = this.ctx && this.ctx.getCurrentSession();
+    if (!session) return Promise.reject(new Error("keine Verbindung"));
+    const url = new URL(`test/cast-${kind}.mp4`, location.href).href;
+    const info = new chrome.cast.media.MediaInfo(url, "video/mp4");
+    const meta = new chrome.cast.media.GenericMediaMetadata();
+    meta.title = kind === "av1" ? "AV1 Test" : "H.264 Test";
+    info.metadata = meta;
+    info.streamType = chrome.cast.media.StreamType.BUFFERED;
+    const req = new chrome.cast.media.LoadRequest(info);
+    req.autoplay = true;
+    return Promise.resolve(session.loadMedia(req)).then((err) => { if (err) throw new Error(String(err)); });
   },
 
   connected() {
@@ -3233,7 +3263,7 @@ const VPlayer = {
         this.title, this.castBtn),
       this.video,
       this.remote,
-      el("div", { class: "vp-info" }, this.meta, this.note));
+      el("div", { class: "vp-info" }, this.meta, this.note, this.castTestBox()));
     document.body.append(this.node);
     Cast.addButton(this.castBtn);
     this.video.addEventListener("error", () => {
@@ -3247,6 +3277,31 @@ const VPlayer = {
     document.addEventListener("keydown", (e) => {
       if (this.cur && e.key === "Escape") history.back();
     });
+  },
+
+  // Cast-Test (v0.8.8, nur mit deinem Link): zeigt, welches Format der Fernseher abspielt
+  castTestBox() {
+    if (!OWNER) return "";
+    const test = (kind) => {
+      if (!Cast.connected()) {
+        toast("Erst mit dem Fernseher verbinden (Knopf oben rechts)");
+        return;
+      }
+      if (this.casting) {
+        this.casting = false;
+        this.remote.hidden = true;
+        document.body.classList.remove("vp-casting");
+      }
+      this.video.pause();
+      this.video.controls = true;
+      this.note.textContent = `Testclip ${kind === "av1" ? "AV1" : "H.264"} gesendet – am Fernseher: Farbbalken mit Schrift und Ton?`;
+      Cast.pushTest(kind).catch((e) => { this.note.textContent = `Test ${kind}: Fernseher meldet ${castDiag(e)}`; });
+    };
+    return el("div", { class: "vp-test" },
+      el("div", { class: "vp-test-label", text: "Fernseher-Test (nur für dich): gleicher Clip in zwei Formaten" }),
+      el("div", { class: "vp-test-row" },
+        el("button", { type: "button", class: "vp-test-btn", text: "Test H.264", onclick: () => test("h264") }),
+        el("button", { type: "button", class: "vp-test-btn", text: "Test AV1", onclick: () => test("av1") })));
   },
 
   sync(state) {
