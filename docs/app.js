@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.8";
+const APP_VERSION = "0.8.9";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -1043,9 +1043,6 @@ const Cast = {
   state: "off",       // off | loading | ready
   btns: [],           // Cast-Knoepfe: Bildbetrachter und Video-Player (v0.8.6)
   ctx: null,
-  rp: null,           // RemotePlayer: Zustand des Videos am Fernseher (v0.8.6)
-  rc: null,
-  videoOk: true,      // false, wenn der Fernseher ein Video nicht abspielen konnte (z. B. AV1)
   timer: 0,
   sent: "",           // zuletzt gesendetes Bild (id.hash)
 
@@ -1085,16 +1082,12 @@ const Cast = {
     // aufnehmen (ORIGIN_SCOPED) – vorher kam diese Meldung zu frueh, die App wusste nichts davon, der Fernseher
     // spielte weiter und am Handy fehlte die Fernbedienung.
     this.ctx.addEventListener(cf.CastContextEventType.CAST_STATE_CHANGED, () => this.update());
-    this.rp = new cf.RemotePlayer();
-    this.rc = new cf.RemotePlayerController(this.rp);
-    this.rc.addEventListener(cf.RemotePlayerEventType.ANY_CHANGE, () => VPlayer.castSync());
     this.ctx.addEventListener(cf.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
       if (e.sessionState === cf.SessionState.SESSION_STARTED || e.sessionState === cf.SessionState.SESSION_RESUMED) {
         this.joined();
       }
       if (e.sessionState === cf.SessionState.SESSION_ENDED) {
         this.sent = "";
-        VPlayer.castEnded();                                                     // Video geht am Handy weiter
       }
       this.update();
     });
@@ -1112,28 +1105,10 @@ const Cast = {
     this.update();
   },
 
-  // Verbunden (neu oder wieder aufgenommen): was gerade offen ist, auf den Fernseher
+  // Verbunden (neu oder wieder aufgenommen): das offene Bild auf den Fernseher
   joined() {
     this.sent = "";
-    this.videoOk = true;
-    if (VPlayer.cur) {
-      if (!VPlayer.casting) VPlayer.castStart(VPlayer.video.currentTime || 0);   // Video-Player offen
-    } else this.send(true);
-  },
-
-  // Testclip (v0.8.8, nur mit deinem Link): gleicher Inhalt einmal in H.264, einmal in AV1, liegt bei der App
-  pushTest(kind) {
-    const session = this.ctx && this.ctx.getCurrentSession();
-    if (!session) return Promise.reject(new Error("keine Verbindung"));
-    const url = new URL(`test/cast-${kind}.mp4`, location.href).href;
-    const info = new chrome.cast.media.MediaInfo(url, "video/mp4");
-    const meta = new chrome.cast.media.GenericMediaMetadata();
-    meta.title = kind === "av1" ? "AV1 Test" : "H.264 Test";
-    info.metadata = meta;
-    info.streamType = chrome.cast.media.StreamType.BUFFERED;
-    const req = new chrome.cast.media.LoadRequest(info);
-    req.autoplay = true;
-    return Promise.resolve(session.loadMedia(req)).then((err) => { if (err) throw new Error(String(err)); });
+    this.send(true);
   },
 
   connected() {
@@ -1161,31 +1136,6 @@ const Cast = {
     if (this.state !== "ready") return;
     if (this.connected()) this.ctx.endCurrentSession(true);
     else this.ctx.requestSession().catch(() => {});      // Auswahl abgebrochen: kein Fehler
-  },
-
-  // Video an den Fernseher (v0.8.6, Default Media Receiver); Ergebnis: Promise, lehnt ab oder liefert einen Fehlercode
-  pushVideo(v, at) {
-    const session = this.ctx && this.ctx.getCurrentSession();
-    if (!session) return Promise.reject(new Error("keine Verbindung"));
-    const info = new chrome.cast.media.MediaInfo(videoUrl(v, "video.mp4"), "video/mp4");
-    const meta = new chrome.cast.media.GenericMediaMetadata();
-    meta.title = v.titel;
-    meta.subtitle = fmtDay.format(parseLocal(v.t));
-    meta.images = [new chrome.cast.Image(videoUrl(v, "poster.webp"))];
-    info.metadata = meta;
-    info.streamType = chrome.cast.media.StreamType.BUFFERED;
-    if (v.dauer) info.duration = v.dauer;
-    const req = new chrome.cast.media.LoadRequest(info);
-    req.autoplay = true;
-    req.currentTime = Math.max(0, at || 0);
-    return Promise.resolve(session.loadMedia(req)).then((err) => {
-      if (err) throw new Error(String(err));
-      // Meldet der Fernseher spaeter einen Fehler beim Abspielen (v0.8.7): anzeigen statt raten
-      const m = session.getMediaSession && session.getMediaSession();
-      if (m && m.addUpdateListener) {
-        m.addUpdateListener(() => { if (m.playerState === "IDLE" && m.idleReason === "ERROR") VPlayer.castMediaError(v, m); });
-      }
-    });
   },
 
   // Aktuelles Bild des Betrachters an den Fernseher; beim schnellen Blaettern nur das letzte senden
@@ -3205,28 +3155,10 @@ const isPhone = () => window.matchMedia("(hover: none) and (pointer: coarse)").m
 // Player (v0.8.3, wie YouTube): kurz getippt startet das ganze Video sofort. Es folgt der Lage des Handys (Kippen):
 // hochkant = Video oben, darunter Titel/Datum/Ort/Personen; quer = nur das Video, Vollbild ohne Text (per CSS).
 // Schliessen per Zurueck-Geste/Esc. Kein Fullscreen-Befehl (Chrome-Hinweis), keine Drehsperre, kein Cache fuer Videos.
-// Fehler von Cast als lesbarer Text (v0.8.7, Diagnose: Code, Beschreibung, Einzelheiten)
-function castDiag(e) {
-  if (!e) return "unbekannter Fehler";
-  const parts = [];
-  if (e.code) parts.push(String(e.code));
-  const d = e.description || e.message;
-  if (d && String(d) !== String(e.code)) parts.push(String(d));
-  if (e.details) {
-    try { parts.push(typeof e.details === "string" ? e.details : JSON.stringify(e.details)); } catch (x) { /* egal */ }
-  }
-  return parts.join(" · ") || String(e);
-}
-
-const ICON_CAST = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8V6a1.5 1.5 0 0 1 1.5-1.5h15A1.5 1.5 0 0 1 21 6v12a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M3 12a8 8 0 0 1 8 8M3 16a4 4 0 0 1 4 4"/><path d="M3 20h.01"/></svg>';
-
 const VPlayer = {
   node: null,
   video: null,
   cur: null,
-  casting: false,      // Video laeuft am Fernseher (v0.8.6): Handy zeigt nur die Fernbedienung
-  castTime: 0,
-  seeking: false,
 
   init() {
     if (this.node) return;
@@ -3237,35 +3169,14 @@ const VPlayer = {
     this.title = el("div", { class: "vp-title" });
     this.meta = el("div", { class: "vp-meta" });
     this.note = el("p", { class: "vp-note" });
-    this.castBtn = el("button", { type: "button", class: "icon-btn vp-cast-btn", hidden: true,
-      "aria-label": "Auf dem Fernseher zeigen", "aria-pressed": "false" }, svgNode(ICON_CAST));
-    // Fernbedienung am Handy, solange das Video am Fernseher laeuft
-    this.rPlay = el("button", { type: "button", class: "vp-rplay", "aria-label": "Pause oder weiter",
-      onclick: () => { if (Cast.rc) Cast.rc.playOrPause(); } }, "⏸");
-    this.rSeek = el("input", { type: "range", class: "vp-rseek", min: "0", max: "1000", value: "0", "aria-label": "Position" });
-    this.rTime = el("span", { class: "vp-rtime" });
-    this.remote = el("div", { class: "vp-remote", hidden: true },
-      el("div", { class: "vp-rlabel", text: "Läuft auf dem Fernseher" }),
-      el("div", { class: "vp-rrow" }, this.rPlay, this.rSeek, this.rTime));
-    this.rSeek.addEventListener("input", () => { this.seeking = true; });
-    this.rSeek.addEventListener("change", () => {
-      this.seeking = false;
-      const dur = (Cast.rp && Cast.rp.duration) || (this.cur && this.cur.dauer) || 0;
-      if (Cast.rp && Cast.rc && dur) {
-        Cast.rp.currentTime = (Number(this.rSeek.value) / 1000) * dur;
-        Cast.rc.seek();
-      }
-    });
     this.node = el("div", { id: "vplayer", hidden: true },
       el("div", { class: "vp-top" },
         el("button", { type: "button", class: "icon-btn", "aria-label": "Schließen", onclick: () => history.back() },
           svgNode(ICON_X)),
-        this.title, this.castBtn),
+        this.title),
       this.video,
-      this.remote,
-      el("div", { class: "vp-info" }, this.meta, this.note, this.castTestBox()));
+      el("div", { class: "vp-info" }, this.meta, this.note));
     document.body.append(this.node);
-    Cast.addButton(this.castBtn);
     this.video.addEventListener("error", () => {
       this.note.textContent = "Dieses Video lässt sich auf diesem Gerät nicht abspielen (die Videos sind im Format AV1).";
     });
@@ -3277,31 +3188,6 @@ const VPlayer = {
     document.addEventListener("keydown", (e) => {
       if (this.cur && e.key === "Escape") history.back();
     });
-  },
-
-  // Cast-Test (v0.8.8, nur mit deinem Link): zeigt, welches Format der Fernseher abspielt
-  castTestBox() {
-    if (!OWNER) return "";
-    const test = (kind) => {
-      if (!Cast.connected()) {
-        toast("Erst mit dem Fernseher verbinden (Knopf oben rechts)");
-        return;
-      }
-      if (this.casting) {
-        this.casting = false;
-        this.remote.hidden = true;
-        document.body.classList.remove("vp-casting");
-      }
-      this.video.pause();
-      this.video.controls = true;
-      this.note.textContent = `Testclip ${kind === "av1" ? "AV1" : "H.264"} gesendet – am Fernseher: Farbbalken mit Schrift und Ton?`;
-      Cast.pushTest(kind).catch((e) => { this.note.textContent = `Test ${kind}: Fernseher meldet ${castDiag(e)}`; });
-    };
-    return el("div", { class: "vp-test" },
-      el("div", { class: "vp-test-label", text: "Fernseher-Test (nur für dich): gleicher Clip in zwei Formaten" }),
-      el("div", { class: "vp-test-row" },
-        el("button", { type: "button", class: "vp-test-btn", text: "Test H.264", onclick: () => test("h264") }),
-        el("button", { type: "button", class: "vp-test-btn", text: "Test AV1", onclick: () => test("av1") })));
   },
 
   sync(state) {
@@ -3323,82 +3209,13 @@ const VPlayer = {
     VAuto.sync([]);
     this.node.hidden = false;
     document.body.classList.add("vp-open");
-    Cast.load();
-    if (Cast.connected() && Cast.videoOk) {       // Fernseher verbunden: gleich dorthin, am Handy nur die Fernbedienung
-      this.video.removeAttribute("src");
-      this.castStart(0);
-      return;
-    }
-    this.playLocal(0);
-  },
-
-  playLocal(at) {
-    const v = this.cur;
-    if (!v) return;
-    if (!this.video.getAttribute("src")) this.video.src = videoUrl(v, "video.mp4");
-    if (at > 0) this.video.currentTime = at;
+    this.video.src = videoUrl(v, "video.mp4");
     const p = this.video.play();
     if (p && p.catch) p.catch(() => {});          // ohne Antippen (z. B. Vorwaerts im Verlauf) startet der Browser evtl. nicht
   },
 
-  // Video auf den Fernseher (v0.8.6): lokal anhalten, Fernbedienung zeigen
-  castStart(at) {
-    const v = this.cur;
-    if (!v || !Cast.connected()) return;
-    this.casting = true;
-    this.castTime = at;
-    this.video.pause();
-    this.video.controls = false;
-    this.remote.hidden = false;
-    this.castSync();
-    this.note.textContent = "";
-    document.body.classList.add("vp-casting");
-    Cast.pushVideo(v, at).catch((e) => {
-      if (this.cur !== v) return;
-      Cast.videoOk = false;
-      this.castEnded(`Der Fernseher konnte das Video nicht laden. Meldung: ${castDiag(e)}. Es läuft am Handy weiter.`);
-    });
-  },
-
-  // Video wurde geladen, aber der Fernseher bricht beim Abspielen ab
-  castMediaError(v, m) {
-    if (this.cur !== v || !this.casting) return;
-    Cast.videoOk = false;
-    this.castEnded(`Der Fernseher meldet einen Fehler beim Abspielen (Zustand ${m.playerState}, Grund ${m.idleReason}`
-      + `${m.extendedStatus ? ", " + castDiag({ details: m.extendedStatus }) : ""}). Es läuft am Handy weiter.`);
-  },
-
-  // Fernseher getrennt oder Video dort nicht abspielbar: am Handy an derselben Stelle weiter
-  castEnded(msg) {
-    if (!this.casting) return;
-    this.casting = false;
-    this.remote.hidden = true;
-    this.video.controls = true;
-    document.body.classList.remove("vp-casting");
-    this.playLocal(this.castTime || 0);
-    this.note.textContent = msg || "";
-  },
-
-  castSync() {
-    if (!this.casting || !Cast.rp) return;
-    const rp = Cast.rp;
-    const t = Number(rp.currentTime) || 0;
-    if (rp.isMediaLoaded) this.castTime = t;
-    const dur = Number(rp.duration) || (this.cur && this.cur.dauer) || 0;
-    this.rPlay.textContent = rp.isPaused ? "▶" : "⏸";
-    if (!this.seeking) this.rSeek.value = dur ? Math.min(1000, Math.round((t / dur) * 1000)) : 0;
-    this.rTime.textContent = `${fmtDuration(t)} / ${fmtDuration(dur)}`;
-  },
-
   hide() {
     if (!this.node || !this.cur) return;
-    if (this.casting) {                                 // Player zu: Fernseher stoppen, Verbindung bleibt
-      try { Cast.rc.stop(); } catch (e) { /* egal */ }
-      this.casting = false;
-      this.remote.hidden = true;
-      this.video.controls = true;
-      document.body.classList.remove("vp-casting");
-    }
     this.cur = null;
     this.video.pause();
     this.video.removeAttribute("src");
