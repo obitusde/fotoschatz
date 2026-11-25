@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.6";
+const APP_VERSION = "0.8.7";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -1148,7 +1148,14 @@ const Cast = {
     const req = new chrome.cast.media.LoadRequest(info);
     req.autoplay = true;
     req.currentTime = Math.max(0, at || 0);
-    return Promise.resolve(session.loadMedia(req)).then((err) => { if (err) throw new Error(String(err)); });
+    return Promise.resolve(session.loadMedia(req)).then((err) => {
+      if (err) throw new Error(String(err));
+      // Meldet der Fernseher spaeter einen Fehler beim Abspielen (v0.8.7): anzeigen statt raten
+      const m = session.getMediaSession && session.getMediaSession();
+      if (m && m.addUpdateListener) {
+        m.addUpdateListener(() => { if (m.playerState === "IDLE" && m.idleReason === "ERROR") VPlayer.castMediaError(v, m); });
+      }
+    });
   },
 
   // Aktuelles Bild des Betrachters an den Fernseher; beim schnellen Blaettern nur das letzte senden
@@ -3168,6 +3175,19 @@ const isPhone = () => window.matchMedia("(hover: none) and (pointer: coarse)").m
 // Player (v0.8.3, wie YouTube): kurz getippt startet das ganze Video sofort. Es folgt der Lage des Handys (Kippen):
 // hochkant = Video oben, darunter Titel/Datum/Ort/Personen; quer = nur das Video, Vollbild ohne Text (per CSS).
 // Schliessen per Zurueck-Geste/Esc. Kein Fullscreen-Befehl (Chrome-Hinweis), keine Drehsperre, kein Cache fuer Videos.
+// Fehler von Cast als lesbarer Text (v0.8.7, Diagnose: Code, Beschreibung, Einzelheiten)
+function castDiag(e) {
+  if (!e) return "unbekannter Fehler";
+  const parts = [];
+  if (e.code) parts.push(String(e.code));
+  const d = e.description || e.message;
+  if (d && String(d) !== String(e.code)) parts.push(String(d));
+  if (e.details) {
+    try { parts.push(typeof e.details === "string" ? e.details : JSON.stringify(e.details)); } catch (x) { /* egal */ }
+  }
+  return parts.join(" · ") || String(e);
+}
+
 const ICON_CAST = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8V6a1.5 1.5 0 0 1 1.5-1.5h15A1.5 1.5 0 0 1 21 6v12a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M3 12a8 8 0 0 1 8 8M3 16a4 4 0 0 1 4 4"/><path d="M3 20h.01"/></svg>';
 
 const VPlayer = {
@@ -3278,11 +3298,19 @@ const VPlayer = {
     this.castSync();
     this.note.textContent = "";
     document.body.classList.add("vp-casting");
-    Cast.pushVideo(v, at).catch(() => {
+    Cast.pushVideo(v, at).catch((e) => {
       if (this.cur !== v) return;
       Cast.videoOk = false;
-      this.castEnded("Der Fernseher kann dieses Video nicht abspielen (die Videos sind im Format AV1). Es läuft am Handy weiter.");
+      this.castEnded(`Der Fernseher konnte das Video nicht laden. Meldung: ${castDiag(e)}. Es läuft am Handy weiter.`);
     });
+  },
+
+  // Video wurde geladen, aber der Fernseher bricht beim Abspielen ab
+  castMediaError(v, m) {
+    if (this.cur !== v || !this.casting) return;
+    Cast.videoOk = false;
+    this.castEnded(`Der Fernseher meldet einen Fehler beim Abspielen (Zustand ${m.playerState}, Grund ${m.idleReason}`
+      + `${m.extendedStatus ? ", " + castDiag({ details: m.extendedStatus }) : ""}). Es läuft am Handy weiter.`);
   },
 
   // Fernseher getrennt oder Video dort nicht abspielbar: am Handy an derselben Stelle weiter
