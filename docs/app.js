@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.11";
+const APP_VERSION = "0.8.12";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -3266,6 +3266,10 @@ const Keys = {
     // P+ (ChannelUp, am Fernseher gemessen: keyCode 33) = weiter, P- (ChannelDown, 34) = zurueck; Bild hoch/runter wie gewohnt
     if (k === "PageUp" || k === "ChannelDown" || c === 428) return "pageprev";
     if (k === "PageDown" || k === "ChannelUp" || c === 427) return "pagenext";
+    if (k === "ColorF0Red" || c === 403) return "red";
+    if (k === "ColorF1Green" || c === 404) return "green";
+    if (k === "ColorF2Yellow" || c === 405) return "yellow";
+    if (k === "ColorF3Blue" || c === 406) return "blue";
     if (k === "MediaTrackNext") return "skipnext";
     if (k === "MediaTrackPrevious") return "skipprev";
     if (k === "MediaPlayPause" || k === "MediaPlay" || k === "MediaPause" || c === 179 || c === 415 || c === 19) return "playpause";
@@ -3377,6 +3381,17 @@ const Keys = {
         return this.move("down");
       }
       case "playpause": case "skipnext": case "skipprev": case "ff": case "rew": return false;
+      // Farbtasten: rot = Reihenfolge, gruen = Sterne, gelb = Video-Filter (sonst Videos), blau = Suche
+      case "red": { const b = $("#order"); if (b && !b.hidden) b.click(); else toast("Hier gibt es keine Reihenfolge."); return true; }
+      case "green": { const b = $("#stars"); if (b && !b.hidden) b.click(); else toast("Hier gibt es keinen Sternefilter."); return true; }
+      case "yellow": {
+        const f = $(".vid-filter-btn");
+        if (f) { f.click(); return true; }
+        const v = $('#nav button[data-view="videos"]');
+        if (v && !v.hidden) { v.click(); setTimeout(() => this.focusFirst(), 150); } else toast("Keine Videos vorhanden.");
+        return true;
+      }
+      case "blue": { const b = $('#nav button[data-view="search"]'); if (b) b.click(); return true; }
       case "pageprev": return this.tab(-1);
       case "pagenext": return this.tab(1);
       case "secprev": return this.section(-1);
