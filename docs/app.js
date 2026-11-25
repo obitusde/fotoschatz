@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.10";
+const APP_VERSION = "0.8.11";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -3263,8 +3263,9 @@ const Keys = {
     if (k === "0" || k === "Escape" || k === "Backspace" || k === "MediaStop" || c === 413 || c === 178) return "back";
     if (k === "7") return "secprev";
     if (k === "9") return "secnext";
-    if (k === "PageUp" || k === "ChannelUp" || c === 427) return "pageprev";
-    if (k === "PageDown" || k === "ChannelDown" || c === 428) return "pagenext";
+    // P+ (ChannelUp, am Fernseher gemessen: keyCode 33) = weiter, P- (ChannelDown, 34) = zurueck; Bild hoch/runter wie gewohnt
+    if (k === "PageUp" || k === "ChannelDown" || c === 428) return "pageprev";
+    if (k === "PageDown" || k === "ChannelUp" || c === 427) return "pagenext";
     if (k === "MediaTrackNext") return "skipnext";
     if (k === "MediaTrackPrevious") return "skipprev";
     if (k === "MediaPlayPause" || k === "MediaPlay" || k === "MediaPause" || c === 179 || c === 415 || c === 19) return "playpause";
