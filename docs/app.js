@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.9";
+const APP_VERSION = "0.8.10";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_KEY = "fotoschatz.secret";
 // Link: #<Praefix>-<Schluessel> (seit v0.7.15: eigener Link, Gaeste-Link, Ordner-Freigaben – je ein
@@ -3226,6 +3226,283 @@ const VPlayer = {
     if (mounted && mounted.grid && mounted.grid.autoplay) mounted.grid.render();      // Vorschau oben geht weiter
   },
 };
+
+/* ---------------------------------------------------------------- Tasten & Fernbedienung (v0.8.10)
+   Fuer den Fernseher (Browsehere, Bluetooth-Fernbedienung wie Tastatur) und jede Tastatur:
+   Ziffern 2/8/4/6 = hoch/runter/links/rechts, 5 = OK, 0 = Zurueck, 7/9 = voriger/naechster Abschnitt (Jahr),
+   P+/P- (Bild hoch/runter) = Reiter unten, Skip = naechstes/voriges Video bzw. Bild, Play/Pause, Vor-/Zurueckspulen.
+   Zeiger-Bedienung bleibt unberuehrt; der Fokusrahmen erscheint erst nach der ersten Taste. */
+
+const Keys = {
+  on: false,
+
+  init() {
+    document.addEventListener("keydown", (e) => this.onKey(e), true);
+    document.addEventListener("pointerdown", () => { if (this.on) { this.on = false; document.body.classList.remove("keys-on"); } }, true);
+    const ms = navigator.mediaSession;
+    if (ms && ms.setActionHandler) {
+      const set = (name, fn) => { try { ms.setActionHandler(name, fn); } catch (err) { /* nicht unterstuetzt */ } };
+      set("play", () => this.act("playpause"));
+      set("pause", () => this.act("playpause"));
+      set("previoustrack", () => this.act("skipprev"));
+      set("nexttrack", () => this.act("skipnext"));
+      set("seekbackward", () => this.act("rew"));
+      set("seekforward", () => this.act("ff"));
+    }
+  },
+
+  // Taste -> Aktion (Name) oder null
+  actionOf(e) {
+    const k = e.key;
+    const c = e.keyCode;
+    if (k === "ArrowUp" || k === "2") return "up";
+    if (k === "ArrowDown" || k === "8") return "down";
+    if (k === "ArrowLeft" || k === "4") return "left";
+    if (k === "ArrowRight" || k === "6") return "right";
+    if (k === "Enter" || k === "5") return "ok";
+    if (k === "0" || k === "Escape" || k === "Backspace" || k === "MediaStop" || c === 413 || c === 178) return "back";
+    if (k === "7") return "secprev";
+    if (k === "9") return "secnext";
+    if (k === "PageUp" || k === "ChannelUp" || c === 427) return "pageprev";
+    if (k === "PageDown" || k === "ChannelDown" || c === 428) return "pagenext";
+    if (k === "MediaTrackNext") return "skipnext";
+    if (k === "MediaTrackPrevious") return "skipprev";
+    if (k === "MediaPlayPause" || k === "MediaPlay" || k === "MediaPause" || c === 179 || c === 415 || c === 19) return "playpause";
+    if (k === "MediaFastForward" || c === 417) return "ff";
+    if (k === "MediaRewind" || c === 412) return "rew";
+    if (k === " ") return "playpause";
+    return null;
+  },
+
+  onKey(e) {
+    if (e.ctrlKey || e.altKey || e.metaKey || !mounted && !Viewer.open) return;
+    const t = e.target;
+    const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+    const a = this.actionOf(e);
+    if (!a) return;
+    if (typing) {
+      if (a === "back" && e.key === "Escape") return;           // Escape in Feldern: wie bisher
+      if (t.tagName === "INPUT" && (e.key === "ArrowDown" || e.key === "ArrowUp")) { t.blur(); }   // aus dem Eingabefeld heraus weiterbewegen
+      else
+      if (!["pageprev", "pagenext", "skipnext", "skipprev", "playpause"].includes(a) || e.key === " ") return;
+      if (a === "playpause" && !e.key.startsWith("Media") && e.keyCode !== 415 && e.keyCode !== 19) return;
+    }
+    if (a === "ok" && t && t.tagName === "BUTTON" && e.key === "Enter") return;   // Enter auf Knopf macht der Browser selbst
+    if (a === "back" && e.key === "Escape" && !Viewer.open && !VPlayer.cur && !$("#vsheet")) return;
+    if (a === "playpause" && e.key === " " && !VPlayer.cur) return;
+    // Bestehende Bild-Bedienung (Klicker, Leertaste, i, f) nicht stoeren
+    if (Viewer.open && (e.key === " " || e.key === "i" || e.key === "f")) return;
+    this.on = true;
+    document.body.classList.add("keys-on");
+    if (this.act(a)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  },
+
+  act(a) {
+    if ($("#vsheet")) return this.sheet(a);
+    if (VPlayer.cur) return this.player(a);
+    if (Viewer.open) return this.viewer(a);
+    return this.browse(a);
+  },
+
+  back() { history.back(); return true; },
+
+  // ---- Video-Player
+  player(a) {
+    const v = VPlayer.video;
+    const seek = (d) => { if (v.duration) v.currentTime = Math.max(0, Math.min(v.duration, v.currentTime + d)); };
+    const jump = (d) => {
+      const list = mounted && mounted.grid && mounted.grid.list;
+      if (!list) return;
+      const i = list.indexOf(VPlayer.cur);
+      const n = list[i + d];
+      if (n) navigate({ v: "videos", vid: n.id }, true);
+      else toast(d > 0 ? "Das war das letzte Video." : "Das ist das erste Video.");
+    };
+    switch (a) {
+      case "back": return this.back();
+      case "ok": case "playpause": if (v.paused) { const p = v.play(); if (p && p.catch) p.catch(() => {}); } else v.pause(); return true;
+      case "left": case "rew": seek(-10); return true;
+      case "right": case "ff": seek(10); return true;
+      case "secprev": seek(-60); return true;
+      case "secnext": seek(60); return true;
+      case "up": case "skipprev": case "pageprev": jump(-1); return true;
+      case "down": case "skipnext": case "pagenext": jump(1); return true;
+    }
+    return false;
+  },
+
+  // ---- Foto-Betrachter
+  viewer(a) {
+    switch (a) {
+      case "back": return this.back();
+      case "ok": case "playpause": Viewer.setInfo(!Viewer.infoOn, true); return true;
+      case "left": case "up": case "skipprev": case "rew": case "pageprev": Viewer.go(-1); return true;
+      case "right": case "down": case "skipnext": case "ff": case "pagenext": Viewer.go(1); return true;
+      case "secprev": Viewer.go(-10); return true;
+      case "secnext": Viewer.go(10); return true;
+    }
+    return false;
+  },
+
+  // ---- Auswahlfenster (Sterne/Loeschen)
+  sheet(a) {
+    const sheet = $("#vsheet");
+    const items = [...sheet.querySelectorAll("button")].filter((b) => b.offsetParent);
+    const i = items.indexOf(document.activeElement);
+    switch (a) {
+      case "back": closeSheet(); return true;
+      case "up": case "left": items[i <= 0 ? items.length - 1 : i - 1].focus(); return true;
+      case "down": case "right": items[i + 1 >= items.length ? 0 : i + 1].focus(); return true;
+      case "ok": if (i >= 0) items[i].click(); return true;
+    }
+    return false;
+  },
+
+  // ---- Alle anderen Ansichten
+  browse(a) {
+    switch (a) {
+      case "back": {
+        const st = history.state || { v: "folders" };
+        if (st.v === "folders") return false;
+        history.back();
+        return true;
+      }
+      case "ok": {
+        const f = document.activeElement;
+        if (f && f !== document.body && f.click) { f.click(); return true; }
+        return this.move("down");
+      }
+      case "playpause": case "skipnext": case "skipprev": case "ff": case "rew": return false;
+      case "pageprev": return this.tab(-1);
+      case "pagenext": return this.tab(1);
+      case "secprev": return this.section(-1);
+      case "secnext": return this.section(1);
+      default: return this.move(a);
+    }
+  },
+
+  tab(d) {
+    const btns = [...document.querySelectorAll("#nav button")].filter((b) => !b.hidden);
+    if (!btns.length) return false;
+    let i = btns.findIndex((b) => b.classList.contains("active"));
+    if (i < 0) i = 0;
+    const n = btns[(i + d + btns.length) % btns.length];
+    n.click();
+    setTimeout(() => this.focusFirst(), 150);
+    return true;
+  },
+
+  visible(node) {
+    if (!node.getClientRects().length) return null;
+    const r = node.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) return null;
+    return r;
+  },
+
+  focusables() {
+    const root = document.body;
+    const sel = "button:not([disabled]), a[href], input:not([type=hidden]), select, textarea, [tabindex='0']";
+    const out = [];
+    for (const n of root.querySelectorAll(sel)) {
+      if (n.closest("[hidden], #viewer, #vplayer, .leaflet-container") || n.tabIndex < 0 && !n.matches("button, a, input, select")) continue;
+      const r = this.visible(n);
+      if (!r) continue;
+      if (r.bottom < 0 || r.top > window.innerHeight) continue;
+      out.push({ n, r });
+    }
+    return out;
+  },
+
+  focusNode(n) {
+    n.focus({ preventScroll: true });
+    if (n.closest("#top, #nav")) return;
+    const r = n.getBoundingClientRect();
+    const topH = $("#top").offsetHeight + 8 + (($(".search-bar") || { offsetHeight: 0 }).offsetHeight);
+    const botH = $("#nav").offsetHeight + 8;
+    if (r.top < topH) window.scrollBy(0, r.top - topH - 10);
+    else if (r.bottom > window.innerHeight - botH) window.scrollBy(0, r.bottom - (window.innerHeight - botH) + 10);
+  },
+
+  focusFirst() {
+    const topH = $("#top").offsetHeight;
+    const list = this.focusables().filter((f) => !f.n.closest("#top, #nav") && f.n.tagName !== "INPUT" && f.r.top >= topH - 4);
+    list.sort((p, q) => p.r.top - q.r.top || p.r.left - q.r.left);
+    if (list.length) this.focusNode(list[0].n);
+  },
+
+  move(dir, retry = 0) {
+    const all = this.focusables();
+    const cur = document.activeElement && all.find((f) => f.n === document.activeElement);
+    if (!cur) {
+      const topH = $("#top").offsetHeight;
+      const body = all.filter((f) => !f.n.closest("#top, #nav") && f.r.top >= topH - 4);
+      body.sort((p, q) => p.r.top - q.r.top || p.r.left - q.r.left);
+      const first = body[0] || all[0];
+      if (first) this.focusNode(first.n);
+      return true;
+    }
+    const c = { x: cur.r.left + cur.r.width / 2, y: cur.r.top + cur.r.height / 2 };
+    let best = null;
+    let bestScore = Infinity;
+    for (const f of all) {
+      if (f === cur) continue;
+      const x = f.r.left + f.r.width / 2;
+      const y = f.r.top + f.r.height / 2;
+      const dx = x - c.x;
+      const dy = y - c.y;
+      let main;
+      let side;
+      if (dir === "up") { main = -dy; side = Math.abs(dx); }
+      else if (dir === "down") { main = dy; side = Math.abs(dx); }
+      else if (dir === "left") { main = -dx; side = Math.abs(dy); }
+      else { main = dx; side = Math.abs(dy); }
+      if (main < 4) continue;
+      if ((dir === "left" || dir === "right") && side > cur.r.height * 0.8 + f.r.height * 0.8) continue;   // gleiche Zeile
+      const score = main + side * 3;
+      if (score < bestScore) { bestScore = score; best = f; }
+    }
+    if (best) { this.focusNode(best.n); return true; }
+    if ((dir === "up" || dir === "down") && retry < 2) {
+      const before = window.scrollY;
+      window.scrollBy(0, (dir === "down" ? 1 : -1) * window.innerHeight * 0.6);
+      if (window.scrollY !== before) {
+        requestAnimationFrame(() => requestAnimationFrame(() => this.move(dir, retry + 1)));
+      }
+    }
+    return true;
+  },
+
+  // Voriger/naechster Abschnitt (Jahr): Raster ueber die Zeilen, sonst ueber die Ueberschriften
+  section(d) {
+    const topH = $("#top").offsetHeight + (($(".search-bar") || { offsetHeight: 0 }).offsetHeight);
+    const g = mounted && mounted.grid;
+    let targets;
+    if (g && g.rows) {
+      const origin = g.originY();
+      targets = g.rows.filter((r) => r.type === "h").map((r) => origin + r.top);
+    } else {
+      // Ueberschriften sind "sticky": ihre eigene Lage stimmt beim Scrollen nicht, die des Nachfolgers schon
+      targets = [...document.querySelectorAll("h2")].filter((h) => !h.closest("[hidden]") && h.nextElementSibling)
+        .map((h) => h.nextElementSibling.getBoundingClientRect().top + window.scrollY - h.offsetHeight);
+    }
+    if (!targets.length) return false;
+    const ref = window.scrollY + topH + 5;
+    let y = null;
+    if (d > 0) y = targets.find((t) => t > ref + 10);
+    else {
+      const before = targets.filter((t) => t < ref - 10);
+      y = before.length ? before[before.length - 1] : 0;
+    }
+    if (y == null) { toast("Das ist der letzte Abschnitt."); return true; }
+    window.scrollTo(0, Math.max(0, y - topH));
+    setTimeout(() => { document.activeElement && document.activeElement.blur(); this.focusFirst(); }, 120);
+    return true;
+  },
+};
+Keys.init();
 
 /* ---------------------------------------------------------------- Ansichten & Verlauf */
 
