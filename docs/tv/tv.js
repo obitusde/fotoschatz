@@ -2,7 +2,7 @@
 
 /* Fotoschatz Videos fuer den Fernseher (nur ansehen). Liest dieselben Video-Verzeichnisse wie die App
    (<Praefix>/videos/index-<Schluessel>.json). Bedienung nur ueber Fernbedienung/Tastatur (Ziffern, Medien-, Farbtasten). */
-const TV_VERSION = "0.8.14";
+const TV_VERSION = "0.8.15";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_RE = /^[A-Za-z0-9]{32,}(-[A-Za-z0-9]{16,})?$/;
 const LINK_KEY = "fotoschatz.tv.link";
@@ -233,8 +233,10 @@ function osdUpdate() {
   $("#osdtime").textContent = `${fmtDuration(v.currentTime)} / ${fmtDuration(d)}${v.paused ? "   ❚❚ Pause" : ""}`;
 }
 
-function play(v) {
+function play(v, fresh) {
   if (!v) return;
+  const already = !!S.player;                   // laeuft schon ein Video (z. B. naechstes Zufallsvideo)?
+  if (already) { persist(true); updateProgress(S.player); }
   S.player = v;
   const vid = video();
   $("#player").hidden = false;
@@ -244,15 +246,10 @@ function play(v) {
   const saved = S.pos[v.id];
   vid.poster = videoUrl(v, "poster.webp");
   vid.src = videoUrl(v, "video.mp4");
-  const resume = saved ? saved[0] : 0;
-  const onMeta = () => {
-    vid.removeEventListener("loadedmetadata", onMeta);
-    if (resume > 0 && resume < (vid.duration || 1e9) - 5) vid.currentTime = resume;
-  };
-  vid.addEventListener("loadedmetadata", onMeta);
+  S.resume = !fresh && saved ? saved[0] : 0;
   const p = vid.play();
   if (p && p.catch) p.catch(() => { $("#vmsg").textContent = "Mit Play / 5 starten"; $("#vmsg").hidden = false; });
-  history.pushState({ p: v.id }, "");
+  if (!already) history.pushState({ p: v.id }, "");
   osdShow(false);
   clearInterval(saveTimer);
   saveTimer = setInterval(() => { osdUpdate(); persist(); }, 1000);
@@ -302,6 +299,7 @@ function playerKeys(a) {
     case "secnext": case "pplus": seek(60); return true;
     case "up": case "down": osdShow(false); osdUpdate(); return true;
     case "back": case "stop": stopPlayer(false); return true;
+    case "random": randomVideo(); return true;
     case "skipnext": case "skipprev": {
       const d = a === "skipnext" ? 1 : -1;
       const at = S.shown.indexOf(S.player);
@@ -337,9 +335,10 @@ function gridKeys(a) {
   const z = zone();
   // Farbtasten gelten in allen Zonen
   if (a === "red") { toggleOrder(); return true; }
-  if (a === "green") { filterKey("y"); return true; }
-  if (a === "yellow") { filterKey("p"); return true; }
-  if (a === "blue") { randomVideo(); return true; }
+  if (a === "green") { stepFilter("y", 1, false); return true; }          // Jahr aelter (2019 -> 2018)
+  if (a === "yellow") { stepFilter("y", -1, false); return true; }        // Jahr neuer
+  if (a === "blue") { stepFilter("p", 1, true); return true; }            // naechste Person, am Ende wieder „Alle“
+  if (a === "random") { randomVideo(); return true; }
   if (z === "y" || z === "p") {
     const kind = z;
     const focused = Number(document.activeElement.dataset.i);
@@ -370,11 +369,8 @@ function gridKeys(a) {
     case "pminus": focusTile(S.cur - COLS * 3); return true;
     case "secprev": jumpYear(S.desc ? 1 : -1); return true;
     case "secnext": jumpYear(S.desc ? -1 : 1); return true;
-    case "red": toggleOrder(); return true;
-    case "green": filterKey("y"); return true;
-    case "yellow": filterKey("p"); return true;
-    case "blue": randomVideo(); return true;
-    case "back": case "stop": return false;
+    case "back": focusChip("y", S.yi); return true;                                 // 0 = in die Filter
+    case "stop": return false;
   }
   return false;
 }
@@ -389,14 +385,21 @@ function chooseStep(kind, d) {                 // naechster/voriger Eintrag in d
   focusChip(kind, kind === "y" ? S.yi : S.pi);
 }
 
-function filterKey(kind) {                     // Farbtaste: Filter oeffnen, nochmal = naechster Eintrag
-  if (zone() !== kind) { focusChip(kind, kind === "y" ? S.yi : S.pi); return; }
+function stepFilter(kind, d, wrap) {             // Farbtasten: Filter schrittweise aendern, ohne den Fokus zu verlieren
   const opts = kind === "y" ? S.years : S.persons;
   const cur = kind === "y" ? S.yi : S.pi;
-  const next = (cur + 1) % opts.length;
+  let next = cur + d;
+  if (wrap) next = (next + opts.length) % opts.length;
+  else if (next < 0 || next >= opts.length) {
+    toast(d > 0 ? "Das ist das älteste Jahr." : "Das ist schon „Alle“ Jahre.");
+    return;
+  }
+  const was = zone();
   if (kind === "y") S.year = opts[next].value; else S.person = opts[next].value;
   applyFilter();
-  focusChip(kind, kind === "y" ? S.yi : S.pi);
+  toast(`${kind === "y" ? "Jahr" : "Person"}: ${opts[next].label}`);
+  if (was === "y" || was === "p") focusChip(was, was === "y" ? S.yi : S.pi);
+  else focusTile(0);
 }
 
 function toggleOrder() {
@@ -408,12 +411,12 @@ function toggleOrder() {
   toast(S.desc ? "Neueste zuerst" : "Älteste zuerst");
 }
 
-function randomVideo() {
-  if (!S.shown.length) return;
-  const i = Math.floor(Math.random() * S.shown.length);
-  S.cur = i;
-  focusTile(i);
-  play(S.shown[i]);
+function randomVideo() {                         // zufaelliges Video der aktuellen Auswahl, sofort abspielen
+  const pool = S.shown.filter((v) => v !== S.player);
+  if (!pool.length) { toast("Keine weiteren Videos in dieser Auswahl."); return; }
+  const v = pool[Math.floor(Math.random() * pool.length)];
+  S.cur = S.shown.indexOf(v);
+  play(v, true);
 }
 
 /* ---------------------------------------------------------------- Hilfe, Meldungen */
@@ -423,15 +426,19 @@ function helpHtml() {
     ["5 / Play", "Pause und weiter"], ["Stop / 0", "Zurück zur Auswahl"],
     ["Skip ◀◀ ▶▶", "Zurück zur Auswahl, Fokus auf dem vorigen / nächsten Video"],
     ["◀◀ / ▶▶  (4 / 6)", "10 Sekunden zurück / vor"], ["P− / P+  (7 / 9)", "1 Minute zurück / vor"],
+    ["3", "Nächstes Zufallsvideo (aus der gewählten Auswahl)"],
     ["Info / 1", "Diese Hilfe an / aus"],
   ] : [
     ["2 4 6 8", "Auswahl bewegen (auch Pfeiltasten)"], ["5 / Play", "Ausgewähltes Video abspielen"],
     ["◀◀ / ▶▶", "Eine Zeile hoch / runter"], ["Skip ◀◀ ▶▶", "Voriges / nächstes Video"],
     ["P+ / P−", "Eine Seite weiter / zurück (in der Jahr-Reihe: Jahr ändern)"],
     ["7 / 9", "Vorheriges / nächstes Jahr in der Liste"],
-    ["Grün", "Jahr-Filter öffnen – nochmal: nächstes Jahr"], ["Gelb", "Personen-Filter öffnen – nochmal: nächste Person"],
-    ["In den Filtern", "4 / 6 wählen, 5 an / aus (nochmal 5 = zurücksetzen), 8 / 2 wechseln die Reihe"],
-    ["Rot", "Reihenfolge neueste / älteste zuerst"], ["Blau", "Zufälliges Video"],
+    ["0", "In die Filter (Jahr-Reihe) springen"],
+    ["In den Filtern", "4 / 6 wählen, 5 an / aus (nochmal 5 = zurücksetzen), 8 / 2 wechseln die Reihe, 0 zurück zu den Videos"],
+    ["Grün", "Jahr älter (2019 → 2018)"], ["Gelb", "Jahr neuer (2018 → 2019)"],
+    ["Blau", "Nächste Person (der Reihe nach, am Ende wieder „Alle“)"],
+    ["Rot", "Reihenfolge neueste / älteste zuerst"],
+    ["3", "Zufallsvideo aus der gewählten Auswahl sofort abspielen – nochmal 3: das nächste"],
     ["Info / 1", "Diese Hilfe an / aus"],
   ];
   const dl = el("dl", {});
@@ -479,6 +486,7 @@ function actionOf(e) {
   if (k === "MediaPause" || c === 19) return "pause";
   if (k === "MediaFastForward" || c === 417) return "ff";
   if (k === "MediaRewind" || c === 412) return "rew";
+  if (k === "3") return "random";
   if (k === "ColorF0Red" || c === 403) return "red";
   if (k === "ColorF1Green" || c === 404) return "green";
   if (k === "ColorF2Yellow" || c === 405) return "yellow";
@@ -536,6 +544,10 @@ async function start() {
   window.addEventListener("resize", () => document.documentElement.style.setProperty("--bar", `${barHeight() + 8}px`));
   const vid = video();
   vid.addEventListener("ended", () => { savePos(S.player, 0, 0); stopPlayer(false); });
+  vid.addEventListener("loadedmetadata", () => {
+    if (S.resume > 0 && S.resume < (vid.duration || 1e9) - 5) vid.currentTime = S.resume;
+    S.resume = 0;
+  });
   vid.addEventListener("play", () => { osdShow(false); osdUpdate(); });
   vid.addEventListener("pause", () => { osdShow(true); osdUpdate(); });
   vid.addEventListener("error", () => {
