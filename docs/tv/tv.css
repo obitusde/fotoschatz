@@ -57,3 +57,6 @@ body.keys .chip.on:focus { background: var(--accent); }
 #help dd { margin: 0; color: #e4e8f0; }
 #help .hint { margin-top: 1.8rem; color: var(--muted); font-size: 1.2rem; }
 #toast { position: fixed; left: 50%; bottom: 3rem; transform: translateX(-50%); z-index: 50; background: rgba(0,0,0,.88); border: 2px solid var(--line); border-radius: 0.8rem; padding: 0.7rem 1.6rem; font-size: 1.5rem; }
+
+#finfo { position: absolute; top: 2rem; left: 2rem; max-width: 80%; background: rgba(0,0,0,.82); border: 2px solid var(--focus); border-radius: 0.8rem; padding: 0.8rem 1.4rem; font-size: 1.8rem; word-break: break-all; }
+#finfo small { display: block; color: var(--muted); font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.2rem; }
