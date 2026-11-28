@@ -2,7 +2,7 @@
 
 /* Fotoschatz Videos fuer den Fernseher (nur ansehen). Liest dieselben Video-Verzeichnisse wie die App
    (<Praefix>/videos/index-<Schluessel>.json). Bedienung nur ueber Fernbedienung/Tastatur (Ziffern, Medien-, Farbtasten). */
-const TV_VERSION = "0.8.17";
+const TV_VERSION = "0.8.18";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_RE = /^[A-Za-z0-9]{32,}(-[A-Za-z0-9]{16,})?$/;
 const LINK_KEY = "fotoschatz.tv.link";
@@ -186,6 +186,11 @@ function chooseChip(kind, i) {
 
 function barHeight() { return $("#bar").offsetHeight; }
 
+function markSel(node) {                          // eigene Markierung, unabhaengig vom Tastaturfokus des Browsers
+  for (const n of document.querySelectorAll(".sel")) n.classList.remove("sel");
+  if (node) node.classList.add("sel");
+}
+
 function focusTile(i) {
   const n = S.shown.length;
   if (!n) return;
@@ -194,6 +199,7 @@ function focusTile(i) {
   const tile = $("#grid").children[i];
   if (!tile) return;
   tile.focus({ preventScroll: true });
+  markSel(tile);
   if (i < COLS) window.scrollTo(0, 0);
   else {
     const r = tile.getBoundingClientRect();
@@ -206,12 +212,13 @@ function focusChip(kind, i) {
   const chip = row.children[Math.max(0, Math.min(row.children.length - 1, i))];
   if (!chip) return;
   chip.focus({ preventScroll: true });
+  markSel(chip);
   chip.scrollIntoView({ inline: "center", block: "nearest" });
   window.scrollTo(0, 0);
 }
 
 const zone = () => {
-  const a = document.activeElement;
+  const a = document.querySelector(".chip.sel") || document.activeElement;
   if (a && a.classList && a.classList.contains("chip")) return a.dataset.kind;
   return "g";
 };
@@ -364,7 +371,7 @@ function gridKeys(a) {
   if (a === "random") { randomVideo(); return true; }
   if (z === "y" || z === "p") {
     const kind = z;
-    const focused = Number(document.activeElement.dataset.i);
+    const focused = Number((document.querySelector(".chip.sel") || document.activeElement).dataset.i);
     switch (a) {
       case "left": focusChip(kind, focused - 1); return true;
       case "right": focusChip(kind, focused + 1); return true;
@@ -518,7 +525,9 @@ function actionOf(e) {
   return null;
 }
 
-document.addEventListener("keydown", (e) => {
+window.addEventListener("keydown", (e) => {
+  S.gotKey = true;
+  keyStatus();
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   $("#lastkey").textContent = `Letzte Taste: ${e.key} · ${e.keyCode}`;
   const a = actionOf(e);
@@ -530,15 +539,32 @@ document.addEventListener("keydown", (e) => {
   if (S.help) { if (a === "back" || a === "stop") toggleHelp(false); return; }
   if (S.player) { playerKeys(a); return; }
   if (!S.list.length) return;
-  if (!document.activeElement || document.activeElement === document.body) { focusTile(S.cur); if (["left", "right", "up", "down"].includes(a)) return; }
+  if (!document.querySelector(".sel")) { focusTile(S.cur); if (["left", "right", "up", "down"].includes(a)) return; }
   gridKeys(a);
-});
+}, true);
 document.addEventListener("pointerdown", () => document.body.classList.remove("keys"), true);
+
+/* ---------------------------------------------------------------- Fokus erzwingen, Tasten-Status */
+
+function keyStatus() {
+  const ok = S.gotKey || document.hasFocus();
+  $("#keystat").textContent = ok ? "Tasten: bereit" : "Tasten: noch nicht aktiv – Zeiger kurz bewegen";
+}
+
+function forceFocus() {                                  // Browsehere gibt den Fokus oft erst nach einer Zeigerbewegung an die Seite
+  try { window.focus(); } catch (e) { /* egal */ }
+  const b = document.body;
+  b.tabIndex = -1;
+  try { b.focus({ preventScroll: true }); } catch (e) { /* egal */ }
+  if (S.list.length && !S.player) focusTile(S.cur);
+  keyStatus();
+}
 
 /* ---------------------------------------------------------------- Start */
 
 async function start() {
   $("#ver").textContent = `Version ${TV_VERSION}`;
+  keyStatus();
   const link = takeLink();
   const key = link.split("-")[1];
   if (!link || !key) {
@@ -566,6 +592,12 @@ async function start() {
   applyFilter();
   document.body.classList.add("keys");                 // gelber Rahmen von Anfang an sichtbar
   focusTile(0);                                        // erstes Video ausgewaehlt: man sieht, wo man ist
+  forceFocus();
+  for (const ms of [200, 600, 1500, 3000]) setTimeout(forceFocus, ms);
+  window.addEventListener("focus", keyStatus);
+  window.addEventListener("blur", keyStatus);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) forceFocus(); });
+  setInterval(keyStatus, 1000);
   document.documentElement.style.setProperty("--bar", `${barHeight() + 8}px`);
   window.addEventListener("resize", () => document.documentElement.style.setProperty("--bar", `${barHeight() + 8}px`));
   const vid = video();
