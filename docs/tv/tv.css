@@ -1,0 +1,58 @@
+/* Fotoschatz Videos fuer den Fernseher: alles relativ zur Bildschirmbreite (1920 px -> 1 rem = 24 px) */
+:root {
+  --bg: #0b0d12; --panel: #161a22; --line: #2b3240; --text: #f2f4f8; --muted: #9aa4b5;
+  --accent: #4a8cff; --focus: #ffc400; --bar: 12rem;
+}
+* { box-sizing: border-box; }
+html { font-size: 1.25vw; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+:focus { outline: none; }
+
+#bar { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 0.9rem 2rem 0.5rem; border-bottom: 1px solid var(--line); }
+.top { display: flex; align-items: baseline; gap: 1.5rem; }
+h1 { margin: 0; font-size: 2rem; }
+#count { color: var(--muted); font-size: 1.2rem; }
+#orderlabel { color: var(--muted); font-size: 1.2rem; margin-left: auto; }
+.rowlabel { font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin: 0.45rem 0 0.2rem; }
+.chips { display: flex; gap: 0.6rem; overflow: hidden; white-space: nowrap; padding: 0.3rem 0.3rem; margin: 0 -0.3rem; }
+.chip { flex: none; background: var(--panel); border: 2px solid var(--line); border-radius: 999px; padding: 0.35rem 1.1rem; font-size: 1.25rem; }
+.chip small { color: var(--muted); font-size: 0.85em; margin-left: 0.4rem; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip.on small { color: #dbe7ff; }
+
+#grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.4rem 1.2rem; padding: 1.4rem 2rem 3rem; }
+.tile { display: block; min-width: 0; border-radius: 0.6rem; padding: 0.35rem; border: 4px solid transparent; scroll-margin-top: var(--bar); scroll-margin-bottom: 3rem; }
+.thumb { position: relative; display: block; aspect-ratio: 16 / 9; background: #20252f center / cover no-repeat; border-radius: 0.4rem; overflow: hidden; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dur { position: absolute; right: 0.4rem; bottom: 0.5rem; background: rgba(0,0,0,.78); border-radius: 0.3rem; padding: 0.05rem 0.45rem; font-size: 1rem; }
+.prog { position: absolute; left: 0; right: 0; bottom: 0; height: 0.35rem; background: rgba(255,255,255,.25); }
+.prog i { display: block; height: 100%; background: var(--focus); }
+.ttl { display: block; margin-top: 0.45rem; font-size: 1.25rem; line-height: 1.25; max-height: 2.5em; overflow: hidden; }
+.meta { display: block; margin-top: 0.15rem; font-size: 1rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note { grid-column: 1 / -1; text-align: center; color: var(--muted); font-size: 1.6rem; margin-top: 4rem; }
+
+body.keys .tile:focus, body.keys .chip:focus { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(255,196,0,.35); }
+body.keys .chip:focus { background: #3a3200; }
+body.keys .chip.on:focus { background: var(--accent); }
+
+#foot { display: flex; justify-content: space-between; gap: 2rem; padding: 0.4rem 2rem 1rem; color: #667084; font-size: 0.85rem; }
+
+#player { position: fixed; inset: 0; background: #000; z-index: 20; }
+#video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+#osd { position: absolute; left: 0; right: 0; bottom: 0; padding: 4rem 3rem 2rem; background: linear-gradient(transparent, rgba(0,0,0,.85)); transition: opacity .25s; }
+#osd.hide { opacity: 0; }
+#osdtitle { font-size: 2rem; }
+#osdmeta { font-size: 1.2rem; color: #cfd6e3; margin: 0.25rem 0 1rem; }
+#osdbar { height: 0.6rem; background: rgba(255,255,255,.3); border-radius: 0.3rem; overflow: hidden; }
+#osdfill { height: 100%; width: 0; background: var(--focus); }
+#osdtime { margin-top: 0.5rem; font-size: 1.2rem; color: #cfd6e3; }
+#vmsg { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.8); border: 2px solid var(--line); border-radius: 1rem; padding: 1.2rem 2.2rem; font-size: 2rem; }
+
+#help { position: fixed; inset: 0; z-index: 40; background: #05070a; padding: 3rem 5rem; overflow: hidden; }
+#help h2 { margin: 0 0 1.5rem; font-size: 2.4rem; }
+#help dl { display: grid; grid-template-columns: 17rem 1fr; gap: 0.7rem 1.5rem; font-size: 1.45rem; margin: 0; }
+#help dt { color: var(--focus); font-weight: 600; }
+#help dd { margin: 0; color: #e4e8f0; }
+#help .hint { margin-top: 1.8rem; color: var(--muted); font-size: 1.2rem; }
+#toast { position: fixed; left: 50%; bottom: 3rem; transform: translateX(-50%); z-index: 50; background: rgba(0,0,0,.88); border: 2px solid var(--line); border-radius: 0.8rem; padding: 0.7rem 1.6rem; font-size: 1.5rem; }

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Fotoschatz Videos</title>
+  <link rel="stylesheet" href="tv.css?v=0.8.14">
+  <script src="tv.js?v=0.8.14" defer></script>
+</head>
+<body>
+  <div id="bar">
+    <div class="top"><h1>Videos</h1><span id="count"></span><span id="orderlabel"></span></div>
+    <div class="rowlabel">Jahr</div>
+    <div id="years" class="chips"></div>
+    <div class="rowlabel">Person</div>
+    <div id="persons" class="chips"></div>
+  </div>
+  <main id="grid"><p class="note">Lade …</p></main>
+  <footer id="foot"><span id="ver"></span><span>Hilfe: Info oder 1</span><span id="lastkey"></span></footer>
+
+  <div id="player" hidden>
+    <video id="video" playsinline preload="auto"></video>
+    <div id="osd">
+      <div id="osdtitle"></div>
+      <div id="osdmeta"></div>
+      <div id="osdbar"><div id="osdfill"></div></div>
+      <div id="osdtime"></div>
+    </div>
+    <div id="vmsg" hidden></div>
+  </div>
+
+  <div id="help" hidden></div>
+  <div id="toast" hidden></div>
+</body>
+</html>
