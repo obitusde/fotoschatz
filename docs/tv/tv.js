@@ -2,7 +2,7 @@
 
 /* Fotoschatz Videos fuer den Fernseher (nur ansehen). Liest dieselben Video-Verzeichnisse wie die App
    (<Praefix>/videos/index-<Schluessel>.json). Bedienung nur ueber Fernbedienung/Tastatur (Ziffern, Medien-, Farbtasten). */
-const TV_VERSION = "0.8.16";
+const TV_VERSION = "0.8.17";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_RE = /^[A-Za-z0-9]{32,}(-[A-Za-z0-9]{16,})?$/;
 const LINK_KEY = "fotoschatz.tv.link";
@@ -76,6 +76,7 @@ function cleanVideos(data) {
       t: `${datum}T${zeit}`,
       dauer: Number(v.dauer) || 0,
       ort: v.ort ? String(v.ort) : "",
+      datei: v.datei ? String(v.datei) : "",             // Original-Dateiname am PC (nur im Verzeichnis des Eigentuemers)
       personen: Array.isArray(v.personen) ? v.personen.map(String).filter(Boolean) : [],
     });
   }
@@ -251,6 +252,7 @@ function play(v, fresh) {
   if (p && p.catch) p.catch(() => { $("#vmsg").textContent = "Mit Play / 5 starten"; $("#vmsg").hidden = false; });
   if (!already) history.pushState({ p: v.id }, "");
   osdShow(false);
+  updateFileInfo();
   clearInterval(saveTimer);
   saveTimer = setInterval(() => { osdUpdate(); persist(); }, 1000);
 }
@@ -276,6 +278,8 @@ function stopPlayer(fromPop) {
   vid.removeAttribute("poster");
   vid.load();                                   // Verbindung freigeben
   $("#player").hidden = true;
+  $("#finfo").hidden = true;
+  S.fileInfo = false;
   if (!fromPop && history.state && history.state.p) history.back();
   updateProgress(v);
   const i = S.shown.indexOf(v);
@@ -284,6 +288,20 @@ function stopPlayer(fromPop) {
 }
 
 window.addEventListener("popstate", () => { if (S.player) stopPlayer(true); });
+
+function updateFileInfo() {
+  const box = $("#finfo");
+  if (!S.fileInfo || !S.player) { box.hidden = true; return; }
+  box.replaceChildren(el("small", { text: "Datei am PC" }), el("div", { text: S.player.datei || "nicht bekannt" }));
+  box.hidden = false;
+}
+
+function toggleFileInfo() {
+  if (!S.player) return;
+  if (!S.player.datei) { toast("Dateiname nicht bekannt – Videoschatz muss ihn ins Verzeichnis schreiben."); return; }
+  S.fileInfo = !S.fileInfo;
+  updateFileInfo();
+}
 
 function playerKeys(a) {
   const vid = video();
@@ -297,11 +315,16 @@ function playerKeys(a) {
     case "right": case "ff": seek(10); return true;
     case "secprev": case "pminus": seek(-60); return true;
     case "secnext": case "pplus": seek(60); return true;
-    case "up": case "down": osdShow(false); osdUpdate(); return true;
+    case "up": case "down": toggleFileInfo(); return true;               // 2 / 8: Dateiname am PC an / aus
     case "back": case "stop": stopPlayer(false); return true;
     case "random": randomVideo(); return true;
-    case "skipnext": case "skipprev": {
-      const d = a === "skipnext" ? 1 : -1;
+    case "skipprev":                                                         // Skip zurueck im laufenden Video: von vorn
+      vid.currentTime = 0;
+      { const p = vid.play(); if (p && p.catch) p.catch(() => {}); }
+      osdShow(false); osdUpdate();
+      return true;
+    case "skipnext": {
+      const d = 1;
       const at = S.shown.indexOf(S.player);
       stopPlayer(false);
       focusTile(Math.max(0, Math.min(S.shown.length - 1, (at < 0 ? S.cur : at) + d)));
@@ -424,7 +447,8 @@ function randomVideo() {                         // zufaelliges Video der aktuel
 function helpHtml() {
   const rows = S.player ? [
     ["5 / Play", "Pause und weiter"], ["Stop / 0", "Zurück zur Auswahl"],
-    ["Skip ◀◀ ▶▶", "Zurück zur Auswahl, Fokus auf dem vorigen / nächsten Video"],
+    ["Skip ◀◀", "Video von vorn"], ["Skip ▶▶", "Zurück zur Auswahl, Fokus auf dem nächsten Video"],
+    ["2 / 8", "Original-Dateiname am PC zeigen – nochmal drücken: ausblenden"],
     ["◀◀ / ▶▶  (4 / 6)", "10 Sekunden zurück / vor"], ["P− / P+  (7 / 9)", "1 Minute zurück / vor"],
     ["3", "Nächstes Zufallsvideo (aus der gewählten Auswahl)"],
     ["Info / 1", "Diese Hilfe an / aus"],
