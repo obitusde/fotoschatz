@@ -2,7 +2,7 @@
 
 /* Fotoschatz Videos fuer den Fernseher (nur ansehen). Liest dieselben Video-Verzeichnisse wie die App
    (<Praefix>/videos/index-<Schluessel>.json). Bedienung nur ueber Fernbedienung/Tastatur (Ziffern, Medien-, Farbtasten). */
-const TV_VERSION = "0.8.15";
+const TV_VERSION = "0.8.16";
 const R2_PUBLIC_URL = "https://pub-6f47b0d5f2154b4fbdd0ac01fe7b6f8e.r2.dev";
 const SECRET_RE = /^[A-Za-z0-9]{32,}(-[A-Za-z0-9]{16,})?$/;
 const LINK_KEY = "fotoschatz.tv.link";
@@ -335,8 +335,8 @@ function gridKeys(a) {
   const z = zone();
   // Farbtasten gelten in allen Zonen
   if (a === "red") { toggleOrder(); return true; }
-  if (a === "green") { stepFilter("y", 1, false); return true; }          // Jahr aelter (2019 -> 2018)
-  if (a === "yellow") { stepFilter("y", -1, false); return true; }        // Jahr neuer
+  if (a === "green") { stepFilter("y", -1, false); return true; }         // Jahr neuer (2018 -> 2019)
+  if (a === "yellow") { stepFilter("y", 1, false); return true; }         // Jahr aelter (2019 -> 2018)
   if (a === "blue") { stepFilter("p", 1, true); return true; }            // naechste Person, am Ende wieder „Alle“
   if (a === "random") { randomVideo(); return true; }
   if (z === "y" || z === "p") {
@@ -435,7 +435,7 @@ function helpHtml() {
     ["7 / 9", "Vorheriges / nächstes Jahr in der Liste"],
     ["0", "In die Filter (Jahr-Reihe) springen"],
     ["In den Filtern", "4 / 6 wählen, 5 an / aus (nochmal 5 = zurücksetzen), 8 / 2 wechseln die Reihe, 0 zurück zu den Videos"],
-    ["Grün", "Jahr älter (2019 → 2018)"], ["Gelb", "Jahr neuer (2018 → 2019)"],
+    ["Grün", "Jahr neuer (2018 → 2019)"], ["Gelb", "Jahr älter (2019 → 2018)"],
     ["Blau", "Nächste Person (der Reihe nach, am Ende wieder „Alle“)"],
     ["Rot", "Reihenfolge neueste / älteste zuerst"],
     ["3", "Zufallsvideo aus der gewählten Auswahl sofort abspielen – nochmal 3: das nächste"],
@@ -540,6 +540,8 @@ async function start() {
   }
   buildOptions();
   applyFilter();
+  document.body.classList.add("keys");                 // gelber Rahmen von Anfang an sichtbar
+  focusTile(0);                                        // erstes Video ausgewaehlt: man sieht, wo man ist
   document.documentElement.style.setProperty("--bar", `${barHeight() + 8}px`);
   window.addEventListener("resize", () => document.documentElement.style.setProperty("--bar", `${barHeight() + 8}px`));
   const vid = video();
